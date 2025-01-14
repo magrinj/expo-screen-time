@@ -1,48 +1,40 @@
+import DeviceActivity
+import FamilyControls
+import Foundation
+import ManagedSettings
+import ScreenTime
+
 import ExpoModulesCore
 
 public class ExpoScreenTimeModule: Module {
-  // Each module class must implement the definition function. The definition consists of components
-  // that describes the module's functionality and behavior.
-  // See https://docs.expo.dev/modules/module-api for more details about available components.
-  public func definition() -> ModuleDefinition {
-    // Sets the name of the module that JavaScript code will use to refer to the module. Takes a string as an argument.
-    // Can be inferred from module's class name, but it's recommended to set it explicitly for clarity.
-    // The module will be accessible from `requireNativeModule('ExpoScreenTime')` in JavaScript.
-    Name("ExpoScreenTime")
-
-    // Sets constant properties on the module. Can take a dictionary or a closure that returns a dictionary.
-    Constants([
-      "PI": Double.pi
-    ])
-
-    // Defines event names that the module can send to JavaScript.
-    Events("onChange")
-
-    // Defines a JavaScript synchronous function that runs the native code on the JavaScript thread.
-    Function("hello") {
-      return "Hello world! 👋"
-    }
-
-    // Defines a JavaScript function that always returns a Promise and whose native code
-    // is by default dispatched on the different thread than the JavaScript runtime runs on.
-    AsyncFunction("setValueAsync") { (value: String) in
-      // Send an event to JavaScript.
-      self.sendEvent("onChange", [
-        "value": value
-      ])
-    }
-
-    // Enables the module to be used as a native view. Definition components that are accepted as part of the
-    // view definition: Prop, Events.
-    View(ExpoScreenTimeView.self) {
-      // Defines a setter for the `url` prop.
-      Prop("url") { (view: ExpoScreenTimeView, url: URL) in
-        if view.webView.url != url {
-          view.webView.load(URLRequest(url: url))
+    public func definition() -> ModuleDefinition {
+        Name("ExpoScreenTime")
+        
+        OnCreate {
+            if #available(iOS 16.0, *) {
+                _ = AuthorizationCenter.shared.authorizationStatus // Trigger the initialization
+            }
+            
+            self.appContext?.permissions?.register([
+                ScreenTimePermissionRequester()
+            ])
         }
-      }
-
-      Events("onLoad")
+        
+        AsyncFunction("getScreenTimePermissionsAsync") { (promise: Promise) in
+            appContext?.permissions?.getPermissionUsingRequesterClass(
+                ScreenTimePermissionRequester.self,
+                resolve: promise.resolver,
+                reject: promise.legacyRejecter
+            )
+        }
+        
+        AsyncFunction("requestScreenTimePermissionsAsync") { (promise: Promise) in
+            appContext?.permissions?.askForPermission(
+                usingRequesterClass: ScreenTimePermissionRequester.self,
+                resolve: promise.resolver,
+                reject: promise.legacyRejecter
+            )
+        }
     }
-  }
 }
+

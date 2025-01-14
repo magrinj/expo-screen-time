@@ -1,36 +1,33 @@
-import { useEvent } from 'expo';
-import ExpoScreenTime, { ExpoScreenTimeView } from 'expo-screen-time';
+import { PermissionResponse } from 'expo-modules-core';
+import ExpoScreenTime from 'expo-screen-time';
+import { useEffect, useState } from 'react';
 import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
 
 export default function App() {
-  const onChangePayload = useEvent(ExpoScreenTime, 'onChange');
+  const [permissions, setPermissions] = useState<PermissionResponse | null>(null);
+
+  useEffect(() => {
+    console.log('getPermissionsAsync');
+    ExpoScreenTime.getScreenTimePermissionsAsync().then((permissions) => {
+      console.log('permissions', permissions);
+      setPermissions(permissions);
+    });
+  }, []);
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.container}>
-        <Text style={styles.header}>Module API Example</Text>
-        <Group name="Constants">
-          <Text>{ExpoScreenTime.PI}</Text>
-        </Group>
-        <Group name="Functions">
-          <Text>{ExpoScreenTime.hello()}</Text>
+        <Text style={styles.header}>Screen Time Example</Text>
+        <Group name="Permissions">
+          <Text>{JSON.stringify(permissions)}</Text>
         </Group>
         <Group name="Async functions">
           <Button
-            title="Set value"
+            title="Request permissions"
             onPress={async () => {
-              await ExpoScreenTime.setValueAsync('Hello from JS!');
+              const res = await ExpoScreenTime.requestScreenTimePermissionsAsync();
+              console.log('res', res);
             }}
-          />
-        </Group>
-        <Group name="Events">
-          <Text>{onChangePayload?.value}</Text>
-        </Group>
-        <Group name="Views">
-          <ExpoScreenTimeView
-            url="https://www.example.com"
-            onLoad={({ nativeEvent: { url } }) => console.log(`Loaded: ${url}`)}
-            style={styles.view}
           />
         </Group>
       </ScrollView>
