@@ -1,15 +1,19 @@
-import { PermissionResponse } from 'expo-modules-core';
-import ExpoScreenTime from 'expo-screen-time';
-import { useEffect, useState } from 'react';
-import { Button, SafeAreaView, ScrollView, Text, View } from 'react-native';
+import { PermissionResponse } from "expo-modules-core";
+import ExpoScreenTime, { ExpoScreenTimeView } from "expo-screen-time";
+import { useEffect, useState } from "react";
+import { Button, SafeAreaView, ScrollView, Text, View } from "react-native";
 
 export default function App() {
-  const [permissions, setPermissions] = useState<PermissionResponse | null>(null);
+  const [permissions, setPermissions] = useState<PermissionResponse | null>(
+    null,
+  );
+
+  const [selection, setSelection] = useState<any | null>(null);
 
   useEffect(() => {
-    console.log('getPermissionsAsync');
+    console.log("getPermissionsAsync");
     ExpoScreenTime.getScreenTimePermissionsAsync().then((permissions) => {
-      console.log('permissions', permissions);
+      console.log("permissions", permissions);
       setPermissions(permissions);
     });
   }, []);
@@ -25,8 +29,19 @@ export default function App() {
           <Button
             title="Request permissions"
             onPress={async () => {
-              const res = await ExpoScreenTime.requestScreenTimePermissionsAsync();
-              console.log('res', res);
+              const res =
+                await ExpoScreenTime.requestScreenTimePermissionsAsync();
+              console.log("res", res);
+            }}
+          />
+        </Group>
+        <Group name="View">
+          <ExpoScreenTimeView
+            style={styles.view}
+            selection={selection}
+            onSelectionChange={({ nativeEvent }) => {
+              setSelection(nativeEvent.selection);
+              console.log("selection", nativeEvent.selection);
             }}
           />
         </Group>
@@ -55,13 +70,13 @@ const styles = {
   },
   group: {
     margin: 20,
-    backgroundColor: '#fff',
+    backgroundColor: "#fff",
     borderRadius: 10,
     padding: 20,
   },
   container: {
     flex: 1,
-    backgroundColor: '#eee',
+    backgroundColor: "#eee",
   },
   view: {
     flex: 1,

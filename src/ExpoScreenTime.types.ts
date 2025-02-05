@@ -1,7 +1,17 @@
 import type { StyleProp, ViewStyle } from 'react-native';
 
-export type OnLoadEventPayload = {
-  url: string;
+export type ApplicationSelection = {
+  applicationTokens: string[];
+  categoryTokens: string[];
+  webDomainTokens: string[];
+  untokenizedApplicationIdentifiers: string[];
+  untokenizedCategoryIdentifiers: string[];
+  untokenizedWebDomainIdentifiers: string[];
+  includeEntireCategory: boolean;
+}
+
+export type OnSelectionChangeEventPayload = {
+  selection: ApplicationSelection;
 };
 
 export type ExpoScreenTimeModuleEvents = {
@@ -12,8 +22,10 @@ export type ChangeEventPayload = {
   value: string;
 };
 
-export type ExpoScreenTimeViewProps = {
-  url: string;
-  onLoad: (event: { nativeEvent: OnLoadEventPayload }) => void;
+export type ExpoScreenTimeSelectAppsViewProps = {
   style?: StyleProp<ViewStyle>;
+  selection: ApplicationSelection | null;
+  onSelectionChange: (event: {
+    nativeEvent: OnSelectionChangeEventPayload;
+  }) => void;
 };

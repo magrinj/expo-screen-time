@@ -3,6 +3,8 @@ import FamilyControls
 import Foundation
 import ManagedSettings
 import ScreenTime
+import SwiftUI
+import Combine
 
 import ExpoModulesCore
 
@@ -34,6 +36,14 @@ public class ExpoScreenTimeModule: Module {
                 resolve: promise.resolver,
                 reject: promise.legacyRejecter
             )
+        }
+        
+        View(ExpoScreenTimeSelectAppsView.self) {
+            Prop("selection") { (view: ExpoScreenTimeSelectAppsView, selection: String) in
+                view.initializeSelection(from: selection)
+            }
+
+            Events("onSelectionChange")
         }
     }
 }
