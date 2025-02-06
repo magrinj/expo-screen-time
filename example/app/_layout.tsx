@@ -1,6 +1,10 @@
 import { Stack } from "expo-router";
+import { FamilyActivitySelection } from "expo-screen-time";
 import { StatusBar } from 'expo-status-bar';
+import { atom } from "jotai";
 import React from 'react';
+
+export const selectionAtom = atom<FamilyActivitySelection | null>(null);
 
 export default function RootLayout() {
   return (

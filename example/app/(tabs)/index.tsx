@@ -1,10 +1,15 @@
 import { PermissionResponse } from "expo-modules-core";
 import { Link } from "expo-router";
 import ExpoScreenTime from "expo-screen-time";
+import { useAtomValue } from "jotai";
 import { useEffect, useState } from "react";
 import { Button, SafeAreaView, ScrollView, Text, View } from "react-native";
 
+import { selectionAtom } from "../_layout";
+
 export default function App() {
+  const selection = useAtomValue(selectionAtom);
+
   const [permissions, setPermissions] = useState<PermissionResponse | null>(
     null,
   );
@@ -16,6 +21,8 @@ export default function App() {
       setPermissions(permissions);
     });
   }, []);
+
+  console.log("selection?.applicationTokens: ", selection, typeof selection);
 
   return (
     <SafeAreaView style={styles.container}>
@@ -33,7 +40,53 @@ export default function App() {
               console.log("res", res);
             }}
           />
+          <Button
+            title="Display activity picker"
+            onPress={async () => {
+              await ExpoScreenTime.displayActivityPickerAsync();
+            }}
+          />
         </Group>
+        <Group name="Deny app removal">
+          <Button
+            title="Deny app removal"
+            onPress={async () => {
+              ExpoScreenTime.denyAppRemoval();
+            }}
+          />
+          <Button
+            title="Allow app removal"
+            onPress={async () => {
+              ExpoScreenTime.allowAppRemoval();
+            }}
+          />
+        </Group>
+        <Group name="Block selection">
+          <Button
+            title="Block selection"
+            onPress={async () => {
+              if (selection) {
+                ExpoScreenTime.blockSelection(selection);
+              }
+            }}
+          />
+          <Button
+            title="Unblock all"
+            onPress={async () => {
+              ExpoScreenTime.unblockAll();
+            }}
+          />
+        </Group>
+        {/* <Group name="AppIconView">
+          {selection?.applicationTokens?.map((token: string) => (
+            <ExpoScreenTimeAppIconView
+              style={styles.appIcon}
+              key={token}
+              token={token}
+              tokenType="application"
+            />
+          ))}
+        </Group> */}
         <Group name="Select Apps">
           <Link href="/select-apps">
             <Text>Select Apps</Text>
@@ -75,5 +128,9 @@ const styles = {
   view: {
     flex: 1,
     height: 200,
+  },
+  appIcon: {
+    width: 300,
+    height: 300,
   },
 };

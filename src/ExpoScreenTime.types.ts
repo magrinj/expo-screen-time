@@ -1,30 +1,39 @@
 import type { StyleProp, ViewStyle } from 'react-native';
 
-export type ApplicationSelection = {
-  applicationTokens: string[];
-  categoryTokens: string[];
-  webDomainTokens: string[];
+/**
+ * @platform ios
+ */
+export type ActivityToken = {
+  data: string;
+};
+
+/**
+ * @platform ios
+ */
+export type FamilyActivitySelection = {
+  applicationTokens: ActivityToken[];
+  categoryTokens: ActivityToken[];
+  webDomainTokens: ActivityToken[];
   untokenizedApplicationIdentifiers: string[];
   untokenizedCategoryIdentifiers: string[];
   untokenizedWebDomainIdentifiers: string[];
   includeEntireCategory: boolean;
-}
+};
 
+/**
+ * @platform ios
+ */
 export type OnSelectionChangeEventPayload = {
-  selection: ApplicationSelection;
+  selection: FamilyActivitySelection;
 };
 
-export type ExpoScreenTimeModuleEvents = {
-  onChange: (params: ChangeEventPayload) => void;
-};
+export type ExpoScreenTimeModuleEvents = {};
 
-export type ChangeEventPayload = {
-  value: string;
-};
-
-export type ExpoScreenTimeSelectAppsViewProps = {
+export type ExpoScreenTimeActivityPickerProps = {
   style?: StyleProp<ViewStyle>;
-  selection: ApplicationSelection | null;
+  headerText?: string;
+  footerText?: string;
+  selection: FamilyActivitySelection | null;
   onSelectionChange: (event: {
     nativeEvent: OnSelectionChangeEventPayload;
   }) => void;

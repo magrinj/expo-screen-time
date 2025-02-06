@@ -5,10 +5,16 @@ import ManagedSettings
 import ScreenTime
 import SwiftUI
 import Combine
-
 import ExpoModulesCore
 
+struct ActivityToken: ExpoModulesCore.Record {
+    @Field
+    var data: String?
+}
+
 public class ExpoScreenTimeModule: Module {
+    public let screenTimeManager = ScreenTimeManager()
+
     public func definition() -> ModuleDefinition {
         Name("ExpoScreenTime")
         
@@ -38,13 +44,50 @@ public class ExpoScreenTimeModule: Module {
             )
         }
         
-        View(ExpoScreenTimeSelectAppsView.self) {
-            Prop("selection") { (view: ExpoScreenTimeSelectAppsView, selection: String) in
-                view.initializeSelection(from: selection)
-            }
+        Function("denyAppRemoval") {
+            screenTimeManager.denyAppRemoval()
+        }
+        
+        Function("allowAppRemoval") {
+            screenTimeManager.allowAppRemoval()
+        }
+        
+        Function("denyAppInstallation") {
+            screenTimeManager.denyAppInstallation()
+        }
+        
+        Function("allowAppInstallation") {
+            screenTimeManager.allowAppInstallation()
+        }
+        
+        Function("blockSelection") { (selectionObject: [String: Any]) in
+            do {
+                let selection = try deserializeFamilyActivitySelection(from: selectionObject)
 
+                screenTimeManager.blockSelection(selection)
+            } catch {
+                print("Deserialization error: \(error)")
+            }
+        }
+        
+        Function("unblockAll") {
+            screenTimeManager.unblockAll()
+        }
+        
+        View(ExpoScreenTimeActivityPickerView.self) {
+            Prop("selection") { (view: ExpoScreenTimeActivityPickerView, selectionObject: [String: Any]) in
+                view.initializeSelection(from: selectionObject)
+            }
+            
+            Prop("headerText") { (view: ExpoScreenTimeActivityPickerView, headerText: String?) in
+                view.setHeaderText(headerText)
+            }
+            
+            Prop("footerText") { (view: ExpoScreenTimeActivityPickerView, footerText: String?) in
+                view.setFooterText(footerText)
+            }
+            
             Events("onSelectionChange")
         }
     }
 }
-

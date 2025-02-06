@@ -1,7 +1,6 @@
-import { ApplicationSelection, ExpoScreenTimeView } from "expo-screen-time";
-import { atom, useAtom } from 'jotai';
-
-const selectionAtom = atom<ApplicationSelection | null>(null);
+import { ExpoScreenTimeActivityPicker } from "expo-screen-time";
+import { useAtom } from 'jotai';
+import { selectionAtom } from "./_layout";
 
 export default function SelectApps() {
   const [selection, setSelection] = useAtom(selectionAtom);
@@ -9,7 +8,7 @@ export default function SelectApps() {
   console.log("SelectApps", selection);
 
   return (
-    <ExpoScreenTimeView
+    <ExpoScreenTimeActivityPicker
       style={styles.view}
       selection={selection}
       onSelectionChange={({ nativeEvent }) => {
