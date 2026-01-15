@@ -2,33 +2,133 @@ import ManagedSettings
 import FamilyControls
 
 public class ScreenTimeManager: NSObject {
-    lazy var managedSettingsStore = ManagedSettingsStore()
-    
+    private let queue = DispatchQueue(label: "expo.screentime.manager", qos: .userInitiated)
+    private var _managedSettingsStore: ManagedSettingsStore?
+
+    /// Track currently blocked domains (since we can't read them back from the store)
+    private var blockedWebDomains: Set<WebDomain> = []
+
+    private var managedSettingsStore: ManagedSettingsStore {
+        if _managedSettingsStore == nil {
+            _managedSettingsStore = ManagedSettingsStore()
+        }
+        return _managedSettingsStore!
+    }
+
     public func denyAppRemoval() {
-        managedSettingsStore.application.denyAppRemoval = true
+        queue.sync {
+            managedSettingsStore.application.denyAppRemoval = true
+        }
     }
-    
+
     public func allowAppRemoval() {
-        managedSettingsStore.application.denyAppRemoval = false
+        queue.sync {
+            managedSettingsStore.application.denyAppRemoval = false
+        }
     }
-    
+
     public func denyAppInstallation() {
-        managedSettingsStore.application.denyAppInstallation = true
+        queue.sync {
+            managedSettingsStore.application.denyAppInstallation = true
+        }
     }
-    
+
     public func allowAppInstallation() {
-        managedSettingsStore.application.denyAppInstallation = false
+        queue.sync {
+            managedSettingsStore.application.denyAppInstallation = false
+        }
     }
-    
+
     public func blockSelection(_ selection: FamilyActivitySelection) {
-        managedSettingsStore.shield.applicationCategories = ShieldSettings.ActivityCategoryPolicy.specific(selection.categoryTokens)
-        managedSettingsStore.shield.applications = selection.applicationTokens
-        managedSettingsStore.shield.webDomains = selection.webDomainTokens
+        queue.sync {
+            managedSettingsStore.shield.applicationCategories = ShieldSettings.ActivityCategoryPolicy.specific(selection.categoryTokens)
+            managedSettingsStore.shield.applications = selection.applicationTokens
+            managedSettingsStore.shield.webDomains = selection.webDomainTokens
+        }
     }
-    
+
     public func unblockAll() {
-        managedSettingsStore.shield.applicationCategories = ShieldSettings.ActivityCategoryPolicy.none
-        managedSettingsStore.shield.applications = Set()
-        managedSettingsStore.shield.webDomains = Set()
+        queue.sync {
+            managedSettingsStore.shield.applicationCategories = ShieldSettings.ActivityCategoryPolicy.none
+            managedSettingsStore.shield.applications = Set()
+            managedSettingsStore.shield.webDomains = Set()
+            blockedWebDomains.removeAll()
+            managedSettingsStore.webContent.blockedByFilter = nil
+        }
+    }
+
+    /// Block specific web domains by their domain strings (e.g., "facebook.com", "twitter.com")
+    /// This adds to any existing blocked domains
+    public func blockWebDomains(_ domains: [String]) {
+        queue.sync {
+            let newDomains = Set(domains.map { WebDomain(domain: $0) })
+            blockedWebDomains.formUnion(newDomains)
+            updateWebContentFilter()
+        }
+    }
+
+    /// Unblock specific web domains by their domain strings
+    public func unblockWebDomains(_ domains: [String]) {
+        queue.sync {
+            let domainsToRemove = Set(domains.map { WebDomain(domain: $0) })
+            blockedWebDomains.subtract(domainsToRemove)
+            updateWebContentFilter()
+        }
+    }
+
+    /// Unblock all web domains that were blocked by domain string
+    public func unblockAllWebDomains() {
+        queue.sync {
+            blockedWebDomains.removeAll()
+            managedSettingsStore.webContent.blockedByFilter = nil
+        }
+    }
+
+    /// Get the list of currently blocked domain strings
+    public func getBlockedWebDomains() -> [String] {
+        return queue.sync {
+            return blockedWebDomains.compactMap { $0.domain }
+        }
+    }
+
+    /// Force iOS to reload shield configuration by toggling shields
+    /// Call this after updating shield configuration via SharedDefaults
+    public func refreshShields() {
+        queue.async { [self] in
+            // Capture current shield state
+            let apps = managedSettingsStore.shield.applications
+            let categories = managedSettingsStore.shield.applicationCategories
+            let domains = managedSettingsStore.shield.webDomains
+
+            // Check if anything is actually shielded
+            let hasShields = !(apps?.isEmpty ?? true) ||
+                             categories != .none ||
+                             !(domains?.isEmpty ?? true)
+
+            guard hasShields else { return }
+
+            // Clear shields
+            managedSettingsStore.shield.applications = nil
+            managedSettingsStore.shield.applicationCategories = .none
+            managedSettingsStore.shield.webDomains = nil
+
+            // Small delay to ensure iOS processes the change
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [self] in
+                self.queue.async {
+                    // Restore shields - this forces iOS to call ShieldConfigurationExtension
+                    self.managedSettingsStore.shield.applications = apps
+                    self.managedSettingsStore.shield.applicationCategories = categories
+                    self.managedSettingsStore.shield.webDomains = domains
+                }
+            }
+        }
+    }
+
+    private func updateWebContentFilter() {
+        if blockedWebDomains.isEmpty {
+            managedSettingsStore.webContent.blockedByFilter = nil
+        } else {
+            managedSettingsStore.webContent.blockedByFilter = .specific(blockedWebDomains)
+        }
     }
 }

@@ -1,136 +1,305 @@
+import { Ionicons } from "@expo/vector-icons";
+import { useFocusEffect } from "expo-router";
 import { PermissionResponse } from "expo-modules-core";
-import { Link } from "expo-router";
-import ExpoScreenTime from "expo-screen-time";
-import { useAtomValue } from "jotai";
-import { useEffect, useState } from "react";
-import { Button, SafeAreaView, ScrollView, Text, View } from "react-native";
+import ExpoScreenTime, {
+  ApplicationLabel,
+  CategoryLabel,
+  WebDomainLabel,
+} from "expo-screen-time";
+import { useCallback, useEffect, useState } from "react";
+import { ScrollView, StyleSheet, Text, View } from "react-native";
 
-import { selectionAtom } from "../_layout";
+import { SELECTION_ID, useNativeSelection } from "../_layout";
+import {
+  ActionButton,
+  Card,
+  colors,
+  EmptyState,
+  Row,
+  SectionHeader,
+  Separator,
+  StatusBadge,
+} from "../components/ui";
 
-export default function App() {
-  const selection = useAtomValue(selectionAtom);
+export default function HomeScreen() {
+  const { tokens, metadata, refresh } = useNativeSelection(SELECTION_ID);
+  const [permissions, setPermissions] = useState<PermissionResponse | null>(null);
 
-  const [permissions, setPermissions] = useState<PermissionResponse | null>(
-    null,
+  useFocusEffect(
+    useCallback(() => {
+      refresh();
+    }, [refresh])
   );
 
   useEffect(() => {
-    console.log("getPermissionsAsync");
-    ExpoScreenTime.getScreenTimePermissionsAsync().then((permissions) => {
-      console.log("permissions", permissions);
-      setPermissions(permissions);
-    });
+    ExpoScreenTime.getScreenTimePermissionsAsync().then(setPermissions);
   }, []);
 
-  console.log("selection?.applicationTokens: ", selection, typeof selection);
+  const appsCount = metadata?.applicationCount ?? 0;
+  const categoriesCount = metadata?.categoryCount ?? 0;
+  const domainsCount = metadata?.webDomainCount ?? 0;
+  const totalBlocked = appsCount + categoriesCount + domainsCount;
+
+  const appTokens = tokens.filter((t) => t.type === "application");
+  const categoryTokens = tokens.filter((t) => t.type === "category");
+  const domainTokens = tokens.filter((t) => t.type === "webDomain");
+
+  const permissionGranted = permissions?.granted ?? false;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.container}>
-        <Text style={styles.header}>Screen Time Example</Text>
-        <Group name="Permissions">
-          <Text>{JSON.stringify(permissions)}</Text>
-        </Group>
-        <Group name="Async functions">
-          <Button
-            title="Request permissions"
-            onPress={async () => {
-              const res =
-                await ExpoScreenTime.requestScreenTimePermissionsAsync();
-              console.log("res", res);
-            }}
-          />
-          <Button
-            title="Display activity picker"
-            onPress={async () => {
-              await ExpoScreenTime.displayActivityPickerAsync();
-            }}
-          />
-        </Group>
-        <Group name="Deny app removal">
-          <Button
-            title="Deny app removal"
-            onPress={async () => {
-              ExpoScreenTime.denyAppRemoval();
-            }}
-          />
-          <Button
-            title="Allow app removal"
-            onPress={async () => {
-              ExpoScreenTime.allowAppRemoval();
-            }}
-          />
-        </Group>
-        <Group name="Block selection">
-          <Button
-            title="Block selection"
-            onPress={async () => {
-              if (selection) {
-                ExpoScreenTime.blockSelection(selection);
-              }
-            }}
-          />
-          <Button
-            title="Unblock all"
-            onPress={async () => {
-              ExpoScreenTime.unblockAll();
-            }}
-          />
-        </Group>
-        {/* <Group name="AppIconView">
-          {selection?.applicationTokens?.map((token: string) => (
-            <ExpoScreenTimeAppIconView
-              style={styles.appIcon}
-              key={token}
-              token={token}
-              tokenType="application"
+    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* Permission Status */}
+      <SectionHeader title="Permission Status" />
+      <Card>
+        <Row
+          icon="shield-checkmark"
+          iconColor={permissionGranted ? colors.success : colors.warning}
+          title="Screen Time Access"
+          subtitle={permissionGranted ? "Full access granted" : "Permission required"}
+        />
+        {!permissionGranted && (
+          <>
+            <Separator />
+            <View style={styles.permissionAction}>
+              <ActionButton
+                title="Grant Permission"
+                icon="lock-open"
+                onPress={async () => {
+                  const res = await ExpoScreenTime.requestScreenTimePermissionsAsync();
+                  setPermissions(res);
+                }}
+              />
+            </View>
+          </>
+        )}
+      </Card>
+
+      {/* Blocking Summary */}
+      <SectionHeader title="Blocking Summary" />
+      <Card>
+        <View style={styles.summaryHeader}>
+          <View style={styles.summaryIcon}>
+            <Ionicons
+              name={totalBlocked > 0 ? "shield" : "shield-outline"}
+              size={32}
+              color={totalBlocked > 0 ? colors.primary : colors.textTertiary}
             />
-          ))}
-        </Group> */}
-        <Group name="Select Apps">
-          <Link href="/select-apps">
-            <Text>Select Apps</Text>
-          </Link>
-        </Group>
-      </ScrollView>
-    </SafeAreaView>
+          </View>
+          <View style={styles.summaryContent}>
+            <Text style={styles.summaryTitle}>
+              {totalBlocked > 0 ? `${totalBlocked} Items Blocked` : "No Blocking Active"}
+            </Text>
+            <StatusBadge
+              status={totalBlocked > 0 ? "success" : "neutral"}
+              label={totalBlocked > 0 ? "Active" : "Inactive"}
+            />
+          </View>
+        </View>
+
+        {totalBlocked > 0 && (
+          <>
+            <Separator />
+            <View style={styles.statsRow}>
+              <View style={styles.statItem}>
+                <Ionicons name="apps" size={20} color={colors.primary} />
+                <Text style={styles.statValue}>{appsCount}</Text>
+                <Text style={styles.statLabel}>Apps</Text>
+              </View>
+              <View style={styles.statItem}>
+                <Ionicons name="folder" size={20} color={colors.warning} />
+                <Text style={styles.statValue}>{categoriesCount}</Text>
+                <Text style={styles.statLabel}>Categories</Text>
+              </View>
+              <View style={styles.statItem}>
+                <Ionicons name="globe" size={20} color={colors.success} />
+                <Text style={styles.statValue}>{domainsCount}</Text>
+                <Text style={styles.statLabel}>Domains</Text>
+              </View>
+            </View>
+          </>
+        )}
+      </Card>
+
+      {/* Currently Blocked Preview */}
+      {totalBlocked > 0 && (
+        <>
+          <SectionHeader title="Currently Blocked" />
+          <Card>
+            {appsCount > 0 && (
+              <>
+                <Text style={styles.previewLabel}>Apps</Text>
+                {appTokens.slice(0, 3).map((token) => (
+                  <View key={`app-${token.handle}`} style={styles.blockedItem}>
+                    <ApplicationLabel
+                      selectionId={SELECTION_ID}
+                      handle={token.handle}
+                      displayMode="icon-only"
+                      style={styles.blockedIcon}
+                    />
+                    <ApplicationLabel
+                      selectionId={SELECTION_ID}
+                      handle={token.handle}
+                      displayMode="title-only"
+                      style={styles.blockedTitle}
+                    />
+                  </View>
+                ))}
+                {appsCount > 3 && (
+                  <Text style={styles.moreText}>+{appsCount - 3} more apps</Text>
+                )}
+              </>
+            )}
+
+            {categoriesCount > 0 && (
+              <>
+                {appsCount > 0 && <Separator />}
+                <Text style={styles.previewLabel}>Categories</Text>
+                {categoryTokens.slice(0, 3).map((token) => (
+                  <View key={`cat-${token.handle}`} style={styles.blockedItem}>
+                    <CategoryLabel
+                      selectionId={SELECTION_ID}
+                      handle={token.handle}
+                      displayMode="icon-only"
+                      style={styles.blockedIcon}
+                    />
+                    <CategoryLabel
+                      selectionId={SELECTION_ID}
+                      handle={token.handle}
+                      displayMode="title-only"
+                      style={styles.blockedTitle}
+                    />
+                  </View>
+                ))}
+              </>
+            )}
+
+            {domainsCount > 0 && (
+              <>
+                {(appsCount > 0 || categoriesCount > 0) && <Separator />}
+                <Text style={styles.previewLabel}>Web Domains</Text>
+                {domainTokens.slice(0, 3).map((token) => (
+                  <View key={`dom-${token.handle}`} style={styles.blockedItem}>
+                    <WebDomainLabel
+                      selectionId={SELECTION_ID}
+                      handle={token.handle}
+                      displayMode="title-and-icon"
+                      style={styles.blockedFull}
+                    />
+                  </View>
+                ))}
+              </>
+            )}
+          </Card>
+        </>
+      )}
+
+      {/* Empty State */}
+      {totalBlocked === 0 && permissionGranted && (
+        <Card style={styles.emptyCard}>
+          <EmptyState
+            icon="shield-outline"
+            title="No Apps Blocked"
+            subtitle="Go to the Blocking tab to select apps to block"
+          />
+        </Card>
+      )}
+
+      <View style={styles.footer} />
+    </ScrollView>
   );
 }
 
-function Group(props: { name: string; children: React.ReactNode }) {
-  return (
-    <View style={styles.group}>
-      <Text style={styles.groupHeader}>{props.name}</Text>
-      {props.children}
-    </View>
-  );
-}
-
-const styles = {
-  header: {
-    fontSize: 30,
-    margin: 20,
-  },
-  groupHeader: {
-    fontSize: 20,
-    marginBottom: 20,
-  },
-  group: {
-    margin: 20,
-    backgroundColor: "#fff",
-    borderRadius: 10,
-    padding: 20,
-  },
+const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#eee",
+    backgroundColor: colors.background,
   },
-  view: {
+  content: {
+    paddingBottom: 100,
+  },
+  permissionAction: {
+    paddingVertical: 8,
+  },
+  summaryHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    padding: 16,
+  },
+  summaryIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: colors.background,
+    justifyContent: "center",
+    alignItems: "center",
+    marginRight: 16,
+  },
+  summaryContent: {
     flex: 1,
-    height: 200,
   },
-  appIcon: {
-    width: 300,
-    height: 300,
+  summaryTitle: {
+    fontSize: 20,
+    fontWeight: "600",
+    color: colors.text,
+    marginBottom: 6,
   },
-};
+  statsRow: {
+    flexDirection: "row",
+    paddingVertical: 16,
+    paddingHorizontal: 8,
+  },
+  statItem: {
+    flex: 1,
+    alignItems: "center",
+  },
+  statValue: {
+    fontSize: 24,
+    fontWeight: "700",
+    color: colors.text,
+    marginTop: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: colors.textTertiary,
+    marginTop: 2,
+  },
+  previewLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: colors.textTertiary,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  blockedItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  blockedIcon: {
+    width: 32,
+    height: 32,
+    marginRight: 12,
+  },
+  blockedTitle: {
+    flex: 1,
+    height: 24,
+  },
+  blockedFull: {
+    flex: 1,
+    height: 32,
+  },
+  moreText: {
+    fontSize: 13,
+    color: colors.primary,
+    paddingHorizontal: 16,
+    paddingBottom: 12,
+  },
+  emptyCard: {
+    marginTop: 8,
+  },
+  footer: {
+    height: 20,
+  },
+});

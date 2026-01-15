@@ -6,7 +6,9 @@
   ],
   "apple": {
     "modules": [
-      "ExpoScreenTimeModule"
+      "ExpoScreenTimeModule",
+      "ExpoScreenTimeTokenLabelModule",
+      "ExpoScreenTimeReportModule"
     ]
   },
   "android": {

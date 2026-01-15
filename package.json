@@ -13,7 +13,9 @@
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module",
     "open:ios": "xed example/ios",
-    "open:android": "open -a \"Android Studio\" example/android"
+    "open:android": "open -a \"Android Studio\" example/android",
+    "android": "expo run:android",
+    "ios": "expo run:ios"
   },
   "keywords": [
     "react-native",
@@ -28,7 +30,14 @@
   "author": "Jérémy Magrin <contact@magrin.fr> (magrinj)",
   "license": "MIT",
   "homepage": "https://github.com/magrinj/expo-screen-time.git#readme",
-  "dependencies": {},
+  "dependencies": {
+    "@bacons/apple-targets": "file:./expo-apple-targets/packages/apple-targets",
+    "@kingstinct/expo-apple-targets": "^0.0.5",
+    "@bacons/xcode": "^1.0.0-alpha.5",
+    "expo": "~52.0.48",
+    "react": "18.3.1",
+    "react-native": "0.76.9"
+  },
   "devDependencies": {
     "@types/react": "~18.3.12",
     "expo-module-scripts": "^4.0.3",
@@ -39,5 +48,6 @@
     "expo": "*",
     "react": "*",
     "react-native": "*"
-  }
+  },
+  "packageManager": "yarn@1.22.19+sha512.ff4579ab459bb25aa7c0ff75b62acebe576f6084b36aa842971cf250a5d8c6cd3bc9420b22ce63c7f93a0857bc6ef29291db39c3e7a23aab5adfd5a4dd6c5d71"
 }

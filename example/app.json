@@ -15,7 +15,12 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "expo.modules.screentime.example"
+      "bundleIdentifier": "com.magrinj.exposcreentime.example",
+      "appleTeamId": "H8W629E3PM",
+      "entitlements": {
+        "com.apple.security.application-groups": ["group.com.magrinj.exposcreentime.example"],
+        "com.apple.developer.family-controls": true
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -28,7 +33,15 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "../app.plugin.js",
+      [
+        "@bacons/apple-targets",
+        {
+          "libraryTargets": [".."]
+        }
+      ],
+      "./plugins/disable-extension-previews"
     ]
   }
 }

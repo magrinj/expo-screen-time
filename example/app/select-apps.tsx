@@ -1,26 +1,22 @@
-import { ExpoScreenTimeActivityPicker } from "expo-screen-time";
-import { useAtom } from 'jotai';
-import { selectionAtom } from "./_layout";
+import { ActivityPicker } from "expo-screen-time";
+import { StyleSheet } from "react-native";
+
+import { SELECTION_ID } from "./_layout";
 
 export default function SelectApps() {
-  const [selection, setSelection] = useAtom(selectionAtom);
-
-  console.log("SelectApps", selection);
-
   return (
-    <ExpoScreenTimeActivityPicker
-      style={styles.view}
-      selection={selection}
-      onSelectionChange={({ nativeEvent }) => {
-        setSelection(nativeEvent.selection);
-        console.log("selection", nativeEvent.selection);
-      }}
+    <ActivityPicker
+      style={styles.picker}
+      selectionId={SELECTION_ID}
+      headerText="Select apps, categories, or web domains to block"
+      footerText="Selected items will be shielded when you block them"
     />
   );
 }
 
-const styles = {
-  view: {
+const styles = StyleSheet.create({
+  picker: {
     flex: 1,
+    backgroundColor: "#F2F2F7",
   },
-};
+});
