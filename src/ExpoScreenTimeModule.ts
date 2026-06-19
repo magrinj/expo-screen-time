@@ -1,7 +1,7 @@
 import { NativeModule, requireNativeModule } from "expo";
-import { PermissionResponse } from "expo-modules-core";
+import type { PermissionResponse } from "expo-modules-core";
 
-import {
+import type {
   ExpoScreenTimeModuleEvents,
   MonitoringConfiguration,
   ShieldConfig,

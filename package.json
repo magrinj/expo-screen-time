@@ -34,15 +34,15 @@
     "@bacons/apple-targets": "file:./expo-apple-targets/packages/apple-targets",
     "@kingstinct/expo-apple-targets": "^0.0.5",
     "@bacons/xcode": "^1.0.0-alpha.5",
-    "expo": "~52.0.48",
-    "react": "18.3.1",
-    "react-native": "0.76.9"
+    "expo": "~56.0.12",
+    "react": "19.2.3",
+    "react-native": "0.85.3"
   },
   "devDependencies": {
-    "@types/react": "~18.3.12",
-    "expo-module-scripts": "^4.0.3",
-    "expo": "~52.0.0",
-    "react-native": "0.76.0"
+    "@types/react": "~19.2.3",
+    "expo-module-scripts": "^56.0.3",
+    "expo": "~56.0.12",
+    "react-native": "0.85.3"
   },
   "peerDependencies": {
     "expo": "*",

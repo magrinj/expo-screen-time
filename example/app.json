@@ -7,18 +7,14 @@
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
     "scheme": "expo-screen-time-example",
-    "newArchEnabled": true,
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
-    },
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.magrinj.exposcreentime.example",
       "appleTeamId": "H8W629E3PM",
       "entitlements": {
-        "com.apple.security.application-groups": ["group.com.magrinj.exposcreentime.example"],
+        "com.apple.security.application-groups": [
+          "group.com.magrinj.exposcreentime.example"
+        ],
         "com.apple.developer.family-controls": true
       }
     },
@@ -38,10 +34,22 @@
       [
         "@bacons/apple-targets",
         {
-          "libraryTargets": [".."]
+          "libraryTargets": [
+            ".."
+          ]
         }
       ],
-      "./plugins/disable-extension-previews"
+      "./plugins/disable-extension-previews",
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#ffffff"
+        }
+      ]
     ]
   }
 }

@@ -2,14 +2,14 @@ import { requireNativeView } from "expo";
 import { useEffect } from "react";
 import {
   Platform,
-  StyleProp,
+  type StyleProp,
   View,
-  ViewStyle,
+  type ViewStyle,
   Text,
   StyleSheet,
 } from "react-native";
 
-import ExpoScreenTimeModule, { ReportStyle } from "./ExpoScreenTimeModule";
+import ExpoScreenTimeModule, { type ReportStyle } from "./ExpoScreenTimeModule";
 
 /**
  * Report context determines which report view to display
