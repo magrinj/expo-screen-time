@@ -71,10 +71,13 @@ interface NativeReportViewProps {
 }
 
 // Native view for iOS 16+ using Expo's new view API
-// The view name matches the module name in ExpoScreenTimeReportModule.swift
+// Registered as a named view on the ExpoScreenTime module (see ExpoScreenTimeModule.swift)
 const NativeReportView =
   Platform.OS === "ios"
-    ? requireNativeView<NativeReportViewProps>("ExpoScreenTimeReport")
+    ? requireNativeView<NativeReportViewProps>(
+        "ExpoScreenTime",
+        "ExpoScreenTimeReportView",
+      )
     : null;
 
 /**

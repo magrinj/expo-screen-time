@@ -4,7 +4,8 @@ import * as React from "react";
 import type { TokenLabelProps, DisplayMode } from "./ExpoScreenTime.types";
 
 const NativeView: React.ComponentType<TokenLabelProps> = requireNativeView(
-  "ExpoScreenTimeTokenLabel",
+  "ExpoScreenTime",
+  "ExpoScreenTimeTokenLabelView",
 );
 
 /**

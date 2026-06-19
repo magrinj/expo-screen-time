@@ -493,6 +493,38 @@ public class ExpoScreenTimeModule: Module {
 
             Events("onSelectionChange", "onOpen", "onClose")
         }
+
+        View(ExpoScreenTimeReportView.self) {
+            Prop("context") { (view: ExpoScreenTimeReportView, context: String) in
+                view.setContext(context)
+            }
+
+            Prop("filterSegment") { (view: ExpoScreenTimeReportView, segment: String) in
+                view.setFilterSegment(segment)
+            }
+
+            Prop("filterDate") { (view: ExpoScreenTimeReportView, timestamp: Double) in
+                view.setFilterDate(timestamp)
+            }
+        }
+
+        View(ExpoScreenTimeTokenLabelView.self) {
+            Prop("tokenType") { (view: ExpoScreenTimeTokenLabelView, tokenType: String?) in
+                view.setTokenType(tokenType)
+            }
+
+            Prop("displayMode") { (view: ExpoScreenTimeTokenLabelView, displayMode: String?) in
+                view.setDisplayMode(displayMode)
+            }
+
+            Prop("selectionId") { (view: ExpoScreenTimeTokenLabelView, selectionId: String?) in
+                view.setSelectionId(selectionId)
+            }
+
+            Prop("handle") { (view: ExpoScreenTimeTokenLabelView, handle: String?) in
+                view.setHandle(handle)
+            }
+        }
     }
 
     // MARK: - Private Helpers
