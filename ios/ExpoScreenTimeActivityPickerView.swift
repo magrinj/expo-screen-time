@@ -47,7 +47,7 @@ class ExpoScreenTimeActivityPickerView: ExpoView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if let parentVC = self.reactViewController() {
+        if let parentVC = self.parentViewController {
             parentVC.addChild(hostingController)
             hostingController.didMove(toParent: parentVC)
         }

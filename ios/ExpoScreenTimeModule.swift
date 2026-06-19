@@ -37,7 +37,7 @@ public class ExpoScreenTimeModule: Module {
         AsyncFunction("getScreenTimePermissionsAsync") { (promise: Promise) in
             appContext?.permissions?.getPermissionUsingRequesterClass(
                 ScreenTimePermissionRequester.self,
-                resolve: promise.resolver,
+                resolve: promise.legacyResolver,
                 reject: promise.legacyRejecter
             )
         }
@@ -45,7 +45,7 @@ public class ExpoScreenTimeModule: Module {
         AsyncFunction("requestScreenTimePermissionsAsync") { (promise: Promise) in
             appContext?.permissions?.askForPermission(
                 usingRequesterClass: ScreenTimePermissionRequester.self,
-                resolve: promise.resolver,
+                resolve: promise.legacyResolver,
                 reject: promise.legacyRejecter
             )
         }

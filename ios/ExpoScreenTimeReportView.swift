@@ -83,7 +83,7 @@ class ExpoScreenTimeReportView: ExpoView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
-        if let parentVC = self.reactViewController(), let hosting = hostingController {
+        if let parentVC = self.parentViewController, let hosting = hostingController {
             if hosting.parent == nil {
                 parentVC.addChild(hosting)
                 hosting.didMove(toParent: parentVC)
@@ -127,7 +127,7 @@ class ExpoScreenTimeReportView: ExpoView {
         addSubview(hosting.view)
         hosting.view.frame = bounds
 
-        if let parentVC = self.reactViewController() {
+        if let parentVC = self.parentViewController {
             parentVC.addChild(hosting)
             hosting.didMove(toParent: parentVC)
         }
