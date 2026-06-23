@@ -31,15 +31,6 @@
     "plugins": [
       "expo-router",
       "../app.plugin.js",
-      [
-        "@bacons/apple-targets",
-        {
-          "libraryTargets": [
-            ".."
-          ]
-        }
-      ],
-      "./plugins/disable-extension-previews",
       "expo-font",
       [
         "expo-splash-screen",

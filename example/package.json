@@ -10,7 +10,6 @@
     "postinstall": "ln -sfn ../.. node_modules/expo-screen-time"
   },
   "dependencies": {
-    "@bacons/apple-targets": "file:../expo-apple-targets/packages/apple-targets",
     "@expo/vector-icons": "^15.0.3",
     "@react-native-async-storage/async-storage": "^2.2.0",
     "expo": "~56.0.12",

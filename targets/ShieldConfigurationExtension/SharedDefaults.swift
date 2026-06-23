@@ -42,7 +42,7 @@ class SharedDefaults {
                 .replacingOccurrences(of: ".DeviceActivityReportExtension", with: "")
                 // Alternative naming conventions (kebab-case)
                 .replacingOccurrences(of: ".device-activity-monitor", with: "")
-                .replacingOccurrences(of: ".shield-configuration", with: "")
+                .replacingOccurrences(of: ".shield-config", with: "")
                 .replacingOccurrences(of: ".shield-action", with: "")
                 .replacingOccurrences(of: ".device-activity-report", with: "")
 

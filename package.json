@@ -31,9 +31,6 @@
   "license": "MIT",
   "homepage": "https://github.com/magrinj/expo-screen-time.git#readme",
   "dependencies": {
-    "@bacons/apple-targets": "file:./expo-apple-targets/packages/apple-targets",
-    "@kingstinct/expo-apple-targets": "^0.0.5",
-    "@bacons/xcode": "^1.0.0-alpha.5",
     "expo": "~56.0.12",
     "react": "19.2.3",
     "react-native": "0.85.3"

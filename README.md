@@ -19,17 +19,17 @@ An Expo module that wraps Apple's Screen Time APIs (FamilyControls, ManagedSetti
 ## Requirements
 
 - iOS 16.0+
-- Expo SDK 52+
+- Expo SDK 56+
 - Apple Developer account with Family Controls capability
 
 ## Installation
 
 ```bash
-npm install expo-screen-time @bacons/apple-targets
+npm install expo-screen-time
 # or
-yarn add expo-screen-time @bacons/apple-targets
+yarn add expo-screen-time
 # or
-bun add expo-screen-time @bacons/apple-targets
+bun add expo-screen-time
 ```
 
 ## Configuration
@@ -45,10 +45,7 @@ Add the plugins to your `app.json` or `app.config.js`:
       "bundleIdentifier": "com.yourcompany.yourapp",
       "appleTeamId": "YOUR_TEAM_ID"
     },
-    "plugins": [
-      "expo-screen-time",
-      ["@bacons/apple-targets", { "libraryTargets": ["expo-screen-time"] }]
-    ]
+    "plugins": ["expo-screen-time"]
   }
 }
 ```
@@ -56,6 +53,9 @@ Add the plugins to your `app.json` or `app.config.js`:
 The `expo-screen-time` plugin automatically configures:
 - **App Groups** entitlement (for sharing data between app and extensions)
 - **Family Controls** entitlement
+- The **iOS extension targets** (added directly to the Xcode project — no `@bacons/apple-targets` required)
+
+> Run `npx expo prebuild --clean` after adding the plugin so the extension targets are generated.
 
 ### Plugin Options
 
@@ -76,7 +76,7 @@ This library ships with 4 iOS extension targets that enable advanced Screen Time
 | `ShieldConfigurationExtension` | Customize the shield (blocking) screen appearance |
 | `ShieldActionExtension` | Handle shield button actions (close, snooze, unblock) |
 
-By default, all targets are included when using `@bacons/apple-targets`.
+By default, all 4 targets are generated.
 
 ### Target Selection
 
@@ -90,52 +90,20 @@ To include only specific targets, use `expo.extra.expoScreenTime.targets`:
         "targets": ["ShieldConfigurationExtension", "DeviceActivityReportExtension"]
       }
     },
-    "plugins": [
-      "expo-screen-time",
-      ["@bacons/apple-targets", { "libraryTargets": ["expo-screen-time"] }]
-    ]
+    "plugins": ["expo-screen-time"]
   }
 }
 ```
 
-**Include all targets (default):**
-```json
-{
-  "plugins": [
-    "expo-screen-time",
-    ["@bacons/apple-targets", { "libraryTargets": ["expo-screen-time"] }]
-  ]
-}
-```
-
-**Include no extension targets (basic blocking only):**
-```json
-{
-  "extra": {
-    "expoScreenTime": {
-      "targets": []
-    }
-  },
-  "plugins": ["expo-screen-time"]
-}
-```
+- **Omit** `targets` → all 4 targets are generated (default).
+- **Empty array** `[]` → no extension targets (basic app/category blocking only).
 
 ### Using with Other Apple Targets
 
-If your app already uses `@bacons/apple-targets` for widgets or other extensions, simply add `"expo-screen-time"` to the `libraryTargets` array:
-
-```json
-{
-  "plugins": [
-    "expo-screen-time",
-    ["@bacons/apple-targets", {
-      "libraryTargets": ["expo-screen-time", "my-widget-library"]
-    }]
-  ]
-}
-```
-
-Both library targets and any local targets in your `./targets` folder will be included.
+`expo-screen-time` adds its extension targets to the Xcode project directly via
+Expo's config-plugin system, so it's self-contained and coexists with other
+plugins that edit the project (including `@bacons/apple-targets` if you use it
+for widgets or other extensions). No extra wiring is required.
 
 ## API Reference
 
@@ -682,9 +650,10 @@ The user must grant Family Controls permission before any blocking features work
 
 ### Extensions not appearing
 
-1. Ensure `@bacons/apple-targets` is in your plugins with `libraryTargets: ["expo-screen-time"]`
+1. Ensure `"expo-screen-time"` is in your `plugins` array
 2. Run `npx expo prebuild --clean` to regenerate native code
-3. Check that your Apple Team ID is set in `ios.appleTeamId`
+3. Check that your `ios.bundleIdentifier` and `ios.appleTeamId` are set
+4. If filtering targets, confirm the extension is listed in `expo.extra.expoScreenTime.targets`
 
 ### Shield configuration not applying
 
@@ -704,5 +673,6 @@ MIT
 
 ## Credits
 
-- [@bacons/apple-targets](https://github.com/EvanBacon/expo-apple-targets) - Expo plugin for adding iOS extension targets
+- [expo-widgets](https://github.com/expo/expo/tree/main/packages/expo-widgets) - Expo's first-party config-plugin approach for generating Apple targets, which this library's target generation is modeled on
+- [@bacons/apple-targets](https://github.com/EvanBacon/expo-apple-targets) - Evan Bacon's apple-targets plugin, the original inspiration
 - Apple's [Screen Time API](https://developer.apple.com/documentation/familycontrols) documentation
