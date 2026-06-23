@@ -82,6 +82,14 @@ function filterEnabledTargets(config: { extra?: any }): ScreenTimeTarget[] {
   if (!Array.isArray(enabled)) {
     return SCREEN_TIME_TARGETS;
   }
+  const known = SCREEN_TIME_TARGETS.map((t) => t.name);
+  const unknown = enabled.filter((name) => !known.includes(name));
+  if (unknown.length) {
+    console.warn(
+      `[expo-screen-time] Ignoring unknown target name(s) in extra.expoScreenTime.targets: ` +
+        `${unknown.join(', ')}. Valid names: ${known.join(', ')}.`
+    );
+  }
   return SCREEN_TIME_TARGETS.filter((target) => enabled.includes(target.name));
 }
 

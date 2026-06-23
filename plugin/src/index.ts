@@ -41,10 +41,19 @@ const TARGETS_ROOT = path.resolve(__dirname, '..', '..', 'targets');
  * - DeviceActivityReportExtension - Usage analytics view
  */
 const withExpoScreenTime: ConfigPlugin = (config) => {
+  const bundleIdentifier = config.ios?.bundleIdentifier;
+  if (!bundleIdentifier) {
+    console.warn(
+      '[expo-screen-time] Skipped: set `ios.bundleIdentifier` in your app config — ' +
+        'it is required to derive the App Group and extension bundle ids.'
+    );
+    return config;
+  }
+
   // App Group shared between the app and its extensions. The native code derives
   // the same `group.<bundleId>` (extensions strip their bundle-id suffix), so
   // this is not configurable — a custom value would silently not be read.
-  const resolvedAppGroup = `group.${config.ios?.bundleIdentifier}`;
+  const resolvedAppGroup = `group.${bundleIdentifier}`;
 
   // Main app: App Group + Family Controls entitlements.
   config = withEntitlementsPlist(config, (entConfig) => {

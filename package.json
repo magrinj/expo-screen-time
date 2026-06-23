@@ -4,6 +4,17 @@
   "description": "A module for accessing and managing screen time data.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
+  "files": [
+    "build",
+    "plugin/build",
+    "src",
+    "plugin/src",
+    "ios",
+    "android",
+    "targets",
+    "app.plugin.js",
+    "expo-module.config.json"
+  ],
   "scripts": {
     "build": "expo-module build && expo-module build plugin",
     "build:plugin": "expo-module build plugin",
