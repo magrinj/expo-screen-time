@@ -91,6 +91,15 @@ public class ScreenTimeManager: NSObject {
         }
     }
 
+    /// Whether anything is currently shielded (apps, categories, or web domains).
+    /// Reflects the real ManagedSettings state, not the stored selection.
+    public func isBlocked() -> Bool {
+        guard #available(iOS 16.0, *) else { return false }
+        return !(managedSettingsStore.shield.applications?.isEmpty ?? true) ||
+               managedSettingsStore.shield.applicationCategories != .none ||
+               !(managedSettingsStore.shield.webDomains?.isEmpty ?? true)
+    }
+
     /// Force iOS to reload shield configuration by toggling shields
     /// Call this after updating shield configuration via SharedDefaults
     public func refreshShields() {

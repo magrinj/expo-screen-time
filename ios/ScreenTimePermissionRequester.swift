@@ -35,17 +35,29 @@ public class ScreenTimePermissionRequester: NSObject, EXPermissionsRequester {
     }
     
     public func requestPermissions(resolver resolve: @escaping EXPromiseResolveBlock, rejecter reject: @escaping EXPromiseRejectBlock) {
-        if #available(iOS 16.0, *) {
-            Task {
-                do {
-                    try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
-                    resolve(self.getPermissions())
-                } catch {
-                    reject("E_SCREEN_TIME_PERMISSION", "Failed to request Screen Time permissions", error)
-                }
-            }
-        } else {
+        guard #available(iOS 16.0, *) else {
             reject("E_UNSUPPORTED_IOS", "Screen Time API is not supported on this iOS version", nil)
+            return
+        }
+
+        // Already decided: re-requesting authorization throws even when it is
+        // already approved, so report the current status instead of asking again.
+        if AuthorizationCenter.shared.authorizationStatus == .approved {
+            resolve(self.getPermissions())
+            return
+        }
+
+        Task {
+            do {
+                try await AuthorizationCenter.shared.requestAuthorization(for: .individual)
+            } catch {
+                // The request can throw even when the user ultimately approved (or
+                // the status changed out of band). Report the resulting status
+                // instead of rejecting — matching Expo's permission convention and
+                // avoiding an uncaught rejection in the JS permission hook.
+                print("[expo-screen-time] requestAuthorization error: \(error)")
+            }
+            resolve(self.getPermissions())
         }
     }
     

@@ -24,10 +24,13 @@ import {
 export default function HomeScreen() {
   const { tokens, metadata, refresh } = useNativeSelection(SELECTION_ID);
   const [permissions, setPermissions] = useState<PermissionResponse | null>(null);
+  const [isBlocked, setIsBlocked] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
       refresh();
+      // Reflect the real shield state, not just whether a selection exists.
+      setIsBlocked(ExpoScreenTime.isBlocked());
     }, [refresh])
   );
 
@@ -38,7 +41,7 @@ export default function HomeScreen() {
   const appsCount = metadata?.applicationCount ?? 0;
   const categoriesCount = metadata?.categoryCount ?? 0;
   const domainsCount = metadata?.webDomainCount ?? 0;
-  const totalBlocked = appsCount + categoriesCount + domainsCount;
+  const totalSelected = appsCount + categoriesCount + domainsCount;
 
   const appTokens = tokens.filter((t) => t.type === "application");
   const categoryTokens = tokens.filter((t) => t.type === "category");
@@ -80,23 +83,23 @@ export default function HomeScreen() {
         <View style={styles.summaryHeader}>
           <View style={styles.summaryIcon}>
             <Ionicons
-              name={totalBlocked > 0 ? "shield" : "shield-outline"}
+              name={isBlocked ? "shield" : "shield-outline"}
               size={32}
-              color={totalBlocked > 0 ? colors.primary : colors.textTertiary}
+              color={isBlocked ? colors.primary : colors.textTertiary}
             />
           </View>
           <View style={styles.summaryContent}>
             <Text style={styles.summaryTitle}>
-              {totalBlocked > 0 ? `${totalBlocked} Items Blocked` : "No Blocking Active"}
+              {isBlocked ? `${totalSelected} Items Blocked` : "No Blocking Active"}
             </Text>
             <StatusBadge
-              status={totalBlocked > 0 ? "success" : "neutral"}
-              label={totalBlocked > 0 ? "Active" : "Inactive"}
+              status={isBlocked ? "success" : "neutral"}
+              label={isBlocked ? "Active" : "Inactive"}
             />
           </View>
         </View>
 
-        {totalBlocked > 0 && (
+        {isBlocked && (
           <>
             <Separator />
             <View style={styles.statsRow}>
@@ -121,7 +124,7 @@ export default function HomeScreen() {
       </Card>
 
       {/* Currently Blocked Preview */}
-      {totalBlocked > 0 && (
+      {isBlocked && (
         <>
           <SectionHeader title="Currently Blocked" />
           <Card>
@@ -194,7 +197,7 @@ export default function HomeScreen() {
       )}
 
       {/* Empty State */}
-      {totalBlocked === 0 && permissionGranted && (
+      {totalSelected === 0 && permissionGranted && (
         <Card style={styles.emptyCard}>
           <EmptyState
             icon="shield-outline"

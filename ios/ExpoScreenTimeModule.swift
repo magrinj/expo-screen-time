@@ -85,6 +85,10 @@ public class ExpoScreenTimeModule: Module {
             screenTimeManager.unblockAll()
         }
 
+        Function("isBlocked") { () -> Bool in
+            return screenTimeManager.isBlocked()
+        }
+
         Function("blockWebDomains") { (domains: [String]) in
             screenTimeManager.blockWebDomains(domains)
         }

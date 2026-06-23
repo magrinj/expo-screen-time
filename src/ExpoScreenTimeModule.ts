@@ -25,6 +25,8 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   // Blocking
   blockSelection(selectionId: string): void;
   unblockAll(): void;
+  /** Whether anything is currently shielded (reflects the real ManagedSettings state). */
+  isBlocked(): boolean;
   blockWebDomains(domains: string[]): void;
   unblockWebDomains(domains: string[]): void;
   unblockAllWebDomains(): void;
