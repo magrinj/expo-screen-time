@@ -9,6 +9,10 @@ const path = require('path');
 const root = path.resolve(__dirname, '..');
 const config = getDefaultConfig(__dirname);
 
+// Escape an absolute path so it is safe to embed in a RegExp (the checkout path
+// may contain regex metacharacters like `.`, `+`, `(`).
+const reEscape = (p) => p.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 config.watchFolders = [root];
 config.resolver.nodeModulesPaths = [
   path.resolve(__dirname, 'node_modules'),
@@ -17,8 +21,8 @@ config.resolver.nodeModulesPaths = [
 // Dedupe the library's react/react-native (resolved from root) against the example's.
 config.resolver.blockList = [
   ...Array.from(config.resolver.blockList ?? []),
-  new RegExp(path.resolve(root, 'node_modules', 'react') + '/.*'),
-  new RegExp(path.resolve(root, 'node_modules', 'react-native') + '/.*'),
+  new RegExp(reEscape(path.resolve(root, 'node_modules', 'react')) + '/.*'),
+  new RegExp(reEscape(path.resolve(root, 'node_modules', 'react-native')) + '/.*'),
 ];
 
 module.exports = config;

@@ -228,7 +228,7 @@ function addTargetDependency(project: XcodeProject, target: { uuid: string }) {
   objects.PBXContainerItemProxy ??= {};
   const targetDependencies = objects.PBXTargetDependency;
 
-  const mainTargetUuid = project.getFirstTarget().uuid;
+  const mainTargetUuid = getAppTargetUuid(project);
   const mainTarget = project.pbxNativeTargetSection()[mainTargetUuid];
   mainTarget.dependencies ??= [];
 
@@ -257,7 +257,7 @@ function addBuildPhases(
 ) {
   const buildPath = `""`;
   const folderType = 'app_extension';
-  const mainTargetUuid = project.getFirstTarget().uuid;
+  const mainTargetUuid = getAppTargetUuid(project);
 
   // Sources phase on the extension target (our copied .swift files).
   if (!getBuildPhase(project, 'PBXSourcesBuildPhase', targetUuid)) {
@@ -301,19 +301,24 @@ function getBuildPhase(
   return phase ? section[phase.value] : null;
 }
 
+/** The host app target's UUID — resolved by product type, not array position. */
+function getAppTargetUuid(project: XcodeProject): string {
+  const appTarget = (project as any).getTarget('com.apple.product-type.application');
+  return appTarget?.uuid ?? project.getFirstTarget().uuid;
+}
+
 function addPbxGroup(project: XcodeProject, { targetName, files }: { targetName: string; files: string[] }) {
   if (project.pbxGroupByName(targetName)) {
     return;
   }
   // Paths are project-root-relative, so the group must be a *virtual* group with
   // no `path` of its own (a real path would double-prefix to
-  // `<Target>/<Target>/file.swift`). The group reuses the build-phase file
-  // references by matching their path, giving every source build file a parent.
-  const { uuid } = project.addPbxGroup(
-    Array.from(new Set([...files, `${targetName}/${targetName}.entitlements`])),
-    targetName,
-    undefined as unknown as string
-  );
+  // `<Target>/<Target>/file.swift`). Only the (already-referenced) source files
+  // go in the group — they reuse the build-phase file references by path, giving
+  // every source build file a parent. The entitlements is intentionally omitted:
+  // it's referenced via CODE_SIGN_ENTITLEMENTS, and passing it here would mint an
+  // orphan PBXBuildFile (the xcode lib adds every new path to the build-file section).
+  const { uuid } = project.addPbxGroup(Array.from(new Set(files)), targetName, undefined as unknown as string);
   const groups = project.hash.project.objects['PBXGroup'] as Record<string, any>;
   // `addPbxGroup` always writes a `path` key; with no path it serializes as the
   // literal `path = undefined`, which Xcode reads as an "undefined/" folder. Drop
@@ -322,10 +327,8 @@ function addPbxGroup(project: XcodeProject, { targetName, files }: { targetName:
     delete groups[uuid].path;
   }
   if (uuid) {
-    Object.keys(groups).forEach((key) => {
-      if (groups[key].name === undefined && groups[key].path === undefined) {
-        project.addToPbxGroup(uuid, key);
-      }
-    });
+    // Attach to the project's main group deterministically (not by scanning for an
+    // anonymous group, which could match more than one in a consumer's project).
+    project.addToPbxGroup(uuid, project.getFirstProject().firstProject.mainGroup);
   }
 }
