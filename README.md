@@ -57,13 +57,7 @@ The `expo-screen-time` plugin automatically configures:
 
 > Run `npx expo prebuild --clean` after adding the plugin so the extension targets are generated.
 
-### Plugin Options
-
-```json
-["expo-screen-time", {
-  "appGroup": "group.com.yourcompany.custom"  // Optional: custom App Group identifier
-}]
-```
+The shared App Group is `group.<your ios.bundleIdentifier>` and is configured automatically.
 
 ### Extension Targets
 
