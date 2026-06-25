@@ -1,3 +1,4 @@
+import plist from '@expo/plist';
 import { ConfigPlugin, withDangerousMod } from 'expo/config-plugins';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -51,26 +52,15 @@ const withTargetSourceFiles: ConfigPlugin<TargetSourceFilesProps> = (
       // Generate the entitlements (family-controls + shared app group).
       fs.writeFileSync(
         path.join(targetDir, `${targetName}.entitlements`),
-        entitlementsPlist(groupIdentifier)
+        plist.build({
+          'com.apple.developer.family-controls': true,
+          'com.apple.security.application-groups': [groupIdentifier],
+        })
       );
 
       onFilesGenerated(swiftFiles);
       return config;
     },
   ]);
-
-const entitlementsPlist = (groupIdentifier: string) => `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>com.apple.developer.family-controls</key>
-	<true/>
-	<key>com.apple.security.application-groups</key>
-	<array>
-		<string>${groupIdentifier}</string>
-	</array>
-</dict>
-</plist>
-`;
 
 export default withTargetSourceFiles;
