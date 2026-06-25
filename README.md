@@ -630,9 +630,13 @@ See the `example/` directory for a complete example app demonstrating all featur
 
 ```bash
 cd example
-bun install
+bun install   # postinstall builds the plugin (../plugin/build) and symlinks the module
 bun run ios
 ```
+
+> The config plugin loads from the gitignored `plugin/build`. The example's
+> `postinstall` runs the root `bun run build` for you; if you build the module
+> manually, run `bun run build` at the repo root before `expo prebuild`.
 
 ---
 

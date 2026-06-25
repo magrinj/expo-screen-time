@@ -27,54 +27,84 @@ const withTargetXcodeProject: ConfigPlugin<TargetXcodeProjectProps> = (
   { targetName, bundleIdentifier, appleTeamId, getFileUris }
 ) =>
   withXcodeProject(config, (config) => {
-    const project = config.modResults;
-    const targetUuid = project.generateUuid();
-    const marketingVersion = config.ios?.version ?? config.version ?? '1.0';
-    const currentProjectVersion = config.ios?.buildNumber ?? '1';
-
-    const xCConfigurationList = addXCConfigurationList(project, {
+    applyTargetToXcodeProject(config.modResults, {
       targetName,
       bundleIdentifier,
       appleTeamId,
-      marketingVersion,
-      currentProjectVersion,
+      platformProjectRoot: config.modRequest.platformProjectRoot,
+      fileUris: getFileUris(),
+      marketingVersion: config.ios?.version ?? config.version ?? '1.0',
+      currentProjectVersion: config.ios?.buildNumber ?? '1',
     });
-
-    const productFile = addProductFile(project, { targetName, groupName: EMBED_GROUP });
-
-    const target = addToPbxNativeTargetSection(project, {
-      targetName,
-      targetUuid,
-      productFile,
-      xCConfigurationList,
-    });
-
-    addToPbxProjectSection(project, target);
-    addTargetDependency(project, target);
-
-    // Resolve generated file paths relative to the PROJECT root, not the target
-    // dir, so shared file names (SharedDefaults.swift, SelectionStore.swift)
-    // copied into several targets stay unique (`<Target>/SharedDefaults.swift`).
-    // The `xcode` lib dedupes file references by path; colliding basenames leave
-    // build files without a parent group and break `pod install`'s project save.
-    const relativePaths = getFileUris().map((file) =>
-      path.relative(config.modRequest.platformProjectRoot, file)
-    );
-    const swiftFiles = relativePaths.filter((file) => file.endsWith('.swift'));
-
-    addBuildPhases(project, {
-      targetUuid: target.uuid,
-      groupName: EMBED_GROUP,
-      productFile,
-      sourceFiles: swiftFiles,
-    });
-
-    addPbxGroup(project, { targetName, files: relativePaths });
-
     return config;
   });
 
 export default withTargetXcodeProject;
+
+/**
+ * Mutates a parsed pbxproj to add one app-extension target. Split out from the
+ * mod so it can be exercised against a fixture in tests (the mod itself only
+ * threads Expo's config into here). Idempotent: re-applying changes nothing.
+ */
+export function applyTargetToXcodeProject(
+  project: XcodeProject,
+  {
+    targetName,
+    bundleIdentifier,
+    appleTeamId,
+    platformProjectRoot,
+    fileUris,
+    marketingVersion,
+    currentProjectVersion,
+  }: {
+    targetName: string;
+    bundleIdentifier: string;
+    appleTeamId?: string;
+    platformProjectRoot: string;
+    fileUris: string[];
+    marketingVersion: string;
+    currentProjectVersion: string;
+  }
+): void {
+  const targetUuid = project.generateUuid();
+
+  const xCConfigurationList = addXCConfigurationList(project, {
+    targetName,
+    bundleIdentifier,
+    appleTeamId,
+    marketingVersion,
+    currentProjectVersion,
+  });
+
+  const productFile = addProductFile(project, { targetName, groupName: EMBED_GROUP });
+
+  const target = addToPbxNativeTargetSection(project, {
+    targetName,
+    targetUuid,
+    productFile,
+    xCConfigurationList,
+  });
+
+  addToPbxProjectSection(project, target);
+  addTargetDependency(project, target);
+
+  // Resolve generated file paths relative to the PROJECT root, not the target
+  // dir, so shared file names (SharedDefaults.swift, SelectionStore.swift)
+  // copied into several targets stay unique (`<Target>/SharedDefaults.swift`).
+  // The `xcode` lib dedupes file references by path; colliding basenames leave
+  // build files without a parent group and break `pod install`'s project save.
+  const relativePaths = fileUris.map((file) => path.relative(platformProjectRoot, file));
+  const swiftFiles = relativePaths.filter((file) => file.endsWith('.swift'));
+
+  addBuildPhases(project, {
+    targetUuid: target.uuid,
+    groupName: EMBED_GROUP,
+    productFile,
+    sourceFiles: swiftFiles,
+  });
+
+  addPbxGroup(project, { targetName, files: relativePaths });
+}
 
 // ---------------------------------------------------------------------------
 // pbxproj helpers (adapted from expo/expo packages/expo-widgets, MIT)
