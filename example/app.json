@@ -10,13 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.magrinj.exposcreentime.example",
-      "appleTeamId": "H8W629E3PM",
-      "entitlements": {
-        "com.apple.security.application-groups": [
-          "group.com.magrinj.exposcreentime.example"
-        ],
-        "com.apple.developer.family-controls": true
-      }
+      "appleTeamId": "H8W629E3PM"
     },
     "android": {
       "adaptiveIcon": {

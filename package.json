@@ -17,7 +17,6 @@
   ],
   "scripts": {
     "build": "expo-module build && expo-module build plugin",
-    "build:plugin": "expo-module build plugin",
     "prepack": "bun run build",
     "clean": "expo-module clean",
     "lint": "expo-module lint",

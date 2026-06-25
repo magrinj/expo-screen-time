@@ -6,7 +6,8 @@ import withScreenTimeTargets from './ios/withScreenTimeTargets';
 const pkg = require('../../package.json');
 
 // The package's `targets/` directory ships each extension's Swift sources +
-// Info.plist. Resolve it from this plugin's location (build/index.js → <pkg>).
+// Info.plist. Resolve it from this plugin's built location: this file is
+// `<pkg>/plugin/build/index.js`, so up two dirs is `<pkg>`, then `/targets`.
 const TARGETS_ROOT = path.resolve(__dirname, '..', '..', 'targets');
 
 /**

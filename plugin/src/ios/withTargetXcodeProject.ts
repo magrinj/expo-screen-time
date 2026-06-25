@@ -289,7 +289,10 @@ function addBuildPhases(
   const folderType = 'app_extension';
   const mainTargetUuid = getAppTargetUuid(project);
 
-  // Sources phase on the extension target (our copied .swift files).
+  // Sources phase on the extension target (our copied .swift files). Seeded once;
+  // an existing phase is left as-is, so changing the source set (e.g. a library
+  // upgrade that adds/removes a file) requires `expo prebuild --clean`. Matches
+  // expo-widgets' addBuildPhases.
   if (!getBuildPhase(project, 'PBXSourcesBuildPhase', targetUuid)) {
     project.addBuildPhase([...sourceFiles], 'PBXSourcesBuildPhase', 'Sources', targetUuid, folderType, buildPath);
   }
@@ -337,6 +340,10 @@ function getAppTargetUuid(project: XcodeProject): string {
   return appTarget?.uuid ?? project.getFirstTarget().uuid;
 }
 
+// NOTE: All pbxproj wiring here assumes the classic `PBXGroup` layout that
+// `expo prebuild` generates. It does not handle Xcode-16 synchronized folder
+// groups (`PBXFileSystemSynchronizedRootGroup`); a project converted to those
+// would need a different file-attachment strategy.
 function addPbxGroup(project: XcodeProject, { targetName, files }: { targetName: string; files: string[] }) {
   if (project.pbxGroupByName(targetName)) {
     return;
