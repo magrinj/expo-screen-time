@@ -1,7 +1,9 @@
 name: Docs
 
 # Builds the Docusaurus site in website/ and deploys it to GitHub Pages.
-# Requires Pages enabled with "GitHub Actions" as the source (repo Settings → Pages).
+# `configure-pages` with enablement:true turns Pages on automatically on the
+# first push to main (no manual Settings → Pages step). PRs only build to catch
+# breakage; the Pages steps run on push/dispatch only.
 on:
   push:
     branches: [main]
@@ -38,8 +40,14 @@ jobs:
         run: |
           bun install
           bun run build
+      # Pages steps run only on push/dispatch — PRs (incl. dependabot/forks) just
+      # validate the build above and don't touch Pages.
       - uses: actions/configure-pages@v5
+        if: github.event_name != 'pull_request'
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
+        if: github.event_name != 'pull_request'
         with:
           path: website/build
 
