@@ -1,6 +1,6 @@
 {
   "name": "expo-screen-time",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A module for accessing and managing screen time data.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
@@ -10,14 +10,13 @@
     "src",
     "plugin/src",
     "ios",
-    "android",
     "targets",
     "app.plugin.js",
     "expo-module.config.json"
   ],
   "scripts": {
     "build": "expo-module build && expo-module build plugin",
-    "prepack": "bun run build",
+    "prepack": "EXPO_NONINTERACTIVE=1 bun run build",
     "clean": "expo-module clean",
     "lint": "expo-module lint",
     "test": "expo-module test plugin",
