@@ -1,0 +1,43 @@
+name: Release
+
+# release-please maintains a "Release PR" from your conventional commits (version
+# bump + CHANGELOG.md). Merge that PR → it tags + creates the GitHub Release, then
+# this same workflow publishes to npm via OIDC trusted publishing.
+#
+# One-time npm setup: package → Settings → Trusted Publisher → GitHub Actions,
+# repo magrinj/expo-screen-time, workflow file release.yml.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write # create the release PR, tags, and GitHub releases
+  pull-requests: write # open/update the release PR
+  id-token: write # OIDC npm publish
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        # config: release-please-config.json + .release-please-manifest.json
+
+      # Everything below runs ONLY when a Release PR was just merged
+      # (release-please created a tag + GitHub Release this run).
+      - uses: actions/checkout@v4
+        if: ${{ steps.release.outputs.release_created }}
+      - uses: oven-sh/setup-bun@v2
+        if: ${{ steps.release.outputs.release_created }}
+      - uses: actions/setup-node@v4
+        if: ${{ steps.release.outputs.release_created }}
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+      - name: Publish to npm (OIDC trusted publishing)
+        if: ${{ steps.release.outputs.release_created }}
+        run: |
+          npm install -g npm@latest   # trusted publishing needs npm >= 11.5.1
+          bun install
+          bun run build
+          npm publish --access public

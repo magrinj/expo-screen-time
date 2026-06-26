@@ -1,0 +1,27 @@
+version: 2
+updates:
+  # Keep GitHub Actions versions current (fully bun-independent).
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "ci"
+
+  # npm deps. Note: Dependabot doesn't update bun.lock — these PRs bump the
+  # package.json manifests; re-run `bun install` to refresh the lockfile.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"
+
+  - package-ecosystem: npm
+    directory: "/website"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore"

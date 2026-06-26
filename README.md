@@ -1,5 +1,10 @@
 # expo-screen-time
 
+[![npm version](https://img.shields.io/npm/v/expo-screen-time.svg)](https://www.npmjs.com/package/expo-screen-time)
+[![CI](https://github.com/magrinj/expo-screen-time/actions/workflows/ci.yml/badge.svg)](https://github.com/magrinj/expo-screen-time/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/expo-screen-time.svg)](./LICENSE)
+[![platform](https://img.shields.io/badge/platform-iOS-lightgrey.svg)](https://developer.apple.com/documentation/familycontrols)
+
 An Expo module that wraps Apple's Screen Time APIs (FamilyControls, ManagedSettings, DeviceActivity) for React Native. Enables parental control features like app blocking, usage monitoring, scheduled restrictions, and custom shield configurations.
 
 📚 **[Full documentation → magrinj.github.io/expo-screen-time](https://magrinj.github.io/expo-screen-time/)**
