@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Lint · Build · Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: bun install
+      - run: bun run lint
+      - run: bun run build
+      - run: bun run test
+
+  prebuild:
+    name: Prebuild integration (4 extension targets)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: bun install
+      # postinstall builds plugin/build + symlinks the module into example
+      - name: Install example app
+        working-directory: example
+        run: bun install
+      - name: Prebuild iOS (skip pod/npm install)
+        working-directory: example
+        run: bun expo prebuild --platform ios --no-install --clean
+      - name: Assert the plugin wired 4 app-extension targets, no orphan paths
+        working-directory: example
+        run: |
+          pbxproj=ios/exposcreentimeexample.xcodeproj/project.pbxproj
+          count=$(grep -c 'com.apple.product-type.app-extension' "$pbxproj")
+          echo "app-extension targets: $count"
+          test "$count" -eq 4
+          if grep -q 'undefined/' "$pbxproj"; then
+            echo "::error::found 'undefined/' path in pbxproj (group path regression)"
+            exit 1
+          fi
