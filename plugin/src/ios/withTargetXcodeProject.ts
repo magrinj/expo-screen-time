@@ -9,7 +9,12 @@ type TargetXcodeProjectProps = {
   targetName: string;
   bundleIdentifier: string;
   appleTeamId?: string;
-  /** Absolute paths of the files written into the target directory (Swift + entitlements). */
+  /**
+   * Absolute paths of the Swift sources written into the target directory.
+   * (The .entitlements is NOT reported here — it's referenced via
+   * CODE_SIGN_ENTITLEMENTS only; wiring it into the pbxproj would mint an
+   * orphan PBXBuildFile.)
+   */
   getFileUris: () => string[];
 };
 
@@ -93,6 +98,9 @@ export function applyTargetToXcodeProject(
   // copied into several targets stay unique (`<Target>/SharedDefaults.swift`).
   // The `xcode` lib dedupes file references by path; colliding basenames leave
   // build files without a parent group and break `pod install`'s project save.
+  // Defensive .swift filter: the group and Sources phase must only ever see the
+  // Swift sources. Anything else (e.g. an .entitlements slipped into fileUris)
+  // would mint an orphan PBXBuildFile via addPbxGroup and break pod install.
   const relativePaths = fileUris.map((file) => path.relative(platformProjectRoot, file));
   const swiftFiles = relativePaths.filter((file) => file.endsWith('.swift'));
 
@@ -103,7 +111,7 @@ export function applyTargetToXcodeProject(
     sourceFiles: swiftFiles,
   });
 
-  addPbxGroup(project, { targetName, files: relativePaths });
+  addPbxGroup(project, { targetName, files: swiftFiles });
 }
 
 // ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@
     "plugin/build",
     "src",
     "plugin/src",
+    "!plugin/src/ios/__tests__",
     "ios",
     "targets",
     "app.plugin.js",
@@ -42,15 +43,13 @@
   "license": "MIT",
   "homepage": "https://github.com/magrinj/expo-screen-time.git#readme",
   "dependencies": {
-    "@expo/plist": "^0.7.0",
-    "expo": "~56.0.12",
-    "react": "19.2.7",
-    "react-native": "0.85.3"
+    "@expo/plist": "^0.7.0"
   },
   "devDependencies": {
     "@types/react": "~19.2.3",
     "expo-module-scripts": "^56.0.3",
     "expo": "~56.0.12",
+    "react": "19.2.7",
     "react-native": "0.85.3"
   },
   "peerDependencies": {

@@ -11,7 +11,9 @@ const TARGET = 'ShieldConfigurationExtension';
 
 // SharedDefaults.swift is the colliding basename that previously orphaned a
 // build file — keep it in the list so the "every source has a parent group" check
-// actually guards that regression.
+// actually guards that regression. The .entitlements is deliberately included:
+// the implementation must filter it out (wiring it would mint an orphan
+// PBXBuildFile) — the no-orphan test below asserts that defense.
 const FILE_URIS = [
   `${PROJECT_ROOT}/${TARGET}/${TARGET}.swift`,
   `${PROJECT_ROOT}/${TARGET}/SharedDefaults.swift`,
@@ -112,5 +114,74 @@ describe('applyTargetToXcodeProject', () => {
     );
     expect(group).toBeDefined();
     expect(group.path).toBeUndefined();
+  });
+
+  it('never wires the .entitlements into the pbxproj (no orphan build file)', () => {
+    const project = load();
+    apply(project);
+    const objs = objects(project);
+
+    // No PBXBuildFile may point at an .entitlements file reference…
+    const entitlementsRefs = new Set(
+      realKeys(objs.PBXFileReference).filter((k) =>
+        String(objs.PBXFileReference[k]?.path ?? '').includes('.entitlements')
+      )
+    );
+    for (const k of realKeys(objs.PBXBuildFile)) {
+      expect(entitlementsRefs.has(objs.PBXBuildFile[k].fileRef)).toBe(false);
+    }
+    // …and the target group must not contain it either.
+    const group = realValues(objs.PBXGroup).find((g) => typeof g === 'object' && g.name === TARGET);
+    for (const child of group.children ?? []) {
+      expect(entitlementsRefs.has(child.value)).toBe(false);
+    }
+  });
+});
+
+describe('applyTargetToXcodeProject — all four targets', () => {
+  const ALL_TARGETS = [
+    'ShieldConfigurationExtension',
+    'ShieldActionExtension',
+    'DeviceActivityMonitorExtension',
+    'DeviceActivityReportExtension',
+  ];
+
+  function applyAll(project: any) {
+    for (const name of ALL_TARGETS) {
+      applyTargetToXcodeProject(project, {
+        targetName: name,
+        bundleIdentifier: `com.example.app.${name.toLowerCase()}`,
+        appleTeamId: 'ABCDE12345',
+        platformProjectRoot: PROJECT_ROOT,
+        fileUris: [
+          `${PROJECT_ROOT}/${name}/${name}.swift`,
+          // The shared basename across every target — the historical orphaning trigger.
+          `${PROJECT_ROOT}/${name}/SharedDefaults.swift`,
+        ],
+        marketingVersion: '1.0',
+        currentProjectVersion: '1',
+      });
+    }
+  }
+
+  it('is idempotent across all four targets and embeds all four .appex once', () => {
+    const project = load();
+    applyAll(project);
+    const before = counts(project);
+    applyAll(project);
+    expect(counts(project)).toEqual(before);
+
+    const objs = objects(project);
+    // Exactly 4 app-extension targets…
+    const extTargets = realValues(objs.PBXNativeTarget).filter(
+      (t) => typeof t === 'object' && String(t.productType).includes('app-extension')
+    );
+    expect(extTargets.map((t: any) => t.name).sort()).toEqual([...ALL_TARGETS].sort());
+    // …one shared "Embed Foundation Extensions" copy phase with the 4 .appex…
+    const copyPhases = realValues(objs.PBXCopyFilesBuildPhase);
+    expect(copyPhases).toHaveLength(1);
+    expect(copyPhases[0].files).toHaveLength(4);
+    // …and 4 host-target dependencies.
+    expect(realKeys(objs.PBXTargetDependency)).toHaveLength(4);
   });
 });
