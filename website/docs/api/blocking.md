@@ -1,37 +1,50 @@
 ---
 id: blocking
 title: Blocking
-sidebar_position: 3
+sidebar_position: 4
 ---
 
 # Blocking
 
 ## Apps & Categories
 
-### `blockSelection(selection: FamilyActivitySelection)`
+### `blockSelection(selectionId: string)`
 
-Block apps, categories, and web domains from a selection.
+Shield every app, category, and web domain in a stored selection. The selection
+is created by the [`<ActivityPicker />`](../components.md#activity-picker) under
+the same ID.
 
 ```typescript
-// Selection comes from ExpoScreenTimeActivityPicker's onSelectionChange
-ExpoScreenTime.blockSelection(selection);
+// 1. The user picked apps in <ActivityPicker selectionId="my-blocklist" />
+// 2. Apply the shield:
+ExpoScreenTime.blockSelection('my-blocklist');
 ```
 
-See [`FamilyActivitySelection`](../types.md#familyactivityselection) and the [activity picker](../components.md#activity-picker).
+Throws if no selection exists under that ID.
 
 ### `unblockAll()`
 
-Remove all blocks applied via `blockSelection()`.
+Remove all blocks applied via `blockSelection()` (also clears web-domain filters).
 
 ```typescript
 ExpoScreenTime.unblockAll();
 ```
 
+### `isBlocked(): boolean`
+
+Whether anything is currently shielded — reflects the real ManagedSettings state,
+not what you last asked for.
+
+```typescript
+const blocked = ExpoScreenTime.isBlocked();
+```
+
 ## Web Domains
 
-### `blockWebDomains(domains: string[])`
+Block specific domains **without** user selection (independent from
+`blockSelection`'s domain shields).
 
-Programmatically block specific web domains.
+### `blockWebDomains(domains: string[])`
 
 ```typescript
 ExpoScreenTime.blockWebDomains(['facebook.com', 'instagram.com', 'tiktok.com']);
@@ -39,15 +52,11 @@ ExpoScreenTime.blockWebDomains(['facebook.com', 'instagram.com', 'tiktok.com']);
 
 ### `unblockWebDomains(domains: string[])`
 
-Unblock specific web domains.
-
 ```typescript
 ExpoScreenTime.unblockWebDomains(['facebook.com']);
 ```
 
 ### `unblockAllWebDomains()`
-
-Unblock all domains blocked via `blockWebDomains()`.
 
 ```typescript
 ExpoScreenTime.unblockAllWebDomains();
@@ -55,7 +64,7 @@ ExpoScreenTime.unblockAllWebDomains();
 
 ### `getBlockedWebDomains(): string[]`
 
-Get the list of currently blocked domain strings.
+Domains currently blocked via `blockWebDomains()`.
 
 ```typescript
 const domains = ExpoScreenTime.getBlockedWebDomains();

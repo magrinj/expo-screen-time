@@ -6,25 +6,40 @@ sidebar_position: 6
 
 # Types
 
-## `FamilyActivitySelection`
+As exported from `expo-screen-time` (source of truth:
+[`ExpoScreenTime.types.ts`](https://github.com/magrinj/expo-screen-time/blob/main/src/ExpoScreenTime.types.ts)).
+
+## `TokenHandle`
+
+Opaque, stable reference to a native token. Never parse or construct one in JS.
 
 ```typescript
-type FamilyActivitySelection = {
-  applicationTokens: ActivityToken[];
-  categoryTokens: ActivityToken[];
-  webDomainTokens: ActivityToken[];
-  untokenizedApplicationIdentifiers: string[];
-  untokenizedCategoryIdentifiers: string[];
-  untokenizedWebDomainIdentifiers: string[];
-  includeEntireCategory: boolean;
+type TokenHandle = {
+  handle: string; // opaque, stable across app launches
+  type: "application" | "category" | "webDomain";
 };
 ```
 
-## `ActivityToken`
+## `SelectionMetadata`
+
+Counts for a stored selection — no token data.
 
 ```typescript
-type ActivityToken = {
-  data: string;  // Base64-encoded token data
+type SelectionMetadata = {
+  applicationCount: number;
+  categoryCount: number;
+  webDomainCount: number;
+};
+```
+
+## `OnSelectionChangeEvent`
+
+Payload of the picker's `onSelectionChange` (`event.nativeEvent`).
+
+```typescript
+type OnSelectionChangeEvent = {
+  metadata: SelectionMetadata;
+  tokens: TokenHandle[];
 };
 ```
 
@@ -35,49 +50,67 @@ type DeviceActivitySchedule = {
   intervalStart: DateComponents;
   intervalEnd: DateComponents;
   repeats: boolean;
-  warningTime?: number;  // seconds
+  warningTime?: number; // seconds
 };
 
 type DateComponents = {
-  hour: number;    // 0-23
-  minute: number;  // 0-59
-  second?: number; // 0-59
-  weekday?: number; // 1 = Sunday, 7 = Saturday
+  hour: number;     // 0-23
+  minute: number;   // 0-59
+  second?: number;  // 0-59
+  weekday?: number; // 1 = Sunday … 7 = Saturday
 };
 ```
 
-## `ShieldConfiguration`
+## `MonitoringConfiguration`
 
 ```typescript
-type ShieldConfiguration = {
-  backgroundColor?: string;           // hex color
-  backgroundBlurStyle?: UIBlurEffectStyle;
-  icon?: string;                      // SF Symbol name
-  title?: string;
-  titleColor?: string;
-  subtitle?: string;
-  subtitleColor?: string;
-  primaryButtonLabel?: string;
-  primaryButtonColor?: string;
-  primaryButtonBackgroundColor?: string;
-  secondaryButtonLabel?: string;
-  secondaryButtonColor?: string;
-  secondaryButtonBackgroundColor?: string;
+type MonitoringConfiguration = {
+  activityName: string;
+  schedule: DeviceActivitySchedule;
+  /** Selection to block when the interval starts — a stored selection ID */
+  selectionId?: string;
+  events?: DeviceActivityEventThreshold[];
+  /** Restrict to specific weekdays (1 = Sunday … 7 = Saturday) */
+  weekdays?: number[];
+};
+
+type DeviceActivityEventThreshold = {
+  eventName: string;
+  /** Stored selection to meter */
+  selectionId: string;
+  threshold: number; // seconds
+  includesPastActivity?: boolean;
 };
 ```
 
-## `ShieldActionConfiguration`
+## `ShieldConfig`
+
+Text elements and buttons are nested objects.
 
 ```typescript
-type ShieldActionConfiguration = {
-  primaryButtonAction: ShieldActionType;
-  primaryButtonSnoozeDuration?: number;    // seconds
-  secondaryButtonAction?: ShieldActionType;
-  secondaryButtonSnoozeDuration?: number;  // seconds
+type ShieldConfig = {
+  title?: { text: string; color?: string };
+  subtitle?: { text: string; color?: string };
+  icon?: string;                    // SF Symbol name
+  backgroundColor?: string;         // hex color
+  backgroundBlurStyle?: UIBlurEffectStyle; // 'light' | 'dark' | 'regular' | …
+  primaryButton?: { text: string; color?: string; backgroundColor?: string };
+  secondaryButton?: { text: string; color?: string };
+};
+```
+
+## `ShieldActionConfig`
+
+```typescript
+type ShieldActionConfig = {
+  primaryAction: ShieldActionType | { type: "snooze"; duration: number };
+  secondaryAction?: ShieldActionType | { type: "snooze"; duration: number };
 };
 
-type ShieldActionType = 'close' | 'snooze' | 'unblock' | 'defer';
+type ShieldActionType = "close" | "unblock" | "defer";
 ```
+
+Snooze is expressed as an object with its duration in seconds.
 
 ## `MonitorEvent`
 
@@ -85,14 +118,31 @@ type ShieldActionType = 'close' | 'snooze' | 'unblock' | 'defer';
 type MonitorEvent = {
   activityName: string;
   eventType: MonitorEventType;
-  eventName?: string;       // for threshold events
-  timestamp: number;        // Unix milliseconds
+  eventName?: string; // for threshold events
+  timestamp: number;  // Unix milliseconds
 };
 
 type MonitorEventType =
-  | 'intervalDidStart'
-  | 'intervalDidEnd'
-  | 'eventDidReachThreshold'
-  | 'intervalWillEndWarning'
-  | 'eventWillReachThresholdWarning';
+  | "intervalDidStart"
+  | "intervalDidEnd"
+  | "eventDidReachThreshold"
+  | "intervalWillEndWarning"
+  | "eventWillReachThresholdWarning";
+```
+
+## `ReportStyle`
+
+Styling forwarded to the report extension (set automatically by
+`<DeviceActivityReport />` props, or manually via `setReportStyle`).
+
+```typescript
+interface ReportStyle {
+  accentColor?: string;
+  backgroundColor?: string;
+  textColor?: string;
+  showPickups?: boolean;
+  showTopApps?: boolean;
+  showChart?: boolean;
+  chartStyle?: "bar" | "pie";
+}
 ```

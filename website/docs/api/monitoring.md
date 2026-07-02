@@ -1,7 +1,7 @@
 ---
 id: monitoring
 title: Schedule Monitoring
-sidebar_position: 5
+sidebar_position: 6
 ---
 
 # Schedule Monitoring
@@ -12,7 +12,8 @@ See [Target Selection](../configuration.md#target-selection).
 
 ## `startMonitoring(config: MonitoringConfiguration)`
 
-Start monitoring device activity with a schedule. When the interval starts, blocks are activated; when it ends, blocks are deactivated.
+Start monitoring device activity with a schedule. When the interval starts, the
+selection referenced by `selectionId` is blocked; when it ends, blocks are lifted.
 
 ```typescript
 await ExpoScreenTime.startMonitoring({
@@ -21,22 +22,27 @@ await ExpoScreenTime.startMonitoring({
     intervalStart: { hour: 9, minute: 0 },
     intervalEnd: { hour: 17, minute: 0 },
     repeats: true,
-    warningTime: 300, // 5 minute warning before interval ends
+    warningTime: 300, // 5 minute warning before interval ends (seconds)
   },
-  selectionToBlock: mySelection, // FamilyActivitySelection from picker
+  // Selection to block during the interval — a stored selection ID
+  selectionId: 'work-blocklist',
+  // Optional usage thresholds within the interval
   events: [
     {
       eventName: 'socialMediaLimit',
-      familyActivitySelection: socialMediaSelection,
-      threshold: 3600, // 1 hour in seconds
+      selectionId: 'social-apps', // stored selection to meter
+      threshold: 3600,            // 1 hour, in seconds
+      includesPastActivity: false,
     },
   ],
+  // Optional: restrict to specific weekdays (1 = Sunday … 7 = Saturday)
+  weekdays: [2, 3, 4, 5, 6],
 });
 ```
 
-## `stopMonitoring(activityName: string)`
+See [`MonitoringConfiguration`](../types.md#monitoringconfiguration).
 
-Stop a specific monitoring activity.
+## `stopMonitoring(activityName: string)`
 
 ```typescript
 await ExpoScreenTime.stopMonitoring('workHours');
@@ -44,15 +50,11 @@ await ExpoScreenTime.stopMonitoring('workHours');
 
 ## `stopAllMonitoring()`
 
-Stop all active monitoring.
-
 ```typescript
 await ExpoScreenTime.stopAllMonitoring();
 ```
 
 ## `getMonitoredActivities(): Promise<string[]>`
-
-Get list of currently monitored activity names.
 
 ```typescript
 const activities = await ExpoScreenTime.getMonitoredActivities();
@@ -61,28 +63,48 @@ const activities = await ExpoScreenTime.getMonitoredActivities();
 
 ## Monitor Events
 
+The monitor extension records an event each time something happens (interval
+start/end, threshold reached…). See
+[`MonitorEvent`](../types.md#monitorevent) for the payload and event types.
+
+### `useMonitorEvents(callback?)` hook
+
+Subscribe to events in real time from a component:
+
+```typescript
+import { useMonitorEvents } from 'expo-screen-time';
+
+function MonitorLog() {
+  const { events, isListening, clearEvents } = useMonitorEvents((event) => {
+    console.log('monitor event', event.activityName, event.eventType);
+  });
+
+  return <Text>{events.length} events</Text>;
+}
+```
+
+Keeps the latest 100 events in state. Several mounted hooks share one native
+listener — native observation starts with the first subscriber and stops with
+the last, managed by expo-modules-core. (Lower-level: subscribe to the module's
+`onMonitorEvent` event with `ExpoScreenTime.addListener`.)
+
 ### `getMonitorEvents(activityName?: string, limit?: number): Promise<MonitorEvent[]>`
 
-Get recent monitor events from storage.
+Read stored events (default limit 100). Omit `activityName` for all activities.
 
 ```typescript
 const events = await ExpoScreenTime.getMonitorEvents('workHours', 50);
 // [{ activityName: 'workHours', eventType: 'intervalDidStart', timestamp: 1234567890 }]
 ```
 
-**Event Types:**
-
-- `intervalDidStart` — Scheduled interval started
-- `intervalDidEnd` — Scheduled interval ended
-- `eventDidReachThreshold` — Usage threshold was reached
-- `intervalWillEndWarning` — Warning before interval ends
-- `eventWillReachThresholdWarning` — Warning before threshold is reached
-
 ### `clearMonitorEvents(activityName?: string)`
 
-Clear stored monitor events.
-
 ```typescript
-await ExpoScreenTime.clearMonitorEvents('workHours'); // Clear specific activity
-await ExpoScreenTime.clearMonitorEvents(); // Clear all events
+await ExpoScreenTime.clearMonitorEvents('workHours'); // one activity
+await ExpoScreenTime.clearMonitorEvents();            // all
 ```
+
+:::note Timing
+Monitor events fire when the device is first used after the schedule time — not
+exactly at the scheduled time.
+:::

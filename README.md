@@ -60,12 +60,17 @@ Then run a prebuild so the iOS extension targets are generated:
 npx expo prebuild --clean
 ```
 
-```typescript
-import ExpoScreenTime from 'expo-screen-time';
+```tsx
+import ExpoScreenTime, { ActivityPicker } from 'expo-screen-time';
 
-// Ask for Family Controls authorization, then block a selection from the picker.
+// 1. Ask for Family Controls authorization.
 await ExpoScreenTime.requestScreenTimePermissionsAsync();
-ExpoScreenTime.blockSelection(selection);
+
+// 2. Let the user pick apps — stored natively under the ID you choose.
+<ActivityPicker selectionId="my-blocklist" style={{ flex: 1 }} />
+
+// 3. Shield everything in that selection.
+ExpoScreenTime.blockSelection('my-blocklist');
 ```
 
 > Always re-run `expo prebuild --clean` when upgrading `expo-screen-time` or

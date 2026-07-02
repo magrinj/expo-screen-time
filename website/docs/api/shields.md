@@ -1,7 +1,7 @@
 ---
 id: shields
 title: Shields
-sidebar_position: 6
+sidebar_position: 7
 ---
 
 # Shields
@@ -11,46 +11,41 @@ sidebar_position: 6
 :::info Requires the `ShieldConfigurationExtension` target
 :::
 
-### `setShieldConfiguration(config: ShieldConfiguration)`
+### `setShieldConfig(config: ShieldConfig)`
 
-Set the default shield (blocking screen) appearance. See [`ShieldConfiguration`](../types.md#shieldconfiguration).
+Set the default shield (blocking screen) appearance. Text elements and buttons
+are **nested objects** — see [`ShieldConfig`](../types.md#shieldconfig).
 
 ```typescript
-ExpoScreenTime.setShieldConfiguration({
+ExpoScreenTime.setShieldConfig({
   backgroundColor: '#1a1a2e',
   backgroundBlurStyle: 'dark',
   icon: 'hand.raised.fill', // SF Symbol name
-  title: 'App Blocked',
-  titleColor: '#ffffff',
-  subtitle: 'This app is restricted during work hours',
-  subtitleColor: '#aaaaaa',
-  primaryButtonLabel: 'OK',
-  primaryButtonColor: '#ffffff',
-  primaryButtonBackgroundColor: '#4a4ae8',
-  secondaryButtonLabel: 'Snooze 5 min',
-  secondaryButtonColor: '#ffffff',
-  secondaryButtonBackgroundColor: '#666666',
+  title: { text: 'App Blocked', color: '#ffffff' },
+  subtitle: { text: 'This app is restricted during work hours', color: '#aaaaaa' },
+  primaryButton: { text: 'OK', color: '#ffffff', backgroundColor: '#4a4ae8' },
+  secondaryButton: { text: 'Snooze 5 min', color: '#ffffff' },
 });
 ```
 
-### `setShieldConfigurationForActivity(activityName: string, config: ShieldConfiguration)`
+### `setShieldConfigForActivity(activityName: string, config: ShieldConfig)`
 
-Set shield configuration for a specific monitoring activity.
+Shield appearance for a specific monitoring activity.
 
 ```typescript
-ExpoScreenTime.setShieldConfigurationForActivity('bedtime', {
-  title: 'Time for Bed!',
-  subtitle: 'Apps are blocked until morning',
+ExpoScreenTime.setShieldConfigForActivity('bedtime', {
+  title: { text: 'Time for Bed!' },
+  subtitle: { text: 'Apps are blocked until morning' },
   backgroundColor: '#0d1b2a',
 });
 ```
 
-### `clearShieldConfiguration()`
+### `clearShieldConfig()`
 
-Clear all shield configurations, reverting to system defaults.
+Revert to the system default shield.
 
 ```typescript
-ExpoScreenTime.clearShieldConfiguration();
+ExpoScreenTime.clearShieldConfig();
 ```
 
 ## Shield Actions
@@ -58,39 +53,36 @@ ExpoScreenTime.clearShieldConfiguration();
 :::info Requires the `ShieldActionExtension` target
 :::
 
-### `setShieldActions(config: ShieldActionConfiguration)`
+### `setShieldActions(config: ShieldActionConfig)`
 
-Configure what happens when shield buttons are pressed.
+Configure what the shield buttons do. Actions are `'close'`, `'unblock'`,
+`'defer'`, or a snooze object — see
+[`ShieldActionConfig`](../types.md#shieldactionconfig).
 
 ```typescript
 ExpoScreenTime.setShieldActions({
-  primaryButtonAction: 'close',        // 'close' | 'snooze' | 'unblock' | 'defer'
-  secondaryButtonAction: 'snooze',
-  secondaryButtonSnoozeDuration: 300,  // 5 minutes in seconds
+  primaryAction: 'close',
+  secondaryAction: { type: 'snooze', duration: 300 }, // 5 minutes, in seconds
 });
 ```
 
-**Action Types:**
+**Actions:**
 
-- `close` — Close the shield, app remains blocked
-- `snooze` — Temporarily unblock (use with `snoozeDuration`)
-- `unblock` — Permanently unblock this specific app
-- `defer` — Defer the action, allowing shield UI to update
+- `'close'` — close the shield, app remains blocked
+- `'unblock'` — permanently unblock this specific app
+- `'defer'` — defer the action, allowing the shield UI to update
+- `{ type: 'snooze', duration }` — temporarily unblock for `duration` seconds
 
-### `setShieldActionsForActivity(activityName: string, config: ShieldActionConfiguration)`
-
-Set shield actions for a specific activity.
+### `setShieldActionsForActivity(activityName: string, config: ShieldActionConfig)`
 
 ```typescript
 ExpoScreenTime.setShieldActionsForActivity('workHours', {
-  primaryButtonAction: 'close',
-  // No secondary button for work hours
+  primaryAction: 'close',
+  // no secondary button for work hours
 });
 ```
 
 ### `clearShieldActions()`
-
-Clear all shield action configurations.
 
 ```typescript
 ExpoScreenTime.clearShieldActions();

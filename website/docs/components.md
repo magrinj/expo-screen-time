@@ -6,24 +6,25 @@ sidebar_position: 5
 
 # Components
 
-## `<ExpoScreenTimeActivityPicker />` {#activity-picker}
+## `<ActivityPicker />` {#activity-picker}
 
-Native view for selecting apps, categories, and web domains to block.
+Native view for selecting apps, categories, and web domains. The selection is
+stored **natively** under the `selectionId` you provide — JS receives only counts
+and opaque token handles.
 
 ```typescript
-import { ExpoScreenTimeActivityPicker, FamilyActivitySelection } from 'expo-screen-time';
+import { ActivityPicker, type OnSelectionChangeEvent } from 'expo-screen-time';
 
 function AppPicker() {
-  const [selection, setSelection] = useState<FamilyActivitySelection | null>(null);
-
   return (
-    <ExpoScreenTimeActivityPicker
+    <ActivityPicker
       style={{ flex: 1 }}
+      selectionId="my-blocklist"
       headerText="Select apps to block"
       footerText="Selected apps will be blocked"
-      selection={selection}
       onSelectionChange={(event) => {
-        setSelection(event.nativeEvent.selection);
+        const { metadata, tokens } = event.nativeEvent;
+        console.log(`${metadata.applicationCount} apps, ${tokens.length} tokens`);
       }}
       onOpen={() => console.log('Picker opened')}
       onClose={() => console.log('Picker closed')}
@@ -36,20 +37,27 @@ function AppPicker() {
 
 | Prop | Type | Description |
 |------|------|-------------|
+| `selectionId` | `string` (required) | ID of the selection in the native store |
 | `style` | `StyleProp<ViewStyle>` | Container style |
 | `headerText` | `string` | Header text displayed in the picker |
 | `footerText` | `string` | Footer text displayed in the picker |
-| `selection` | `FamilyActivitySelection \| null` | Current selection state |
-| `onSelectionChange` | `(event) => void` | Called when selection changes |
-| `onOpen` | `() => void` | Called when picker view appears |
-| `onClose` | `() => void` | Called when picker view disappears |
+| `onSelectionChange` | `(event: { nativeEvent: OnSelectionChangeEvent }) => void` | `nativeEvent` = `{ metadata: SelectionMetadata, tokens: TokenHandle[] }` |
+| `onOpen` | `() => void` | Called when the picker view appears |
+| `onClose` | `() => void` | Called when the picker view disappears |
+
+After picking, use the same `selectionId` with
+[`blockSelection`](./api/blocking.md) or
+[`startMonitoring`](./api/monitoring.md), and manage it with the
+[selection utilities](./api/selections.md).
 
 ## `<DeviceActivityReport />` {#device-activity-report}
 
 :::info Requires the `DeviceActivityReportExtension` target
 :::
 
-Display usage analytics from iOS Screen Time.
+Display usage analytics from iOS Screen Time. The data renders inside a sandboxed
+extension and never reaches JavaScript; styling is passed through via the App
+Group. Renders a styled fallback on non-iOS platforms.
 
 ```typescript
 import { DeviceActivityReport } from 'expo-screen-time';
@@ -75,7 +83,7 @@ import { DeviceActivityReport } from 'expo-screen-time';
 |------|------|---------|-------------|
 | `context` | `'TotalActivity' \| 'AppList' \| 'HourlyChart'` | `'TotalActivity'` | Report view type |
 | `filterSegment` | `'daily' \| 'weekly'` | `'daily'` | Time filter |
-| `filterDate` | `Date` | Today | Date to show report for |
+| `filterDate` | `Date` | Today | Date to show the report for |
 | `style` | `StyleProp<ViewStyle>` | - | Container style |
 | `accentColor` | `string` | - | Accent color (hex) |
 | `backgroundColor` | `string` | - | Background color (hex) |
@@ -87,33 +95,46 @@ import { DeviceActivityReport } from 'expo-screen-time';
 
 ## Token Labels {#token-labels}
 
-Display app, category, or web domain names and icons from tokens. Due to Apple's privacy design, token names cannot be extracted programmatically — they can only be rendered visually.
+Render an app/category/domain name and icon from an opaque token handle. Due to
+Apple's privacy design, token names can't be read programmatically — they can
+only be rendered natively. Get handles from
+[`getTokens(selectionId)`](./api/selections.md) or the picker's
+`onSelectionChange`.
 
 ```typescript
-import { ApplicationLabel, CategoryLabel, WebDomainLabel } from 'expo-screen-time';
+import { getTokens, ApplicationLabel, CategoryLabel, WebDomainLabel } from 'expo-screen-time';
+
+const tokens = await getTokens('my-blocklist');
+const apps = tokens?.filter((t) => t.type === 'application') ?? [];
 
 // Display an app's name and icon
 <ApplicationLabel
-  token={selection.applicationTokens[0]}
+  selectionId="my-blocklist"
+  handle={apps[0].handle}
   displayMode="title-and-icon"
   style={{ height: 40 }}
 />
+```
 
-// Display a category name
-<CategoryLabel
-  token={selection.categoryTokens[0]}
-  displayMode="title-only"
-/>
+`CategoryLabel` and `WebDomainLabel` work the same way for `type: 'category'` and
+`type: 'webDomain'` handles. The generic `TokenLabel` takes an explicit
+`tokenType` prop instead:
 
-// Display a web domain
-<WebDomainLabel
-  token={selection.webDomainTokens[0]}
+```typescript
+<TokenLabel
+  selectionId="my-blocklist"
+  handle={handle}
+  tokenType="application"
   displayMode="icon-only"
 />
 ```
 
-**Display Modes:**
+**Props (all labels):**
 
-- `'icon-only'` — Show only the icon
-- `'title-only'` — Show only the name
-- `'title-and-icon'` — Show both (default)
+| Prop | Type | Description |
+|------|------|-------------|
+| `selectionId` | `string` | Selection containing the token |
+| `handle` | `string` | Opaque token handle |
+| `displayMode` | `'icon-only' \| 'title-only' \| 'title-and-icon'` | Default `'title-and-icon'` |
+| `style` | `StyleProp<ViewStyle>` | Container style |
+| `tokenType` | `'application' \| 'category' \| 'webDomain'` | `TokenLabel` only |
