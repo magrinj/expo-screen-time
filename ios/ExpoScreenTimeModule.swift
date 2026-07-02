@@ -455,7 +455,7 @@ public class ExpoScreenTimeModule: Module {
 
         // MARK: - Real-time Event Listening
 
-        Function("startEventListening") {
+        OnStartObserving("onMonitorEvent") {
             guard !self.isListening else { return }
             self.isListening = true
             self.lastProcessedTimestamp = Date().timeIntervalSince1970 * 1000
@@ -470,7 +470,7 @@ public class ExpoScreenTimeModule: Module {
             }
         }
 
-        Function("stopEventListening") {
+        OnStopObserving("onMonitorEvent") {
             self.isListening = false
             self.removeDarwinNotificationObserver()
 

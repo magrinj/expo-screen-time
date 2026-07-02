@@ -83,15 +83,17 @@ around that:
 
 1. `<ActivityPicker selectionId="x">` writes the user's selection into the native
    `SelectionStore` under `"x"`.
-2. JS receives only `SelectionMetadata` (counts) and `TokenHandle`s (hash + type) —
-   never token data.
+2. JS receives only `SelectionMetadata` (counts) and `TokenHandle`s. A handle is
+   the base64 of the encoded token (stable across launches) — Apple's tokens are
+   undecodable blobs even natively, so this reveals nothing, but JS must treat
+   handles (and `exportSelection` blobs) as opaque: never parse or construct one.
 3. `blockSelection("x")`, `startMonitoring({ selectionId: "x" })` reference the
    stored selection by ID; extensions load it from the App Group.
 4. Labels render token names/icons natively (`TokenLabel`) because JS can't.
 
-**Never add an API that serializes raw tokens to JS.** This is also what keeps the
-API Android-portable (there, an ID will map to a package-name list) — see
-the platform support page.
+**Never add an API that requires JS to understand token contents.** This is also
+what keeps the API Android-portable (there, an ID will map to a package-name
+list) — see the platform support page.
 
 ## The App Group
 

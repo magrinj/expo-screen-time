@@ -64,8 +64,11 @@ Non-negotiables (the short list):
    change nothing (`bun run test` guards this; extend the test when wiring changes).
 2. **When in doubt in `plugin/src/ios/`, match expo-widgets** (`../expo-widgets`,
    Expo's first-party reference). Diverging from it requires a stated reason.
-3. **Tokens never cross the bridge** — JS sees `selectionId` strings and
-   `TokenHandle`s only. Don't add APIs that serialize raw tokens to JS.
+3. **Tokens are opaque, and JS must treat them that way** — JS addresses
+   selections via `selectionId` strings and tokens via `TokenHandle`s. Handles
+   (and `exportSelection` blobs) are derived from encoded tokens — undecodable
+   even natively, but never parse, construct, or interpret them in JS, and never
+   add APIs that require JS to understand token contents.
 4. **Conventional commits are load-bearing** — release-please derives versions and
    the changelog from them. PR titles must be conventional (CI enforces it).
 5. **Public API changed? Update `website/docs/`** in the same PR. README stays a

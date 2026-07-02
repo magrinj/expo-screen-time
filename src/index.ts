@@ -22,9 +22,6 @@ export function useMonitorEvents(callback?: (event: MonitorEvent) => void) {
   }, [callback]);
 
   useEffect(() => {
-    ExpoScreenTimeModule.startEventListening?.();
-    setIsListening(true);
-
     const subscription = ExpoScreenTimeModule.addListener(
       "onMonitorEvent",
       (payload: OnMonitorEventPayload) => {
@@ -33,10 +30,10 @@ export function useMonitorEvents(callback?: (event: MonitorEvent) => void) {
         callbackRef.current?.(event);
       },
     );
+    setIsListening(true);
 
     return () => {
       subscription.remove();
-      ExpoScreenTimeModule.stopEventListening?.();
       setIsListening(false);
     };
   }, []);

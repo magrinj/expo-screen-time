@@ -9,15 +9,6 @@ class SelectionStore {
     private let keyPrefix = "expo_st_sel_"
     private var defaults: UserDefaults?
 
-    /// In-memory cache of token handles for O(1) lookup
-    /// Key: selectionId, Value: dict of handle → token type info
-    private var handleCache: [String: [String: TokenHandleInfo]] = [:]
-
-    struct TokenHandleInfo {
-        let type: String // "application", "category", "webDomain"
-        let index: Int   // index in the corresponding token set
-    }
-
     private init() {
         if let bundleId = Bundle.main.bundleIdentifier {
             let baseBundleId = bundleId
@@ -40,7 +31,6 @@ class SelectionStore {
         guard let data = try? JSONEncoder().encode(selection) else { return }
         defaults?.set(data, forKey: keyPrefix + selectionId)
         defaults?.synchronize()
-        rebuildHandleCache(for: selectionId, selection: selection)
     }
 
     func get(_ selectionId: String) -> FamilyActivitySelection? {
@@ -51,7 +41,6 @@ class SelectionStore {
     func delete(_ selectionId: String) {
         defaults?.removeObject(forKey: keyPrefix + selectionId)
         defaults?.synchronize()
-        handleCache.removeValue(forKey: selectionId)
     }
 
     func list() -> [String] {
@@ -81,7 +70,6 @@ class SelectionStore {
 
     func getTokenHandles(_ selectionId: String) -> [[String: String]]? {
         guard let selection = get(selectionId) else { return nil }
-        ensureHandleCache(for: selectionId, selection: selection)
 
         var handles: [[String: String]] = []
 
@@ -202,27 +190,4 @@ class SelectionStore {
         return true
     }
 
-    // MARK: - Private
-
-    private func ensureHandleCache(for selectionId: String, selection: FamilyActivitySelection) {
-        if handleCache[selectionId] == nil {
-            rebuildHandleCache(for: selectionId, selection: selection)
-        }
-    }
-
-    private func rebuildHandleCache(for selectionId: String, selection: FamilyActivitySelection) {
-        var cache: [String: TokenHandleInfo] = [:]
-
-        for (i, token) in selection.applicationTokens.enumerated() {
-            cache[stableHandle(for: token)] = TokenHandleInfo(type: "application", index: i)
-        }
-        for (i, token) in selection.categoryTokens.enumerated() {
-            cache[stableHandle(for: token)] = TokenHandleInfo(type: "category", index: i)
-        }
-        for (i, token) in selection.webDomainTokens.enumerated() {
-            cache[stableHandle(for: token)] = TokenHandleInfo(type: "webDomain", index: i)
-        }
-
-        handleCache[selectionId] = cache
-    }
 }

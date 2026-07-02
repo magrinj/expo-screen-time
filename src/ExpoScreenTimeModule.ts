@@ -83,9 +83,12 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   ): Promise<MonitorEvent[]>;
   clearMonitorEvents(activityName?: string): Promise<void>;
 
-  // Real-time Event Listening
-  startEventListening(): void;
-  stopEventListening(): void;
+  // Debug
+  /**
+   * Debug-only: dumps the App Group, active shield config, and the shield
+   * extension's log tail. Not part of the stable API, may change or vanish.
+   */
+  debugShieldConfig(): Promise<Record<string, unknown>>;
 }
 
 export interface ReportStyle {

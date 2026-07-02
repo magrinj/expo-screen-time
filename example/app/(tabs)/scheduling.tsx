@@ -208,7 +208,7 @@ export default function SchedulingScreen() {
 
   const handleDebugShield = async () => {
     try {
-      const result = await (ExpoScreenTime as any).debugShieldConfig();
+      const result = await ExpoScreenTime.debugShieldConfig();
       Alert.alert("Debug Shield Config", JSON.stringify(result, null, 2));
     } catch (e: any) {
       Alert.alert("Debug Error", e.message);

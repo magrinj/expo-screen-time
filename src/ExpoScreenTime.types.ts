@@ -5,12 +5,14 @@ import type { StyleProp, ViewStyle } from "react-native";
 // ============================================================================
 
 /**
- * Lightweight reference to a native token.
- * The actual token data stays on the Swift side.
+ * Reference to a native token, used to address it from JS (labels, removal).
+ * The handle is derived from the encoded token so it's stable across launches.
+ * Apple's tokens are opaque blobs — undecodable even natively — but treat the
+ * handle itself as opaque too: never parse or construct one in JS.
  * @platform ios
  */
 export type TokenHandle = {
-  /** Hash-based identifier for the token */
+  /** Opaque, stable identifier for the token */
   handle: string;
   /** Type of token */
   type: "application" | "category" | "webDomain";

@@ -8,6 +8,9 @@ public class ScreenTimeManager: NSObject {
     /// Track currently blocked domains (since we can't read them back from the store)
     private var blockedWebDomains: Set<WebDomain> = []
 
+    /// Bumped (on `queue`) by every shield mutation
+    private var shieldGeneration: UInt64 = 0
+
     private var managedSettingsStore: ManagedSettingsStore {
         if _managedSettingsStore == nil {
             _managedSettingsStore = ManagedSettingsStore()
@@ -41,6 +44,7 @@ public class ScreenTimeManager: NSObject {
 
     public func blockSelection(_ selection: FamilyActivitySelection) {
         queue.sync {
+            shieldGeneration += 1
             managedSettingsStore.shield.applicationCategories = ShieldSettings.ActivityCategoryPolicy.specific(selection.categoryTokens)
             managedSettingsStore.shield.applications = selection.applicationTokens
             managedSettingsStore.shield.webDomains = selection.webDomainTokens
@@ -49,6 +53,7 @@ public class ScreenTimeManager: NSObject {
 
     public func unblockAll() {
         queue.sync {
+            shieldGeneration += 1
             managedSettingsStore.shield.applicationCategories = ShieldSettings.ActivityCategoryPolicy.none
             managedSettingsStore.shield.applications = Set()
             managedSettingsStore.shield.webDomains = Set()
@@ -95,9 +100,13 @@ public class ScreenTimeManager: NSObject {
     /// Reflects the real ManagedSettings state, not the stored selection.
     public func isBlocked() -> Bool {
         guard #available(iOS 16.0, *) else { return false }
-        return !(managedSettingsStore.shield.applications?.isEmpty ?? true) ||
-               managedSettingsStore.shield.applicationCategories != .none ||
-               !(managedSettingsStore.shield.webDomains?.isEmpty ?? true)
+        // Read on the same serial queue as the writers so we never observe a
+        // half-applied mutation
+        return queue.sync {
+            !(managedSettingsStore.shield.applications?.isEmpty ?? true) ||
+            managedSettingsStore.shield.applicationCategories != .none ||
+            !(managedSettingsStore.shield.webDomains?.isEmpty ?? true)
+        }
     }
 
     /// Force iOS to reload shield configuration by toggling shields
@@ -116,6 +125,11 @@ public class ScreenTimeManager: NSObject {
 
             guard hasShields else { return }
 
+            // This toggle is itself a mutation; capture its generation so a
+            // concurrent blockSelection()/unblockAll() invalidates the restore.
+            shieldGeneration += 1
+            let generation = shieldGeneration
+
             // Clear shields
             managedSettingsStore.shield.applications = nil
             managedSettingsStore.shield.applicationCategories = .none
@@ -124,6 +138,9 @@ public class ScreenTimeManager: NSObject {
             // Small delay to ensure iOS processes the change
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [self] in
                 self.queue.async {
+                    // Skip the restore if the shield state was mutated during the
+                    // window
+                    guard self.shieldGeneration == generation else { return }
                     // Restore shields - this forces iOS to call ShieldConfigurationExtension
                     self.managedSettingsStore.shield.applications = apps
                     self.managedSettingsStore.shield.applicationCategories = categories
