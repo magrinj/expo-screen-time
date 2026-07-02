@@ -25,11 +25,11 @@ jobs:
 
       # Everything below runs ONLY when a Release PR was just merged
       # (release-please created a tag + GitHub Release this run).
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: ${{ steps.release.outputs.release_created }}
       - uses: oven-sh/setup-bun@v2
         if: ${{ steps.release.outputs.release_created }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         if: ${{ steps.release.outputs.release_created }}
         with:
           node-version-file: .nvmrc
