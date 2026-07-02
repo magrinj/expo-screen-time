@@ -17,6 +17,16 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "chore"
+    ignore:
+      # react / react-native / expo are pinned to the Expo SDK — bump them during
+      # an SDK upgrade, not à la carte. Allow patches (same SDK), block the
+      # minor/major jumps that change the SDK (e.g. RN 0.85 → 0.86 = SDK 57).
+      - dependency-name: "react-native"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "react"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      - dependency-name: "expo"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: npm
     directory: "/website"
