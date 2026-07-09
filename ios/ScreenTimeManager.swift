@@ -51,6 +51,18 @@ public class ScreenTimeManager: NSObject {
         }
     }
 
+    /// Drop the shields WITHOUT touching the web-content filter or the stored
+    /// domain list — the temporary unlock suspends and later restores exactly
+    /// what `blockSelection` applied, nothing more.
+    public func suspendShields() {
+        queue.sync {
+            shieldGeneration += 1
+            managedSettingsStore.shield.applicationCategories = ShieldSettings.ActivityCategoryPolicy.none
+            managedSettingsStore.shield.applications = Set()
+            managedSettingsStore.shield.webDomains = Set()
+        }
+    }
+
     public func unblockAll() {
         queue.sync {
             shieldGeneration += 1

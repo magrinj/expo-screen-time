@@ -242,4 +242,108 @@ class SharedDefaults {
         }
         defaults?.synchronize()
     }
+
+    // MARK: - Temporary Unlock (earned time)
+    //
+    // A temporary unlock is a budget of SECONDS spent only while a blocked app
+    // is actually in the foreground (measured by DeviceActivity usage
+    // thresholds, not wall-clock). The module grants and arms it; the monitor
+    // extension records consumption and re-applies the shield when the budget
+    // is spent. All state lives here so both processes see the same numbers.
+
+    /// The selection currently enforced by the shield — what a relock restores.
+    func setBlockedSelectionId(_ selectionId: String?) {
+        if let selectionId = selectionId {
+            defaults?.set(selectionId, forKey: "expo_st_blocked_selection_id")
+        } else {
+            defaults?.removeObject(forKey: "expo_st_blocked_selection_id")
+        }
+        defaults?.synchronize()
+    }
+
+    func getBlockedSelectionId() -> String? {
+        return defaults?.string(forKey: "expo_st_blocked_selection_id")
+    }
+
+    func setUnlockState(budgetSeconds: Int, grantedAt: Date) {
+        defaults?.set(budgetSeconds, forKey: "expo_st_unlock_budget")
+        defaults?.set(0, forKey: "expo_st_unlock_consumed")
+        defaults?.set(grantedAt.timeIntervalSince1970, forKey: "expo_st_unlock_granted_at")
+        defaults?.synchronize()
+    }
+
+    func getUnlockBudgetSeconds() -> Int {
+        return defaults?.integer(forKey: "expo_st_unlock_budget") ?? 0
+    }
+
+    func getUnlockConsumedSeconds() -> Int {
+        return defaults?.integer(forKey: "expo_st_unlock_consumed") ?? 0
+    }
+
+    func setUnlockConsumedSeconds(_ seconds: Int) {
+        defaults?.set(seconds, forKey: "expo_st_unlock_consumed")
+        defaults?.synchronize()
+    }
+
+    func getUnlockGrantedAt() -> Date? {
+        guard let epoch = defaults?.object(forKey: "expo_st_unlock_granted_at") as? Double else { return nil }
+        return Date(timeIntervalSince1970: epoch)
+    }
+
+    func clearUnlockState() {
+        defaults?.removeObject(forKey: "expo_st_unlock_budget")
+        defaults?.removeObject(forKey: "expo_st_unlock_consumed")
+        defaults?.removeObject(forKey: "expo_st_unlock_granted_at")
+        defaults?.synchronize()
+    }
+
+    // MARK: - Shield interactions
+    //
+    // One entry per blocked-app open the user reacted to. Written by the
+    // ShieldAction extension (the configuration data source is cached by the
+    // system, so the action handler is the only callback that reliably fires
+    // per open) and drained by the app to power "you were blocked N times"
+    // UIs. Entries within 2s collapse into one: a user tapping both shield
+    // buttons is one blocked attempt, not two.
+
+    func appendShieldInteraction(button: String) {
+        guard let defaults = defaults else { return }
+        defaults.synchronize()
+
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        let lastMs = defaults.double(forKey: "expo_st_shield_interaction_last")
+        if lastMs > 0, nowMs - lastMs < 2_000 { return }
+
+        var queue: [[String: Any]] = []
+        if let json = defaults.string(forKey: "expo_st_shield_interactions"),
+           let data = json.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            queue = parsed
+        }
+        queue.append(["button": button, "timestamp": nowMs])
+        // Bounded: the queue only grows while the app isn't draining it.
+        if queue.count > 200 {
+            queue = Array(queue.suffix(200))
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: queue),
+           let json = String(data: data, encoding: .utf8) {
+            defaults.set(json, forKey: "expo_st_shield_interactions")
+        }
+        defaults.set(nowMs, forKey: "expo_st_shield_interaction_last")
+        defaults.synchronize()
+    }
+
+    func drainShieldInteractions() -> [[String: Any]] {
+        guard let defaults = defaults else { return [] }
+        // Re-read the suite: the writes come from a separate extension process.
+        defaults.synchronize()
+        guard let json = defaults.string(forKey: "expo_st_shield_interactions"),
+              let data = json.data(using: .utf8),
+              let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+            return []
+        }
+        defaults.removeObject(forKey: "expo_st_shield_interactions")
+        defaults.synchronize()
+        return parsed
+    }
 }

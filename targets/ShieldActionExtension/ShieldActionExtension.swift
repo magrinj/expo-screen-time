@@ -44,6 +44,20 @@ class ShieldActionExtension: ShieldActionDelegate {
 
     /// Process a shield action and return the appropriate response
     private func processAction(_ action: ShieldAction) -> ShieldActionResponse {
+        // Record the blocked attempt. This handler is the one callback that
+        // reliably fires per shield interaction (the configuration data
+        // source is cached by the system and not re-invoked on every open),
+        // so it doubles as the "user hit a block" counter the app drains via
+        // drainShieldInteractions().
+        switch action {
+        case .primaryButtonPressed:
+            defaults.appendShieldInteraction(button: "primary")
+        case .secondaryButtonPressed:
+            defaults.appendShieldInteraction(button: "secondary")
+        @unknown default:
+            break
+        }
+
         // Get action configuration
         var actionConfig: [String: Any]?
 

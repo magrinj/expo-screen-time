@@ -5,7 +5,7 @@ import ExpoScreenTime, {
   CategoryLabel,
   WebDomainLabel,
 } from "expo-screen-time";
-import { useCallback } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { SELECTION_ID, useNativeSelection } from "../_layout";
@@ -21,12 +21,42 @@ import {
 
 export default function BlockingScreen() {
   const { tokens, metadata, refresh } = useNativeSelection(SELECTION_ID);
+  const [remainingUnlock, setRemainingUnlock] = useState(0);
 
   useFocusEffect(
     useCallback(() => {
       refresh();
+      setRemainingUnlock(ExpoScreenTime.getRemainingUnlockSeconds());
     }, [refresh])
   );
+
+  // The budget only moves in ~30s steps while a blocked app is used, so a
+  // slow poll is plenty to keep the banner honest.
+  useEffect(() => {
+    if (remainingUnlock <= 0) return;
+    const interval = setInterval(() => {
+      setRemainingUnlock(ExpoScreenTime.getRemainingUnlockSeconds());
+    }, 5000);
+    return () => clearInterval(interval);
+  }, [remainingUnlock]);
+
+  const handleTemporaryUnlock = async () => {
+    try {
+      const grant = await ExpoScreenTime.temporaryUnlock(5 * 60);
+      setRemainingUnlock(grant.budgetSeconds);
+      Alert.alert(
+        "Unlocked",
+        "5 minutes of usage granted. The budget is only spent while a blocked app is open."
+      );
+    } catch {
+      Alert.alert("Error", "Nothing is blocked — block the selection first");
+    }
+  };
+
+  const handleRelock = () => {
+    ExpoScreenTime.relock();
+    setRemainingUnlock(0);
+  };
 
   const appsCount = metadata?.applicationCount ?? 0;
   const categoriesCount = metadata?.categoryCount ?? 0;
@@ -178,6 +208,34 @@ export default function BlockingScreen() {
             color={colors.danger}
             onPress={handleUnblock}
           />
+
+          {/* Temporary Unlock (earned time) */}
+          <SectionHeader title="Temporary Unlock" />
+          {remainingUnlock > 0 ? (
+            <>
+              <Card>
+                <Row
+                  icon="hourglass"
+                  iconColor={colors.warning}
+                  title={`~${Math.ceil(remainingUnlock / 60)} min of usage left`}
+                  subtitle="Spent only while a blocked app is open"
+                />
+              </Card>
+              <ActionButton
+                title="Relock Now"
+                icon="lock-closed"
+                color={colors.danger}
+                onPress={handleRelock}
+              />
+            </>
+          ) : (
+            <ActionButton
+              title="Unlock for 5 min of usage"
+              icon="hourglass-outline"
+              color={colors.warning}
+              onPress={handleTemporaryUnlock}
+            />
+          )}
         </>
       )}
 
