@@ -130,19 +130,27 @@ type MonitorEventType =
   | "eventWillReachThresholdWarning";
 ```
 
-## `ReportStyle`
 
-Styling forwarded to the report extension (set automatically by
-`<DeviceActivityReport />` props, or manually via `setReportStyle`).
+## `TemporaryUnlockGrant`
+
+Result of `temporaryUnlock`. There is deliberately no `expiresAt` — the
+budget is spent by usage, not by the clock.
 
 ```typescript
-interface ReportStyle {
-  accentColor?: string;
-  backgroundColor?: string;
-  textColor?: string;
-  showPickups?: boolean;
-  showTopApps?: boolean;
-  showChart?: boolean;
-  chartStyle?: "bar" | "pie";
-}
+type TemporaryUnlockGrant = {
+  budgetSeconds: number; // granted budget (after the 30s floor)
+  grantedAt: number;     // Unix milliseconds
+};
+```
+
+## `ShieldInteraction`
+
+One blocked-app attempt the user reacted to on the shield. Returned by
+`drainShieldInteractions`.
+
+```typescript
+type ShieldInteraction = {
+  button: "primary" | "secondary";
+  timestamp: number; // Unix milliseconds
+};
 ```

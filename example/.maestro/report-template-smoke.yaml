@@ -1,0 +1,72 @@
+appId: com.magrinj.exposcreentime.example
+name: Report template showcase smoke test
+---
+# Launch and wait for the JS bundle (first Metro build can be slow)
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible: "Analytics.*"
+    timeout: 90000
+
+# The RN "Open debugger" warning banner overlaps the tab bar — close it if present
+- runFlow:
+    when:
+      visible: ".*Open debugger.*"
+    commands:
+      - tapOn:
+          point: "92%, 93%"
+
+# Go to the Analytics tab (template showcase)
+- tapOn: "Analytics.*"
+- extendedWaitUntil:
+    visible: "Overview"
+    timeout: 15000
+- assertNotVisible: "Render Error"
+- assertNotVisible: "Unhandled JS Exception"
+# "Daily goal: 4h" only exists INSIDE the rendered template — this asserts the
+# extension actually rendered it. Generous timeout: the very first scene
+# invocation after a fresh Screen Time init can take ~60s.
+- extendedWaitUntil:
+    visible: "Daily goal: 4h"
+    timeout: 90000
+- takeScreenshot: maestro-01-overview
+
+# Swap templates via the demo chips — each swap re-serializes and pushes a new
+# template through the App Group (live template switching)
+- tapOn: "Charts"
+- extendedWaitUntil:
+    visible: "Hourly.*"
+    timeout: 60000
+- assertNotVisible: "Render Error"
+- takeScreenshot: maestro-02-charts
+
+- tapOn: "Lists"
+- extendedWaitUntil:
+    visible: "TOP APPS"
+    timeout: 60000
+- assertNotVisible: "Render Error"
+- takeScreenshot: maestro-03-lists
+
+- tapOn: "Typography"
+- extendedWaitUntil:
+    visible: "underline"
+    timeout: 60000
+- assertNotVisible: "Render Error"
+- takeScreenshot: maestro-04-typography
+
+# Weekly filter still works
+- tapOn: "Weekly"
+- assertNotVisible: "Render Error"
+
+# Sanity: back to Home
+- runFlow:
+    when:
+      visible: ".*Open debugger.*"
+    commands:
+      - tapOn:
+          point: "92%, 93%"
+- tapOn: "Home, tab.*"
+- extendedWaitUntil:
+    visible: "Screen Time Access"
+    timeout: 10000
+- takeScreenshot: maestro-05-home

@@ -1,0 +1,322 @@
+---
+id: templates
+title: Report Templates
+sidebar_position: 8
+---
+
+# Report Templates
+
+:::info Requires the `DeviceActivityReportExtension` target
+:::
+
+Compose the report screen's **entire layout in JSX** with `Report.*` components.
+The tree is serialized (never rendered by React), shipped to the report
+extension through the App Group, and rendered natively **inside Apple's
+sandbox** — the layout comes from JS, the values never leave the extension.
+
+```tsx
+import { DeviceActivityReport, Report } from 'expo-screen-time';
+
+<DeviceActivityReport filterSegment="daily" style={{ height: 420 }}>
+  <Report.VStack spacing={14} padding={16} alignment="leading">
+    <Report.HStack spacing={14}>
+      <Report.Gauge bind="totalDuration" goal={4 * 3600} size={64} color="#AF52DE" />
+      <Report.VStack spacing={2} alignment="leading">
+        <Report.Text text="SCREEN TIME" size={11} color="#8E8E93" letterSpacing={1} />
+        <Report.Text bind="totalDuration" durationStyle="abbreviated" size={30} weight="bold" monospacedDigit />
+        <Report.Text text="of 4h daily goal" size={12} color="#8E8E93" />
+      </Report.VStack>
+    </Report.HStack>
+    <Report.ProgressBar bind="totalDuration" goal={4 * 3600} height={10} color="#AF52DE" />
+    <Report.Chart type="area" bind="hourly" accentColor="#AF52DE" gradient height={90} showYAxis={false} />
+    <Report.Divider />
+    <Report.TopApps limit={3} spacing={10} emptyText="No app usage yet">
+      <Report.HStack spacing={10}>
+        <Report.AppIcon size={26} cornerRadius={6} />
+        <Report.AppTitle size={14} />
+        <Report.Spacer />
+        <Report.Text bind="appDuration" durationStyle="short" size={13} monospacedDigit />
+      </Report.HStack>
+    </Report.TopApps>
+  </Report.VStack>
+</DeviceActivityReport>
+```
+
+The report is template-only: without a template (children or the imperative
+[`setReportTemplate`](#imperative-api)), the extension renders a
+"No custom template set" placeholder.
+
+## Rules
+
+- **Templates are descriptors, not React UI.** Only `Report.*` components and
+  hook-free compositions of them are allowed — React Native components can't
+  render inside the extension, and hooks can't run during serialization. Both
+  produce descriptive errors in development.
+- **One template at a time.** The App Group carries a single template — the
+  last mounted templated report wins.
+- **Size the container.** The report renders in a sandboxed remote view that
+  can't report its content height: the template is clipped to the component's
+  `style`. Give it a `height` that fits your layout.
+- **Display-only.** No presses/callbacks from the report back to the app
+  (sandbox boundary). Scrolling *over* the report is handled for you.
+- **First render can be slow.** The very first scene invocation after a fresh
+  install (or freshly enabled Screen Time) can take up to a minute while iOS
+  spins up its report service; subsequent renders are fast.
+
+## Bindings
+
+`bind` props resolve to values computed natively from the report's usage data
+— JS only names them, it never sees them:
+
+| Binding | Scope | Value |
+|---|---|---|
+| `totalDuration` | root | Total screen time (seconds) |
+| `pickups` | root | Number of device pickups |
+| `longestActivity` | root | Longest continuous session (seconds) |
+| `appCount` | root | Number of distinct apps used |
+| `firstPickup` | root | Time of the first pickup ("9:41 AM", or "—") |
+| `appDuration` | item | The current app/category's usage (seconds) |
+| `appName` | item | The current app/category's display name |
+| `rank` | item | 1-based position in the list |
+
+**Scopes.** Root bindings work anywhere. Item bindings only work inside the
+per-item template of [`TopApps` / `Categories`](#reporttopapps--reportcategories)
+(a descriptive error is thrown otherwise).
+
+**Formatting durations.** On `Report.Text`, `durationStyle` picks the format:
+`'abbreviated'` (1h 24m), `'short'` (1:24), `'full'` (1 hour, 24 minutes).
+Alternatively `format="percent"` + `goal` renders any numeric binding as a
+percentage.
+
+**Weekly filter.** With `filterSegment="weekly"`, `hourly` chart buckets
+aggregate the week per hour-of-day (a daily usage profile, not a timeline),
+and duration bindings cover the whole week.
+
+## Layout components
+
+### `Report.VStack` / `Report.HStack`
+
+Vertical / horizontal stack. Accepts all [box props](#box-props).
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `spacing` | `number` | SwiftUI default (~8) | Points between children |
+| `alignment` | `'leading' \| 'center' \| 'trailing' \| 'top' \| 'bottom'` | `'center'` | Cross-axis alignment: use leading/trailing in a VStack, top/bottom in an HStack |
+| `children` | `Report.*` | — | Stack content |
+
+### `Report.ZStack`
+
+Overlays its children. Accepts all [box props](#box-props).
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `alignment` | `'center' \| 'topLeading' \| 'topTrailing' \| 'bottomLeading' \| 'bottomTrailing'` | `'center'` | Where children anchor |
+
+### `Report.Grid`
+
+Fixed-column grid (`LazyVGrid`) — great for stat tiles. Accepts all
+[box props](#box-props).
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `columns` | `number` | `2` | Equal-width column count |
+| `spacing` | `number` | `8` | Points between cells (both axes) |
+
+### `Report.Spacer`
+
+Flexible space — pushes siblings apart inside a stack.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `minLength` | `number` | `0` | Minimum size in points |
+
+### `Report.Divider`
+
+Horizontal hairline.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `color` | `string` (hex) | system separator | Line color |
+| `thickness` | `number` | hairline (1px) | Line height in points |
+
+### Box props
+
+Shared by `VStack`, `HStack`, `ZStack` and `Grid`:
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `padding` | `number` | `0` | Uniform padding (points) |
+| `paddingHorizontal` / `paddingVertical` | `number` | `0` | Axis padding, additive with `padding` |
+| `backgroundColor` | `string` (hex) | transparent | Fill color |
+| `backgroundGradient` | `[string, string]` | — | Two-color gradient fill; overrides `backgroundColor` |
+| `gradientDirection` | `'vertical' \| 'horizontal' \| 'diagonal'` | `'vertical'` | Gradient axis |
+| `cornerRadius` | `number` | `0` | Rounds background and border |
+| `borderColor` / `borderWidth` | `string` / `number` | — / `0` | Stroked border following `cornerRadius` |
+| `shadowColor` | `string` (hex, supports `#RRGGBBAA`) | none | Drop shadow color |
+| `shadowRadius` / `shadowY` | `number` | `0` / `0` | Shadow blur / vertical offset |
+| `opacity` | `number` | `1` | 0–1 |
+| `width` / `height` / `minHeight` | `number` | content size | Fixed frame in points |
+| `fillWidth` | `boolean` | `false` | Stretch to the available width |
+
+Colors are hex strings: `#RRGGBB` or `#RRGGBBAA`.
+
+## Content components
+
+### `Report.Text`
+
+A text element — static (`text`) **or** bound to a native value (`bind`).
+Exactly one of the two is required.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `text` | `string` | — | Static content (string children work too) |
+| `bind` | binding key | — | Native value to display (see [Bindings](#bindings)) |
+| `durationStyle` | `'abbreviated' \| 'short' \| 'full'` | `'abbreviated'` | Format for duration bindings |
+| `format` | `'percent'` | — | Render the binding as `Math.round(value / goal * 100)%` |
+| `goal` | `number` | — | Required with `format="percent"`, in the binding's unit |
+| `size` | `number` | `15` | Font size (points) |
+| `weight` | `'light' \| 'regular' \| 'medium' \| 'semibold' \| 'bold' \| 'heavy'` | `'regular'` | Font weight |
+| `design` | `'default' \| 'rounded' \| 'serif' \| 'monospaced'` | `'default'` | Font design (`rounded` = SF Rounded) |
+| `color` | `string` (hex) | label color | Text color |
+| `opacity` | `number` | `1` | 0–1 |
+| `italic` / `underline` / `strikethrough` | `boolean` | `false` | Decorations |
+| `uppercase` | `boolean` | `false` | Uppercases the resolved text |
+| `monospacedDigit` | `boolean` | `false` | Tabular figures — keeps bound numbers from jiggling |
+| `lineLimit` | `number` | `1` | Max lines |
+| `letterSpacing` | `number` | `0` | Kerning in points |
+| `align` | `'leading' \| 'center' \| 'trailing'` | — | Multiline alignment; also stretches to available width |
+
+### `Report.Symbol`
+
+An SF Symbol.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `name` | `string` | required | SF Symbol name (e.g. `"hourglass"`) |
+| `size` | `number` | `17` | Point size |
+| `color` | `string` (hex) | label color | Tint |
+| `weight` | font weight | `'regular'` | Symbol weight |
+| `renderingMode` | `'monochrome' \| 'hierarchical'` | `'monochrome'` | `hierarchical` renders multi-level symbols with depth |
+| `opacity` | `number` | `1` | 0–1 |
+
+### `Report.Chart`
+
+A Swift Charts plot of usage data.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `type` | `'bar' \| 'line' \| 'area' \| 'pie'` | required | Mark type. `pie` needs iOS 17 (falls back to `bar`) |
+| `bind` | `'hourly' \| 'topApps' \| 'categories'` | required | Data series: 24 hour-of-day buckets, or per-app/per-category totals |
+| `accentColor` | `string` (hex) | blue | Series color |
+| `colorPalette` | `string[]` | — | Per-entry colors (bar/pie with list binds); cycles when shorter |
+| `gradient` | `boolean` | `false` | Vertical fade of the accent color (bar/area) |
+| `barCornerRadius` | `number` | `0` | Rounded bar marks |
+| `lineWidth` | `number` | `2` | Line chart stroke width |
+| `showPoints` | `boolean` | `false` | Line charts: a point at each value |
+| `averageLine` | `boolean` | `false` | Dashed rule at the series average |
+| `goalValue` | `number` | — | Solid-dash goal rule, **in minutes** (chart Y unit) |
+| `goalColor` | `string` (hex) | red | Goal rule color |
+| `pieInnerRadius` | `number` | `0.55` | Donut hole ratio 0–1 (`0` = solid pie) |
+| `labelColor` | `string` (hex) | secondary label | Axis label color |
+| `height` | `number` | `120` | Chart height (points) |
+| `showXAxis` | `boolean` | `false` for `hourly`, else `true` | X-axis labels/grid |
+| `showYAxis` | `boolean` | `true` | Y-axis labels/grid |
+| `xAxisStride` | `number` | `6` | Hourly X-axis: label every N hours |
+| `maxItems` | `number` | `6` | Max entries for `topApps`/`categories` binds |
+
+### `Report.ProgressBar`
+
+Linear progress toward a goal: `bind / goal`, clamped to 0–1.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `bind` | binding key | `totalDuration` | Numeric binding |
+| `goal` | `number` | required | In the binding's unit (seconds for durations, count for pickups) |
+| `height` | `number` | `8` | Bar height (points) |
+| `color` | `string` (hex) | blue | Fill |
+| `trackColor` | `string` (hex) | quaternary fill | Track |
+| `cornerRadius` | `number` | `height / 2` | Capsule by default |
+
+### `Report.Gauge`
+
+Progress toward a goal as a SwiftUI Gauge.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `bind` | binding key | `totalDuration` | Numeric binding |
+| `goal` | `number` | required | In the binding's unit |
+| `style` | `'circular' \| 'linear'` | `'circular'` | Circular ring with a % label, or a slim capacity bar |
+| `size` | `number` | `56` | Circular diameter in points — any size works, the ring is scaled internally |
+| `color` | `string` (hex) | blue | Tint |
+
+## Item lists
+
+### `Report.TopApps` / `Report.Categories`
+
+Repeats their children once per app / category (sorted by usage, descending).
+Inside, the **item scope** enables `appDuration` / `appName` / `rank` bindings
+and the `AppIcon` / `AppTitle` components.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `limit` | `number` | `5` | Max rows |
+| `spacing` | `number` | `8` | Points between rows |
+| `emptyText` | `string` | — | Shown when there is no usage data yet |
+| `children` | `Report.*` | required | The per-item template |
+
+### `Report.AppIcon`
+
+The current item's real app/category icon (rendered from the opaque token via
+`Label(token)` — only possible inside the sandbox). Item scope only.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `size` | `number` | `28` | Icon size (points) |
+| `cornerRadius` | `number` | `0` | Clip radius |
+
+### `Report.AppTitle`
+
+The current item's display name. Item scope only.
+
+| Prop | Type | Default | Description |
+|---|---|---|---|
+| `size` | `number` | `15` | Font size |
+| `weight` | font weight | `'regular'` | Font weight |
+| `color` | `string` (hex) | label color | Text color |
+| `opacity` | `number` | `1` | 0–1 |
+| `lineLimit` | `number` | `1` | Max lines |
+
+```tsx
+<Report.Categories limit={4} emptyText="Nothing yet">
+  <Report.HStack spacing={8}>
+    <Report.AppIcon size={22} />
+    <Report.AppTitle size={13} />
+    <Report.Spacer />
+    <Report.Text bind="appDuration" durationStyle="short" size={12} />
+  </Report.HStack>
+</Report.Categories>
+```
+
+## Imperative API
+
+The children API above is the reactive path and should be preferred. For cases
+where the template is set outside a render (e.g. app startup config):
+
+```ts
+import { setReportTemplate, clearReportTemplate, Report } from 'expo-screen-time';
+
+setReportTemplate(
+  <Report.VStack padding={16}>
+    <Report.Text bind="totalDuration" durationStyle="abbreviated" size={32} weight="bold" />
+  </Report.VStack>
+);
+// Any mounted <DeviceActivityReport> without children renders it.
+
+clearReportTemplate(); // back to the placeholder
+```
+
+## Versioning
+
+The serialized template carries a `version`; an extension older than the JS
+falls back to the placeholder (and unknown components/props are skipped) —
+templates degrade, they don't crash.

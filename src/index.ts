@@ -1,11 +1,23 @@
 import { createPermissionHook } from "expo-modules-core";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactElement,
+} from "react";
 
 import type {
   MonitorEvent,
   OnMonitorEventPayload,
 } from "./ExpoScreenTime.types";
 import ExpoScreenTimeModule from "./ExpoScreenTimeModule";
+import { serializeTemplate } from "./report/serializeTemplate";
+import {
+  acquireTemplate,
+  clearTemplateChannel,
+  IMPERATIVE_OWNER,
+} from "./report/templateChannel";
 
 export const useScreenTimePermissions = createPermissionHook({
   requestMethod: ExpoScreenTimeModule.requestScreenTimePermissionsAsync,
@@ -47,7 +59,35 @@ export function useMonitorEvents(callback?: (event: MonitorEvent) => void) {
 
 // Module
 export { default } from "./ExpoScreenTimeModule";
-export type { ReportStyle } from "./ExpoScreenTimeModule";
+
+// Report templates
+export { Report } from "./report/ReportComponents";
+export type {
+  ReportBinding,
+  ReportItemBinding,
+  DurationStyle,
+} from "./report/ReportComponents";
+export { serializeTemplate };
+export type {
+  ReportTemplate,
+  ReportTemplateNode,
+} from "./report/serializeTemplate";
+
+/**
+ * Imperative form of the `<DeviceActivityReport>` children API: serialize a
+ * `Report.*` element tree and ship it to the report extension via the App
+ * Group. Any mounted `<DeviceActivityReport>` without children renders it —
+ * the children API is the reactive path and should be preferred.
+ * @platform ios
+ */
+export function setReportTemplate(element: ReactElement): void {
+  acquireTemplate(IMPERATIVE_OWNER, JSON.stringify(serializeTemplate(element)));
+}
+
+/** Remove the custom report template (revert to built-in layouts). @platform ios */
+export function clearReportTemplate(): void {
+  clearTemplateChannel();
+}
 
 // Components
 export { default as ActivityPicker } from "./ExpoScreenTimeActivityPickerView";
@@ -63,7 +103,6 @@ export {
 } from "./DeviceActivityReport";
 export type {
   DeviceActivityReportProps,
-  ReportContext,
   FilterSegment,
 } from "./DeviceActivityReport";
 

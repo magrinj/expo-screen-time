@@ -190,3 +190,31 @@ export type MonitoringErrorCode =
   | "UNAUTHORIZED"
   | "INVALID_CONFIG"
   | "UNSUPPORTED";
+
+// ============================================================================
+// TEMPORARY UNLOCK (EARNED TIME)
+// ============================================================================
+
+/**
+ * Result of `temporaryUnlock`. `budgetSeconds` is the granted usage budget
+ * (after the 30s floor); `grantedAt` is Unix milliseconds.
+ *
+ * There is deliberately no `expiresAt`: the budget is spent by usage, not by
+ * the clock, so its end time depends on how the user behaves. Unspent budget
+ * expires at midnight.
+ */
+export type TemporaryUnlockGrant = {
+  budgetSeconds: number;
+  grantedAt: number;
+};
+
+/**
+ * One blocked-app attempt the user reacted to on the shield.
+ * Returned by `drainShieldInteractions`.
+ */
+export type ShieldInteraction = {
+  /** Which shield button was pressed. */
+  button: "primary" | "secondary";
+  /** Unix milliseconds. */
+  timestamp: number;
+};

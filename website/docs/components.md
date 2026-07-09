@@ -55,43 +55,31 @@ After picking, use the same `selectionId` with
 :::info Requires the `DeviceActivityReportExtension` target
 :::
 
-Display usage analytics from iOS Screen Time. The data renders inside a sandboxed
-extension and never reaches JavaScript; styling is passed through via the App
-Group. Renders a styled fallback on non-iOS platforms.
+Renders a JSX-authored template against iOS Screen Time usage data, inside
+Apple's sandboxed report extension. **The layout comes from `Report.*`
+children** — see [Report Templates](./api/templates.md) for the full component
+vocabulary and bindings. The values never reach JavaScript. Renders a styled
+fallback on non-iOS platforms.
 
-```typescript
-import { DeviceActivityReport } from 'expo-screen-time';
+```tsx
+import { DeviceActivityReport, Report } from 'expo-screen-time';
 
-<DeviceActivityReport
-  context="TotalActivity"
-  filterSegment="daily"
-  filterDate={new Date()}
-  style={{ height: 300 }}
-  accentColor="#FF6B00"
-  backgroundColor="#1a1a1a"
-  textColor="#ffffff"
-  showPickups={true}
-  showTopApps={true}
-  showChart={true}
-  chartStyle="bar"
-/>
+<DeviceActivityReport filterSegment="daily" style={{ height: 320 }}>
+  <Report.VStack spacing={12} padding={16}>
+    <Report.Text bind="totalDuration" durationStyle="abbreviated" size={34} weight="bold" />
+    <Report.Chart type="area" bind="hourly" accentColor="#FF6B00" gradient height={100} />
+  </Report.VStack>
+</DeviceActivityReport>
 ```
 
 **Props:**
 
 | Prop | Type | Default | Description |
 |------|------|---------|-------------|
-| `context` | `'TotalActivity' \| 'AppList' \| 'HourlyChart'` | `'TotalActivity'` | Report view type |
+| `children` | `Report.*` template | - | The report layout (see [Report Templates](./api/templates.md)); omit only when pairing with `setReportTemplate()` |
 | `filterSegment` | `'daily' \| 'weekly'` | `'daily'` | Time filter |
-| `filterDate` | `Date` | Today | Date to show the report for |
-| `style` | `StyleProp<ViewStyle>` | - | Container style |
-| `accentColor` | `string` | - | Accent color (hex) |
-| `backgroundColor` | `string` | - | Background color (hex) |
-| `textColor` | `string` | - | Text color (hex) |
-| `showPickups` | `boolean` | - | Show pickup count |
-| `showTopApps` | `boolean` | - | Show top apps section |
-| `showChart` | `boolean` | - | Show usage chart |
-| `chartStyle` | `'bar' \| 'pie'` | - | Chart visualization style |
+| `filterDate` | `Date` | Today (at mount) | Date to show the report for |
+| `style` | `StyleProp<ViewStyle>` | - | Container style — must be sized to fit the template (remote views can't auto-size) |
 
 ## Token Labels {#token-labels}
 

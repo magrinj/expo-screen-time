@@ -76,17 +76,91 @@ public class ExpoScreenTimeModule: Module {
                     NSLocalizedDescriptionKey: "Selection '\(selectionId)' not found"
                 ])
             }
+            // An explicit block supersedes any in-flight temporary unlock.
+            self.cancelTemporaryUnlock()
+            // Persisted so a relock — from this process or from the monitor
+            // extension when the budget runs out — restores exactly this
+            // selection.
+            self.sharedDefaults.setBlockedSelectionId(selectionId)
             screenTimeManager.blockSelection(selection)
             // Force iOS to invoke ShieldConfigurationExtension for custom shield UI
             screenTimeManager.refreshShields()
         }
 
         Function("unblockAll") {
+            self.cancelTemporaryUnlock()
+            self.sharedDefaults.setBlockedSelectionId(nil)
             screenTimeManager.unblockAll()
         }
 
         Function("isBlocked") { () -> Bool in
             return screenTimeManager.isBlocked()
+        }
+
+        AsyncFunction("temporaryUnlock") { (budgetSeconds: Int, promise: Promise) in
+            guard #available(iOS 15.0, *) else {
+                promise.reject("UNSUPPORTED", "Temporary unlock requires iOS 15.0+")
+                return
+            }
+
+            guard let selectionId = self.sharedDefaults.getBlockedSelectionId(),
+                  let selection = SelectionStore.shared.get(selectionId),
+                  self.screenTimeManager.isBlocked() else {
+                promise.reject("NO_ACTIVE_BLOCK", "Nothing is blocked — call blockSelection first")
+                return
+            }
+
+            // Apple's usage thresholds are unreliable below ~30s; a smaller
+            // budget couldn't be metered.
+            let budget = max(Self.unlockStepSeconds, budgetSeconds)
+            let grantedAt = Date()
+
+            do {
+                try self.armUnlockMonitoring(budget: budget, selection: selection)
+            } catch {
+                promise.reject("MONITORING_ERROR", "Could not arm usage metering: \(error.localizedDescription)")
+                return
+            }
+
+            self.sharedDefaults.setUnlockState(budgetSeconds: budget, grantedAt: grantedAt)
+            self.screenTimeManager.suspendShields()
+
+            promise.resolve([
+                "budgetSeconds": budget,
+                "grantedAt": grantedAt.timeIntervalSince1970 * 1000
+            ])
+        }
+
+        Function("isTemporarilyUnlocked") { () -> Bool in
+            return self.remainingUnlockSeconds() > 0
+        }
+
+        // Remaining budget = granted − consumed (as reported by the monitor's
+        // threshold steps). It moves in step-sized decrements, not smoothly —
+        // and only while a blocked app is being used. Reading 0 while a budget
+        // was granted means it was spent (or the day rolled over): re-apply the
+        // shield from here too, as a backstop in case the monitor extension's
+        // final threshold never fired.
+        Function("getRemainingUnlockSeconds") { () -> Int in
+            let hadBudget = self.sharedDefaults.getUnlockBudgetSeconds() > 0
+            let remaining = self.remainingUnlockSeconds()
+            if remaining <= 0 && hadBudget {
+                self.relock()
+            }
+            return remaining
+        }
+
+        Function("relock") {
+            self.relock()
+        }
+
+        // MARK: - Shield interactions
+
+        // Read-and-clear the queue written by the ShieldAction extension —
+        // one entry per blocked-app open the user reacted to. Call on app
+        // foreground and persist app-side to power "blocked N times" stats.
+        Function("drainShieldInteractions") { () -> [[String: Any]] in
+            return self.sharedDefaults.drainShieldInteractions()
         }
 
         Function("blockWebDomains") { (domains: [String]) in
@@ -107,40 +181,29 @@ public class ExpoScreenTimeModule: Module {
 
         // MARK: - Reporting
 
-        Function("setReportStyle") { (style: [String: Any]) in
+        Function("getAppGroup") { () -> String? in
+            guard let bundleId = Bundle.main.bundleIdentifier else { return nil }
+            return "group.\(bundleId)"
+        }
+
+        // Serialized report template (JSON from the JS Report.* serializer).
+        // The CustomTemplateReport scene in the report extension reads it back.
+        Function("setReportTemplate") { (templateJson: String) in
             guard let bundleId = Bundle.main.bundleIdentifier,
                   let defaults = UserDefaults(suiteName: "group.\(bundleId)") else {
                 return
             }
-
-            if let accentColor = style["accentColor"] as? String {
-                defaults.set(accentColor, forKey: "expo_st_accentColor")
-            }
-            if let backgroundColor = style["backgroundColor"] as? String {
-                defaults.set(backgroundColor, forKey: "expo_st_backgroundColor")
-            }
-            if let textColor = style["textColor"] as? String {
-                defaults.set(textColor, forKey: "expo_st_textColor")
-            }
-            if let showPickups = style["showPickups"] as? Bool {
-                defaults.set(showPickups, forKey: "expo_st_showPickups")
-            }
-            if let showTopApps = style["showTopApps"] as? Bool {
-                defaults.set(showTopApps, forKey: "expo_st_showTopApps")
-            }
-            if let showChart = style["showChart"] as? Bool {
-                defaults.set(showChart, forKey: "expo_st_showChart")
-            }
-            if let chartStyle = style["chartStyle"] as? String {
-                defaults.set(chartStyle, forKey: "expo_st_chartStyle")
-            }
-
+            defaults.set(templateJson, forKey: "expo_st_report_template")
             defaults.synchronize()
         }
 
-        Function("getAppGroup") { () -> String? in
-            guard let bundleId = Bundle.main.bundleIdentifier else { return nil }
-            return "group.\(bundleId)"
+        Function("clearReportTemplate") {
+            guard let bundleId = Bundle.main.bundleIdentifier,
+                  let defaults = UserDefaults(suiteName: "group.\(bundleId)") else {
+                return
+            }
+            defaults.removeObject(forKey: "expo_st_report_template")
+            defaults.synchronize()
         }
 
         // MARK: - Debug
@@ -499,16 +562,16 @@ public class ExpoScreenTimeModule: Module {
         }
 
         View(ExpoScreenTimeReportView.self) {
-            Prop("context") { (view: ExpoScreenTimeReportView, context: String) in
-                view.setContext(context)
-            }
-
             Prop("filterSegment") { (view: ExpoScreenTimeReportView, segment: String) in
                 view.setFilterSegment(segment)
             }
 
             Prop("filterDate") { (view: ExpoScreenTimeReportView, timestamp: Double) in
                 view.setFilterDate(timestamp)
+            }
+
+            Prop("templateHash") { (view: ExpoScreenTimeReportView, hash: String?) in
+                view.setTemplateHash(hash)
             }
         }
 
@@ -635,6 +698,102 @@ public class ExpoScreenTimeModule: Module {
         }
 
         return (DeviceActivityEvent.Name(rawValue: eventName), event)
+    }
+
+    // MARK: - Temporary Unlock Helpers
+
+    /// Reserved DeviceActivity name for the unlock's usage metering — the
+    /// monitor extension routes it away from the regular monitoring handlers.
+    static let unlockActivityName = "expo_st_temporary_unlock"
+    /// Event names carry their threshold: `expo_st_unlock_step_<seconds>`.
+    static let unlockStepPrefix = "expo_st_unlock_step_"
+    /// Metering grain. Below ~30s Apple's usage thresholds fire late or not
+    /// at all, so this is the finest step worth registering.
+    static let unlockStepSeconds = 30
+    /// Ceiling on registered events — DeviceActivity degrades with large
+    /// event sets, so the step auto-coarsens for big budgets.
+    static let maxUnlockSteps = 60
+
+    /// Register the usage-threshold ladder for `budget` seconds over the
+    /// blocked selection. Each step lets the monitor extension persist how
+    /// much of the budget is spent; the final step (== budget) re-blocks.
+    @available(iOS 15.0, *)
+    private func armUnlockMonitoring(budget: Int, selection: FamilyActivitySelection) throws {
+        let center = DeviceActivityCenter()
+        // Replace any previous unlock metering (a fresh grant restarts the count).
+        center.stopMonitoring([DeviceActivityName(Self.unlockActivityName)])
+
+        let step = max(Self.unlockStepSeconds, Int(ceil(Double(budget) / Double(Self.maxUnlockSteps))))
+        var thresholds: [Int] = Array(stride(from: step, to: budget, by: step))
+        thresholds.append(budget)
+
+        var events: [DeviceActivityEvent.Name: DeviceActivityEvent] = [:]
+        for seconds in thresholds {
+            events[DeviceActivityEvent.Name("\(Self.unlockStepPrefix)\(seconds)")] = DeviceActivityEvent(
+                applications: selection.applicationTokens,
+                categories: selection.categoryTokens,
+                webDomains: selection.webDomainTokens,
+                threshold: DateComponents(
+                    hour: seconds / 3600,
+                    minute: (seconds % 3600) / 60,
+                    second: seconds % 60
+                )
+            )
+        }
+
+        // The interval must start NOW: thresholds measure usage accumulated
+        // within the interval, so an all-day interval would count this
+        // morning's usage and could be crossed before metering even begins
+        // (the system never re-fires a threshold already exceeded). Ending at
+        // 23:59:59 gives the monitor a day-boundary callback to expire any
+        // unspent budget — earned time doesn't carry across midnight.
+        let startComponents = Calendar.current.dateComponents([.hour, .minute, .second], from: Date())
+        let schedule = DeviceActivitySchedule(
+            intervalStart: startComponents,
+            intervalEnd: DateComponents(hour: 23, minute: 59, second: 59),
+            repeats: false
+        )
+
+        try center.startMonitoring(
+            DeviceActivityName(Self.unlockActivityName),
+            during: schedule,
+            events: events
+        )
+    }
+
+    /// Stop the metering schedule and drop all unlock state. Does NOT touch
+    /// the shields — callers decide whether to re-apply or clear them.
+    private func cancelTemporaryUnlock() {
+        if #available(iOS 15.0, *) {
+            DeviceActivityCenter().stopMonitoring([DeviceActivityName(Self.unlockActivityName)])
+        }
+        sharedDefaults.clearUnlockState()
+    }
+
+    /// End any active unlock and restore the shield from the persisted
+    /// blocked selection.
+    private func relock() {
+        cancelTemporaryUnlock()
+        guard let selectionId = sharedDefaults.getBlockedSelectionId(),
+              let selection = SelectionStore.shared.get(selectionId) else {
+            return
+        }
+        screenTimeManager.blockSelection(selection)
+    }
+
+    /// Budget minus consumption, floored at 0. A grant from a previous
+    /// calendar day is stale (the daily reset may not have fired if the
+    /// device slept through it).
+    private func remainingUnlockSeconds() -> Int {
+        let budget = sharedDefaults.getUnlockBudgetSeconds()
+        guard budget > 0 else { return 0 }
+
+        if let grantedAt = sharedDefaults.getUnlockGrantedAt(),
+           !Calendar.current.isDate(grantedAt, inSameDayAs: Date()) {
+            return 0
+        }
+
+        return max(0, budget - sharedDefaults.getUnlockConsumedSeconds())
     }
 
     // MARK: - Darwin Notification Helpers

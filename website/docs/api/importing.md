@@ -18,6 +18,10 @@ import ExpoScreenTime, {
   ApplicationLabel,
   CategoryLabel,
   WebDomainLabel,
+  // Report templates (JSX-composed report layouts)
+  Report,
+  setReportTemplate,
+  clearReportTemplate,
   // Selection utilities (also available on the default export)
   listSelections,
   getTokens,

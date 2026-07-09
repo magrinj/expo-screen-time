@@ -19,7 +19,8 @@ An Expo module that wraps Apple's Screen Time APIs (FamilyControls, ManagedSetti
 - **App Store Restrictions** — Prevent app installation and removal
 - **Schedule Monitoring** — Set up time-based blocking schedules
 - **Shield Customization** — Customize the blocking screen appearance and button actions
-- **Usage Reports** — Display device activity reports with customizable styling
+- **Earned Time** — Usage-based temporary unlocks that re-lock automatically, plus a blocked-attempts counter
+- **Usage Reports** — JSX-authored report templates rendered on-device by iOS (usage data never reaches JS)
 - **Token Labels** — Display app/category/domain names and icons
 
 ## Requirements

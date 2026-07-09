@@ -24,8 +24,9 @@ Digital Wellbeing equivalents) is planned but not implemented.
 - **App Store Restrictions** — Prevent app installation and removal
 - **Schedule Monitoring** — Set up time-based blocking schedules
 - **Shield Customization** — Customize the blocking screen appearance
+- **Earned Time** — Usage-based temporary unlocks that re-lock automatically
 - **Shield Actions** — Configure button behaviors (close, snooze, unblock)
-- **Usage Reports** — Display device activity reports with customizable styling
+- **Usage Reports** — JSX-authored report templates rendered on-device by iOS (usage data never reaches JS)
 - **Token Labels** — Display app/category/domain names and icons
 
 ## Requirements
