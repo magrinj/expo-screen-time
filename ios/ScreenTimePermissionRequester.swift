@@ -57,6 +57,13 @@ public class ScreenTimePermissionRequester: NSObject, EXPermissionsRequester {
                 // avoiding an uncaught rejection in the JS permission hook.
                 print("[expo-screen-time] requestAuthorization error: \(error)")
             }
+            // authorizationStatus is a published property that can lag behind the
+            // await — resolving immediately can report the stale .notDetermined,
+            // forcing callers to request twice. Wait briefly for it to settle
+            // (approved/denied); give up after ~2s (e.g. dialog dismissed).
+            for _ in 0..<20 where AuthorizationCenter.shared.authorizationStatus == .notDetermined {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
             resolve(self.getPermissions())
         }
     }
