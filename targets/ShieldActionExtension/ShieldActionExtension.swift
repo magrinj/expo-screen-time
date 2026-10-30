@@ -8,6 +8,13 @@ class ShieldActionExtension: ShieldActionDelegate {
     private let defaults = SharedDefaults.shared
     private let store = ManagedSettingsStore()
 
+    /// What the pressed shield covers — an `unblock` lifts exactly that.
+    private enum ShieldedTarget {
+        case application(ApplicationToken)
+        case webDomain(WebDomainToken)
+        case category(ActivityCategoryToken)
+    }
+
     // MARK: - Action Handlers
 
     /// Handle action for a shielded application
@@ -16,8 +23,7 @@ class ShieldActionExtension: ShieldActionDelegate {
         for application: ApplicationToken,
         completionHandler: @escaping (ShieldActionResponse) -> Void
     ) {
-        let response = processAction(action)
-        completionHandler(response)
+        completionHandler(processAction(action, target: .application(application)))
     }
 
     /// Handle action for a shielded web domain
@@ -26,8 +32,7 @@ class ShieldActionExtension: ShieldActionDelegate {
         for webDomain: WebDomainToken,
         completionHandler: @escaping (ShieldActionResponse) -> Void
     ) {
-        let response = processAction(action)
-        completionHandler(response)
+        completionHandler(processAction(action, target: .webDomain(webDomain)))
     }
 
     /// Handle action for a shielded application in a category
@@ -36,27 +41,29 @@ class ShieldActionExtension: ShieldActionDelegate {
         for category: ActivityCategoryToken,
         completionHandler: @escaping (ShieldActionResponse) -> Void
     ) {
-        let response = processAction(action)
-        completionHandler(response)
+        completionHandler(processAction(action, target: .category(category)))
     }
 
     // MARK: - Private Helpers
 
     /// Process a shield action and return the appropriate response
-    private func processAction(_ action: ShieldAction) -> ShieldActionResponse {
+    private func processAction(_ action: ShieldAction, target: ShieldedTarget) -> ShieldActionResponse {
+        let button: String
+        switch action {
+        case .primaryButtonPressed:
+            button = "primary"
+        case .secondaryButtonPressed:
+            button = "secondary"
+        @unknown default:
+            return .close
+        }
+
         // Record the blocked attempt. This handler is the one callback that
         // reliably fires per shield interaction (the configuration data
         // source is cached by the system and not re-invoked on every open),
         // so it doubles as the "user hit a block" counter the app drains via
         // drainShieldInteractions().
-        switch action {
-        case .primaryButtonPressed:
-            defaults.appendShieldInteraction(button: "primary")
-        case .secondaryButtonPressed:
-            defaults.appendShieldInteraction(button: "secondary")
-        @unknown default:
-            break
-        }
+        defaults.appendShieldInteraction(button: button)
 
         // Get action configuration
         var actionConfig: [String: Any]?
@@ -69,84 +76,93 @@ class ShieldActionExtension: ShieldActionDelegate {
             actionConfig = defaults.getDefaultShieldActions()
         }
 
-        // Determine which action to execute based on button pressed
-        let actionType: String?
-        let snoozeDuration: Int?
-
-        switch action {
-        case .primaryButtonPressed:
-            actionType = actionConfig?["primaryButtonAction"] as? String
-            snoozeDuration = actionConfig?["primaryButtonSnoozeDuration"] as? Int
-        case .secondaryButtonPressed:
-            actionType = actionConfig?["secondaryButtonAction"] as? String
-            snoozeDuration = actionConfig?["secondaryButtonSnoozeDuration"] as? Int
-        @unknown default:
-            actionType = nil
-            snoozeDuration = nil
-        }
-
-        guard let type = actionType else {
+        guard let type = Self.configuredAction(in: actionConfig, button: button) else {
             // Default: close the shield
             return .close
         }
 
-        return executeAction(type: type, snoozeDuration: snoozeDuration)
+        return executeAction(type: type, target: target)
+    }
+
+    /// The action configured for `button` ("primary" or "secondary").
+    ///
+    /// `setShieldActions` stores the JS shape — `primaryAction` /
+    /// `secondaryAction`, each an action name or `{ type: "snooze", duration }`.
+    /// This extension used to read `primaryButtonAction`, a key nothing writes,
+    /// so every configured action silently fell back to `.close`.
+    private static func configuredAction(in config: [String: Any]?, button: String) -> String? {
+        guard let config = config else { return nil }
+        if let name = config["\(button)Action"] as? String {
+            return name
+        }
+        if let object = config["\(button)Action"] as? [String: Any] {
+            return object["type"] as? String
+        }
+        // Legacy native shape, kept readable.
+        return config["\(button)ButtonAction"] as? String
     }
 
     /// Execute an action and return the response
-    private func executeAction(type: String, snoozeDuration: Int?) -> ShieldActionResponse {
+    private func executeAction(type: String, target: ShieldedTarget) -> ShieldActionResponse {
         switch type {
         case "close":
             // Close the shield, block remains active
             return .close
 
         case "unblock":
-            // Unblock everything
-            store.shield.applications = nil
-            store.shield.applicationCategories = nil
-            store.shield.webDomains = nil
-            return .close
-
-        case "snooze":
-            // Temporarily unblock (snooze)
-            let duration = snoozeDuration ?? 300 // Default 5 minutes
-
-            // Store the current blocks to restore later
-            // Note: This is a simplified implementation
-            // In a production app, you'd want to persist the snooze state
-
-            // Remove blocks
-            store.shield.applications = nil
-            store.shield.applicationCategories = nil
-            store.shield.webDomains = nil
-
-            // Schedule restoration of blocks
-            // Note: This won't work in the extension sandbox
-            // The main app needs to handle snooze restoration
-            scheduleBlockRestoration(after: duration)
-
+            lift(target)
             return .close
 
         case "defer":
-            // Defer the action - allows shield UI to update
+            // Keep the shield up and let it redraw; the press is recorded above.
             return .defer
+
+        case "snooze":
+            // A usage-budget snooze needs the temporary-unlock rework, and
+            // proof that this extension may arm DeviceActivity monitoring.
+            // Until then the shield stays: the previous code lifted every
+            // shield and never restored them.
+            return .close
 
         default:
             return .close
         }
     }
 
-    /// Schedule restoration of blocks after snooze duration
-    /// Note: This stores the snooze end time for the main app to check
-    private func scheduleBlockRestoration(after seconds: Int) {
-        let snoozeEndTime = Date().timeIntervalSince1970 + Double(seconds)
+    /// Lift the shield on exactly what was pressed, until a block is applied
+    /// again (the next `blockSelection`, or the next interval start).
+    private func lift(_ target: ShieldedTarget) {
+        switch target {
+        case .application(let token):
+            if var applications = store.shield.applications {
+                applications.remove(token)
+                store.shield.applications = applications.isEmpty ? nil : applications
+            }
+            // The app may also be covered through its category.
+            switch store.shield.applicationCategories {
+            case .specific(let categories, var except)?:
+                except.insert(token)
+                store.shield.applicationCategories = .specific(categories, except: except)
+            case .all(var except)?:
+                except.insert(token)
+                store.shield.applicationCategories = .all(except: except)
+            default:
+                break
+            }
 
-        // Store snooze end time in UserDefaults
-        // The main app or monitor extension can check this and restore blocks
-        if let activeActivity = defaults.getActiveActivity() {
-            var config = defaults.getMonitoringConfig(activityName: activeActivity) ?? [:]
-            config["snoozeEndTime"] = snoozeEndTime
-            defaults.saveMonitoringConfig(activityName: activeActivity, config: config)
+        case .webDomain(let token):
+            if var webDomains = store.shield.webDomains {
+                webDomains.remove(token)
+                store.shield.webDomains = webDomains.isEmpty ? nil : webDomains
+            }
+
+        case .category(let token):
+            if case .specific(var categories, let except)? = store.shield.applicationCategories {
+                categories.remove(token)
+                store.shield.applicationCategories = categories.isEmpty
+                    ? nil
+                    : .specific(categories, except: except)
+            }
         }
     }
 }
