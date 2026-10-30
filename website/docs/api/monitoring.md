@@ -50,11 +50,18 @@ await ExpoScreenTime.stopMonitoring('workHours');
 
 ## `stopAllMonitoring()`
 
+Stops every activity started with `startMonitoring`. A temporary unlock in
+progress (`temporaryUnlock`) is not affected: it keeps metering and re-applies
+the block when its budget is spent.
+
 ```typescript
 await ExpoScreenTime.stopAllMonitoring();
 ```
 
 ## `getMonitoredActivities(): Promise<string[]>`
+
+The activities you started. Activities the module runs for itself (the
+temporary-unlock meter) are never listed.
 
 ```typescript
 const activities = await ExpoScreenTime.getMonitoredActivities();

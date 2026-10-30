@@ -430,8 +430,11 @@ public class ExpoScreenTimeModule: Module {
                 return
             }
 
+            // Stop the app's activities only. The temporary-unlock meter is
+            // internal: stopping it froze consumption, so a granted unlock
+            // could never re-shield and the block stayed off until midnight.
             let center = DeviceActivityCenter()
-            center.stopMonitoring()
+            center.stopMonitoring(center.activities.filter { !Self.isInternalActivity($0.rawValue) })
 
             for activityName in self.sharedDefaults.getAllActivityNames() {
                 self.sharedDefaults.removeMonitoringConfig(activityName: activityName)
@@ -447,7 +450,9 @@ public class ExpoScreenTimeModule: Module {
             }
 
             let center = DeviceActivityCenter()
-            let rawActivities = center.activities.map { $0.rawValue }
+            let rawActivities = center.activities
+                .map { $0.rawValue }
+                .filter { !Self.isInternalActivity($0) }
 
             // Consolidate weekday variants into parent names
             var parentActivities = Set<String>()
@@ -705,6 +710,12 @@ public class ExpoScreenTimeModule: Module {
     /// Reserved DeviceActivity name for the unlock's usage metering — the
     /// monitor extension routes it away from the regular monitoring handlers.
     static let unlockActivityName = "expo_st_temporary_unlock"
+
+    /// Activities the module registers for itself (the unlock meter): never
+    /// listed by, or stopped through, the monitoring API.
+    static func isInternalActivity(_ name: String) -> Bool {
+        return name.hasPrefix("expo_st_")
+    }
     /// Event names carry their threshold: `expo_st_unlock_step_<seconds>`.
     static let unlockStepPrefix = "expo_st_unlock_step_"
     /// Metering grain. Below ~30s Apple's usage thresholds fire late or not
