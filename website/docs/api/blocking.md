@@ -64,7 +64,8 @@ ExpoScreenTime.unblockAllWebDomains();
 
 ### `getBlockedWebDomains(): string[]`
 
-Domains currently blocked via `blockWebDomains()`.
+Domains currently blocked via `blockWebDomains()`. The list is persisted, so
+it survives app relaunches.
 
 ```typescript
 const domains = ExpoScreenTime.getBlockedWebDomains();

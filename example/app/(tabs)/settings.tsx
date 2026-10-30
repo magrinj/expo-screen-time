@@ -22,7 +22,10 @@ const EXAMPLE_DOMAINS = [
 export default function SettingsScreen() {
   const [appRemovalDenied, setAppRemovalDenied] = useState(false);
   const [appInstallationDenied, setAppInstallationDenied] = useState(false);
-  const [blockedDomains, setBlockedDomains] = useState<string[]>([]);
+  // Start from what the module persisted, so the toggles survive relaunches.
+  const [blockedDomains, setBlockedDomains] = useState<string[]>(() =>
+    ExpoScreenTime.getBlockedWebDomains(),
+  );
 
   const handleAppRemovalToggle = (value: boolean) => {
     try {

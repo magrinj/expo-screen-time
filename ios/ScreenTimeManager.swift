@@ -5,8 +5,13 @@ public class ScreenTimeManager: NSObject {
     private let queue = DispatchQueue(label: "expo.screentime.manager", qos: .userInitiated)
     private var _managedSettingsStore: ManagedSettingsStore?
 
-    /// Track currently blocked domains (since we can't read them back from the store)
-    private var blockedWebDomains: Set<WebDomain> = []
+    /// Domains blocked by string. ManagedSettings can't be read back, so the
+    /// list is persisted in the App Group: held only in memory it was empty
+    /// after a relaunch, and the next `unblockWebDomains` then replaced the
+    /// filter with that empty remainder — unblocking every domain.
+    private lazy var blockedWebDomains: Set<WebDomain> = Set(
+        SharedDefaults.shared.getBlockedWebDomains().map { WebDomain(domain: $0) }
+    )
 
     /// Bumped (on `queue`) by every shield mutation
     private var shieldGeneration: UInt64 = 0
@@ -70,7 +75,7 @@ public class ScreenTimeManager: NSObject {
             managedSettingsStore.shield.applications = Set()
             managedSettingsStore.shield.webDomains = Set()
             blockedWebDomains.removeAll()
-            managedSettingsStore.webContent.blockedByFilter = nil
+            updateWebContentFilter()
         }
     }
 
@@ -97,7 +102,7 @@ public class ScreenTimeManager: NSObject {
     public func unblockAllWebDomains() {
         queue.sync {
             blockedWebDomains.removeAll()
-            managedSettingsStore.webContent.blockedByFilter = nil
+            updateWebContentFilter()
         }
     }
 
@@ -162,7 +167,9 @@ public class ScreenTimeManager: NSObject {
         }
     }
 
+    /// Apply the domain list to the store and persist it. Call on `queue`.
     private func updateWebContentFilter() {
+        SharedDefaults.shared.setBlockedWebDomains(blockedWebDomains.compactMap { $0.domain })
         if blockedWebDomains.isEmpty {
             managedSettingsStore.webContent.blockedByFilter = nil
         } else {
