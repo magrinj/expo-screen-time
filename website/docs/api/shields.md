@@ -75,9 +75,10 @@ ExpoScreenTime.setShieldActions({
   web domain, that domain.
 - `'defer'` — keep the shield on screen and let it redraw. The press is still
   recorded for [`drainShieldInteractions()`](./blocking.md).
-- `{ type: 'snooze', duration }` — **not functional yet**: the press is
-  recorded and the shield stays. A usage-based snooze (`duration` seconds of
-  actual use, like `temporaryUnlock`) is planned.
+- `{ type: 'snooze', duration }` — **not functional yet**: it behaves like
+  `'close'`. The press is recorded, the app closes and the block stays. A
+  usage-based snooze (`duration` seconds of actual use, like
+  `temporaryUnlock`) is planned.
 
 Up to 0.1.1, a native key mismatch made every configured action behave like
 `'close'`.
