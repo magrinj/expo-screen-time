@@ -19,6 +19,9 @@ enum SharedDefaultsKeys {
 
     // Event history
     static let eventHistoryPrefix = "expo_st_event_history_"
+
+    // Domains blocked by string (webContent filter)
+    static let blockedWebDomains = "expo_st_blocked_web_domains"
 }
 
 /// Shared utilities for accessing App Group UserDefaults
@@ -231,6 +234,17 @@ class SharedDefaults {
                 }
             }
         }
+        defaults?.synchronize()
+    }
+
+    // MARK: - Blocked Web Domains
+
+    func getBlockedWebDomains() -> [String] {
+        return defaults?.stringArray(forKey: SharedDefaultsKeys.blockedWebDomains) ?? []
+    }
+
+    func setBlockedWebDomains(_ domains: [String]) {
+        defaults?.set(domains.sorted(), forKey: SharedDefaultsKeys.blockedWebDomains)
         defaults?.synchronize()
     }
 
