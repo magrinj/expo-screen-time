@@ -5,6 +5,7 @@ import ExpoScreenTime, {
   ShieldActionConfig,
   MonitorEvent,
   getSelectionMetadata,
+  useMonitorEvents,
 } from "expo-screen-time";
 import React, { useState, useEffect, useCallback } from "react";
 import {
@@ -85,6 +86,8 @@ export default function SchedulingScreen() {
   // Monitoring state
   const [monitoredActivities, setMonitoredActivities] = useState<string[]>([]);
   const [events, setEvents] = useState<MonitorEvent[]>([]);
+  // Live stream while this screen is mounted (the hook keeps newest first).
+  const { events: liveEvents, isListening } = useMonitorEvents();
   const [refreshing, setRefreshing] = useState(false);
 
   // Shield config state
@@ -461,6 +464,38 @@ export default function SchedulingScreen() {
         color={colors.success}
         onPress={handleApplyShieldActions}
       />
+
+      {/* Live Events: what useMonitorEvents receives, in arrival order */}
+      <SectionHeader
+        title={isListening ? "Live Events" : "Live Events (not listening)"}
+      />
+      <Card>
+        {liveEvents.length > 0 ? (
+          [...liveEvents].reverse().map((event, index) => (
+            <React.Fragment key={`${event.timestamp}-${index}`}>
+              {index > 0 && <Separator />}
+              <View style={styles.eventRow} testID={`live-event-${index}`}>
+                <View style={styles.eventContent}>
+                  <Text style={styles.eventType}>
+                    {index + 1}. {event.eventType}
+                    {event.eventName ? ` · ${event.eventName}` : ""}
+                  </Text>
+                  <Text style={styles.eventActivity}>{event.activityName}</Text>
+                  <Text style={styles.eventTime}>
+                    {formatTime(event.timestamp)}
+                  </Text>
+                </View>
+              </View>
+            </React.Fragment>
+          ))
+        ) : (
+          <EmptyState
+            icon="pulse-outline"
+            title="Listening"
+            subtitle="Events appear here as they are emitted, oldest first"
+          />
+        )}
+      </Card>
 
       {/* Event History */}
       <SectionHeader

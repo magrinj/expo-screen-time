@@ -11,9 +11,10 @@ public class ExpoScreenTimeModule: Module {
     public let screenTimeManager = ScreenTimeManager()
     private let sharedDefaults = SharedDefaults.shared
 
-    // Event listening state
+    // Event listening state. The cursor and timer are only touched on the
+    // main queue (the Darwin callback and the poll timer both run there).
     private var isListening = false
-    private var lastProcessedTimestamp: Double = 0
+    private var eventCursor = MonitorEventCursor(startingAt: .infinity)
     private var pollTimer: Timer?
 
     public func definition() -> ModuleDefinition {
@@ -521,12 +522,16 @@ public class ExpoScreenTimeModule: Module {
         OnStartObserving("onMonitorEvent") {
             guard !self.isListening else { return }
             self.isListening = true
-            self.lastProcessedTimestamp = Date().timeIntervalSince1970 * 1000
+            let subscribedAt = Date().timeIntervalSince1970 * 1000
 
-            self.setupDarwinNotificationObserver()
-
-            // Poll every 2 seconds as fallback
             DispatchQueue.main.async {
+                // Reset the cursor before any reader can run: only events
+                // recorded from now on are emitted live (history stays
+                // available through getMonitorEvents).
+                self.eventCursor = MonitorEventCursor(startingAt: subscribedAt)
+                self.setupDarwinNotificationObserver()
+
+                // Poll every 2 seconds as fallback
                 self.pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
                     self?.pollForNewEvents()
                 }
@@ -851,15 +856,10 @@ public class ExpoScreenTimeModule: Module {
     private func pollForNewEvents() {
         guard isListening else { return }
 
-        let allEvents = sharedDefaults.getAllEvents(limit: 50)
-
-        for event in allEvents {
-            guard let timestamp = event["timestamp"] as? Double else { continue }
-
-            if timestamp > lastProcessedTimestamp {
-                lastProcessedTimestamp = timestamp
-                sendEvent("onMonitorEvent", ["event": event])
-            }
+        // Several events can land between two reads (e.g. one activity ends
+        // as another starts): emit all of them, oldest first, exactly once.
+        for event in eventCursor.take(from: sharedDefaults.getAllEvents(limit: 200)) {
+            sendEvent("onMonitorEvent", ["event": event])
         }
     }
 }

@@ -176,6 +176,12 @@ class SharedDefaults {
     func saveEvent(activityName: String, event: [String: Any]) {
         let key = SharedDefaultsKeys.eventHistoryPrefix + activityName
         var events = defaults?.array(forKey: key) as? [[String: Any]] ?? []
+        // A unique id lets the module emit every event exactly once, even
+        // when several share a millisecond timestamp (MonitorEventCursor).
+        var event = event
+        if event["id"] == nil {
+            event["id"] = UUID().uuidString
+        }
         events.append(event)
 
         // Keep only last 1000 events per activity
