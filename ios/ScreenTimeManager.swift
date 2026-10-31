@@ -116,7 +116,9 @@ public class ScreenTimeManager: NSObject {
         // half-applied mutation
         return queue.sync {
             !(managedSettingsStore.shield.applications?.isEmpty ?? true) ||
-            managedSettingsStore.shield.applicationCategories != .none ||
+            // `unblockAll` stores `.some(.none)`; comparing the Optional with
+            // `.none` means `nil`, so that read as "blocked" forever after.
+            (managedSettingsStore.shield.applicationCategories.map { $0 != ShieldSettings.ActivityCategoryPolicy.none } ?? false) ||
             !(managedSettingsStore.shield.webDomains?.isEmpty ?? true)
         }
     }
