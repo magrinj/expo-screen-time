@@ -312,7 +312,7 @@ public class ExpoScreenTimeModule: Module {
                 let center = DeviceActivityCenter()
 
                 // Check if weekdays array is provided
-                if let weekdays = config["weekdays"] as? [Int], !weekdays.isEmpty {
+                if let weekdays = (config["weekdays"] as? [Any])?.compactMap(Self.intValue), !weekdays.isEmpty {
                     // Create one activity per weekday
                     var weekdayActivityNames: [String] = []
 
@@ -608,7 +608,7 @@ public class ExpoScreenTimeModule: Module {
         let repeats = dict["repeats"] as? Bool ?? true
 
         var warningTime: DateComponents?
-        if let warningSeconds = dict["warningTime"] as? Int, warningSeconds > 0 {
+        if let warningSeconds = Self.intValue(dict["warningTime"]), warningSeconds > 0 {
             var components = DateComponents()
             components.second = warningSeconds
             warningTime = components
@@ -622,19 +622,35 @@ public class ExpoScreenTimeModule: Module {
         )
     }
 
+    /// An integer from a JS value. JS numbers reach Swift as `Double` inside
+    /// `[String: Any]`, and `Double as? Int` is always nil, so every numeric
+    /// read from a config dictionary goes through here.
+    static func intValue(_ value: Any?) -> Int? {
+        switch value {
+        case let int as Int:
+            return int
+        case let double as Double where double.rounded() == double && abs(double) < Double(Int.max):
+            return Int(double)
+        case let number as NSNumber:
+            return number.intValue
+        default:
+            return nil
+        }
+    }
+
     private func buildDateComponents(from dict: [String: Any]) -> DateComponents {
         var components = DateComponents()
 
-        if let hour = dict["hour"] as? Int {
+        if let hour = Self.intValue(dict["hour"]) {
             components.hour = hour
         }
-        if let minute = dict["minute"] as? Int {
+        if let minute = Self.intValue(dict["minute"]) {
             components.minute = minute
         }
-        if let second = dict["second"] as? Int {
+        if let second = Self.intValue(dict["second"]) {
             components.second = second
         }
-        if let weekday = dict["weekday"] as? Int {
+        if let weekday = Self.intValue(dict["weekday"]) {
             components.weekday = weekday
         }
 
@@ -647,7 +663,7 @@ public class ExpoScreenTimeModule: Module {
             return nil
         }
 
-        guard let thresholdSeconds = dict["threshold"] as? Int else {
+        guard let thresholdSeconds = Self.intValue(dict["threshold"]) else {
             return nil
         }
 
