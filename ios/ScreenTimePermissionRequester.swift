@@ -20,6 +20,16 @@ public class ScreenTimePermissionRequester: NSObject, EXPermissionsRequester {
         let restricted: Bool
     }
 
+    /// `UserDefaults.standard` key: the member of the last successful request.
+    private static let authorizedMemberKey = "expo_st_authorized_member"
+
+    /// Who granted access last: `"child"` or `"individual"`. Access granted
+    /// before this was recorded reads as `"individual"`, the only kind
+    /// earlier builds requested.
+    static var authorizedMember: String {
+        return UserDefaults.standard.string(forKey: authorizedMemberKey) ?? "individual"
+    }
+
     private let lock = NSLock()
     private var lastFailure: RequestFailure?
     /// `"child"` for the next request: Family Sharing authorization approved
@@ -114,6 +124,9 @@ public class ScreenTimePermissionRequester: NSObject, EXPermissionsRequester {
             // convention and avoiding an uncaught rejection in the JS hook; the
             // failure is reported as the step's `error`.
             self.lock.withLock { self.lastFailure = failure }
+            if Self.isApproved(AuthorizationCenter.shared.authorizationStatus) {
+                UserDefaults.standard.set(member == .child ? "child" : "individual", forKey: Self.authorizedMemberKey)
+            }
             resolve(self.getPermissions())
         }
     }

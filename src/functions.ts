@@ -23,6 +23,11 @@ function forward<K extends MethodName>(name: K): Module[K] {
 // Every function documented on the default export is also a named export.
 // Selection utilities live in ./utils; report templates in ./index.
 
+// Capabilities
+export const getCapabilities = forward("getCapabilities");
+export const getEnforcementGaps = forward("getEnforcementGaps");
+export const openApplication = forward("openApplication");
+
 // Permissions
 export const requestScreenTimePermissionsAsync = forward("requestScreenTimePermissionsAsync");
 export const getScreenTimePermissionsAsync = forward("getScreenTimePermissionsAsync");

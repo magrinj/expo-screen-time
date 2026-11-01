@@ -1,7 +1,9 @@
 import { NativeModule, requireNativeModule } from "expo";
 
 import type {
+  EnforcementGap,
   ExpoScreenTimeModuleEvents,
+  ScreenTimeCapabilities,
   MonitoringConfiguration,
   ShieldConfig,
   ShieldActionConfig,
@@ -22,6 +24,26 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   getScreenTimePermissionsAsync(
     options?: ScreenTimePermissionOptions,
   ): Promise<ScreenTimePermissionResponse>;
+
+  // Capabilities
+  /**
+   * What this build, on this device, with the authorization last granted, can
+   * do. Synchronous and cheap: call it at render time.
+   */
+  getCapabilities(): ScreenTimeCapabilities;
+  /**
+   * Periods when a block should have applied but could not, oldest first;
+   * those still in progress at or ending after `since` (Unix ms) when given.
+   * iOS reports Screen Time authorization revocations, observed at launch and
+   * whenever the app returns to the foreground: a gap opens at the last time
+   * access was seen granted and closes when it is seen granted again.
+   */
+  getEnforcementGaps(since?: number): Promise<EnforcementGap[]>;
+  /**
+   * Bring an app to the foreground by handle. iOS cannot launch another app:
+   * rejects `UNSUPPORTED` unless `getCapabilities().openApplication`.
+   */
+  openApplication(handle: string): Promise<void>;
 
   // App Control
   denyAppRemoval(): void;

@@ -824,5 +824,36 @@ let burst: [[String: Any]] = [
 check(cursor.take(from: burst).compactMap { $0["id"] as? String } == ["a", "b", "c"], "burst emitted oldest first, ties included")
 check(cursor.take(from: burst).isEmpty, "a re-read emits nothing")
 
+// MARK: - Enforcement gaps (authorization revoked)
+
+section("AuthorizationGapTracker — authorization revocations")
+var tracker = AuthorizationGapTracker()
+tracker.observe(approved: false, at: 1_000)
+check(tracker.gaps.isEmpty, "never having had access is not a gap")
+tracker.observe(approved: true, at: 2_000)
+tracker.observe(approved: true, at: 3_000)
+check(tracker.lastApprovedAt == 3_000 && tracker.gaps.isEmpty, "access held: no gap, last grant moves forward")
+tracker.observe(approved: false, at: 5_000)
+check(tracker.gaps == [EnforcementGap(from: 3_000, to: nil, reason: "authorizationRevoked")], "a revocation opens a gap at the last observed grant")
+tracker.observe(approved: false, at: 6_000)
+check(tracker.gaps.count == 1, "further observations without access keep the one open gap")
+check(tracker.gaps(since: 9_000).count == 1, "an open gap is in progress at any later time")
+tracker.observe(approved: true, at: 7_000)
+check(tracker.gaps == [EnforcementGap(from: 3_000, to: 7_000, reason: "authorizationRevoked")], "access back closes the gap at that observation")
+check(tracker.gaps(since: 7_000).count == 1 && tracker.gaps(since: 7_001).isEmpty, "since keeps the gaps ending at or after it")
+check(tracker.gaps(since: nil).count == 1, "no since returns every gap")
+tracker.observe(approved: false, at: 8_000)
+check(tracker.gaps.count == 2 && tracker.gaps[1].from == 7_000 && tracker.hasOpenGap, "a second revocation opens a second gap")
+var capped = AuthorizationGapTracker()
+for i in 0..<(AuthorizationGapTracker.maxGaps + 5) {
+    capped.observe(approved: true, at: Double(i * 10))
+    capped.observe(approved: false, at: Double(i * 10 + 5))
+}
+check(capped.gaps.count == AuthorizationGapTracker.maxGaps && capped.gaps.first?.from == 50, "past the cap the oldest gaps are dropped")
+let roundTrip = try? JSONDecoder().decode(AuthorizationGapTracker.self, from: JSONEncoder().encode(tracker))
+check(roundTrip == tracker, "the tracker survives a JSON round trip (persisted in UserDefaults)")
+let openGapPayload = EnforcementGap(from: 1, to: nil, reason: "authorizationRevoked").dictionary
+check(openGapPayload["to"] is NSNull && (openGapPayload["from"] as? Double) == 1, "an open gap reaches JS with to: null")
+
 print("\n\(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

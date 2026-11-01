@@ -46,12 +46,18 @@ public class ExpoScreenTimeModule: Module {
             // while the app stays alive). The module lives as long as the
             // app context, so the observer is never removed.
             self.reconcileSnoozes()
+            // A revoked authorization is only observable here, at launch and
+            // on every return to the foreground (getEnforcementGaps).
+            self.observeAuthorization()
             NotificationCenter.default.addObserver(
                 forName: UIApplication.didBecomeActiveNotification,
                 object: nil,
                 queue: nil
             ) { _ in
-                DispatchQueue.global(qos: .utility).async { self.reconcileSnoozes() }
+                DispatchQueue.global(qos: .utility).async {
+                    self.reconcileSnoozes()
+                    self.observeAuthorization()
+                }
             }
         }
 
@@ -274,6 +280,23 @@ public class ExpoScreenTimeModule: Module {
         }
 
         // MARK: - Reporting
+
+        // MARK: - Capabilities
+
+        Function("getCapabilities") { () -> [String: Any] in
+            return self.capabilities()
+        }
+
+        AsyncFunction("getEnforcementGaps") { (since: Double?) -> [[String: Any]] in
+            self.observeAuthorization()
+            return self.authorizationGaps.withLock { self.loadGapTracker() }
+                .gaps(since: since)
+                .map(\.dictionary)
+        }
+
+        AsyncFunction("openApplication") { (_: String, promise: Promise) in
+            promise.reject(.unsupported, "iOS cannot open another app; check getCapabilities().openApplication first")
+        }
 
         Function("getAppGroup") { () -> String? in
             guard let bundleId = Bundle.main.bundleIdentifier else { return nil }
@@ -1250,7 +1273,7 @@ public class ExpoScreenTimeModule: Module {
     /// meter right now.
     private func reconcileSnoozes() {
         guard #available(iOS 16.0, *),
-              AuthorizationCenter.shared.authorizationStatus == .approved else {
+              ScreenTimePermissionRequester.isApproved(AuthorizationCenter.shared.authorizationStatus) else {
             return
         }
         let registered = Set(DeviceActivityCenter().activities.map(\.rawValue))
@@ -1357,5 +1380,80 @@ public class ExpoScreenTimeModule: Module {
         for event in eventCursor.take(from: sharedDefaults.getAllEvents(limit: 200)) {
             sendEvent("onMonitorEvent", ["event": event])
         }
+    }
+
+    // MARK: - Capabilities & enforcement gaps
+
+    /// `UserDefaults.standard` key of the persisted `AuthorizationGapTracker`.
+    private static let gapTrackerKey = "expo_st_enforcement_gaps"
+    /// Serializes the tracker's read-fold-write (launch, foreground, JS calls).
+    private let authorizationGaps = NSLock()
+
+    /// Call with `authorizationGaps` held.
+    private func loadGapTracker() -> AuthorizationGapTracker {
+        guard let data = UserDefaults.standard.data(forKey: Self.gapTrackerKey),
+              let tracker = try? JSONDecoder().decode(AuthorizationGapTracker.self, from: data) else {
+            return AuthorizationGapTracker()
+        }
+        return tracker
+    }
+
+    /// Fold the current authorization status into the persisted tracker.
+    private func observeAuthorization() {
+        guard #available(iOS 16.0, *) else { return }
+        let approved = ScreenTimePermissionRequester.isApproved(AuthorizationCenter.shared.authorizationStatus)
+        authorizationGaps.withLock {
+            var tracker = loadGapTracker()
+            let before = tracker
+            tracker.observe(approved: approved, at: Date().timeIntervalSince1970 * 1000)
+            if tracker != before, let data = try? JSONEncoder().encode(tracker) {
+                UserDefaults.standard.set(data, forKey: Self.gapTrackerKey)
+            }
+        }
+    }
+
+    /// What this build, on this device, with the authorization last granted,
+    /// can do (`ScreenTimeCapabilities`). Synchronous and cheap.
+    private func capabilities() -> [String: Any] {
+        let limits: [String: Any] = [
+            // iOS caps DeviceActivity at 20 and the unlock meter holds one.
+            "maxMonitoredActivities": 19,
+            "minIntervalSeconds": 15 * 60,
+            "maxIntervalSeconds": 7 * 24 * 60 * 60,
+        ]
+        guard #available(iOS 16.0, *) else {
+            return [
+                "blocking": "none",
+                "selectableKinds": ["applications": false, "categories": false, "webDomains": false],
+                "webDomainBlocking": false,
+                "appRemovalProtection": "none",
+                "appInstallationBlocking": "none",
+                "usageReports": false,
+                "shieldOpenApp": "notification",
+                "openApplication": false,
+                "limits": limits,
+            ]
+        }
+        // `.individual` access can be revoked in Settings, which lifts the
+        // restrictions; `.child` access is approved and held by a parent.
+        let protection = ScreenTimePermissionRequester.authorizedMember == "child" ? "enforced" : "friction"
+        return [
+            "blocking": "enforced",
+            "selectableKinds": ["applications": true, "categories": true, "webDomains": true],
+            "webDomainBlocking": true,
+            "appRemovalProtection": protection,
+            "appInstallationBlocking": protection,
+            // The config plugin can leave the report extension out.
+            "usageReports": Self.embedsExtension("DeviceActivityReportExtension"),
+            "shieldOpenApp": "notification",
+            "openApplication": false,
+            "limits": limits,
+        ]
+    }
+
+    /// Whether the app bundle embeds the app extension target `name`.
+    private static func embedsExtension(_ name: String) -> Bool {
+        guard let plugIns = Bundle.main.builtInPlugInsURL else { return false }
+        return FileManager.default.fileExists(atPath: plugIns.appendingPathComponent("\(name).appex").path)
     }
 }

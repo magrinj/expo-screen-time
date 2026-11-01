@@ -46,6 +46,7 @@ swiftc -O \
   ios/DailySchedule.swift \
   ios/ActivityRegistration.swift \
   ios/MonitorEventCursor.swift \
+  ios/EnforcementGaps.swift \
   scripts/swift-tests/main.swift \
   -o "$out/swift-tests"
 "$out/swift-tests" || status=1

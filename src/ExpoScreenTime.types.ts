@@ -52,6 +52,87 @@ export type ScreenTimePermissionOptions = {
 };
 
 // ============================================================================
+// CAPABILITIES
+// ============================================================================
+
+/** How strongly a restriction holds against a determined user. */
+export type Enforcement =
+  /** The OS itself refuses the action. */
+  | "enforced"
+  /**
+   * The restriction holds, but the user can lift it through a route the app
+   * cannot close (for example by revoking Screen Time access in Settings);
+   * `getEnforcementGaps()` reports when that happened.
+   */
+  | "friction"
+  | "none";
+
+/**
+ * What this build, on this device, with the authorization last granted, can
+ * do. Branch on it instead of `Platform.OS`.
+ */
+export type ScreenTimeCapabilities = {
+  /** Strength of `blockSelection` and schedules. iOS: `enforced` (the OS draws the shield). */
+  blocking: Enforcement;
+  /** What `<ActivityPicker>` offers and `blockSelection` enforces. */
+  selectableKinds: {
+    applications: boolean;
+    categories: boolean;
+    webDomains: boolean;
+  };
+  /** `blockWebDomains` and co. work (otherwise they throw `UNSUPPORTED`). */
+  webDomainBlocking: boolean;
+  /**
+   * For the authorization last granted: iOS `individual` is `friction` (the
+   * user can revoke Screen Time access in Settings, then delete the app);
+   * `child` is `enforced` (a parent holds the authorization).
+   */
+  appRemovalProtection: Enforcement;
+  /** Same rule as `appRemovalProtection`, for `denyAppInstallation`. */
+  appInstallationBlocking: Enforcement;
+  /** `<DeviceActivityReport>` renders data: the report extension is in this build. */
+  usageReports: boolean;
+  /**
+   * How a shield's open-app action reaches the host app: at once, or
+   * through a notification the user taps (iOS).
+   */
+  shieldOpenApp: "direct" | "notification";
+  /** `openApplication(handle)` works. iOS cannot launch another app: `false`. */
+  openApplication: boolean;
+  limits: {
+    /**
+     * Monitored activities you can count on: iOS has 20 DeviceActivity slots
+     * and the temporary-unlock meter holds one (each snooze in progress also
+     * holds one until it is spent).
+     */
+    maxMonitoredActivities: number;
+    /** Shortest schedule interval (`INTERVAL_TOO_SHORT` below it). */
+    minIntervalSeconds: number;
+    /** Longest schedule interval (`INTERVAL_TOO_LONG` above it). */
+    maxIntervalSeconds: number;
+  };
+};
+
+/** A period during which blocks were intended but not enforced. */
+export type EnforcementGap = {
+  /** Unix ms. */
+  from: number;
+  /** Unix ms; `null` while the gap is still open. */
+  to: number | null;
+  /**
+   * iOS reports `authorizationRevoked`: Screen Time access was revoked, which
+   * lifts every shield. The other reasons are for platforms whose
+   * enforcement can be stopped by the user or the system.
+   */
+  reason:
+    | "stoppedByUser"
+    | "permissionRevoked"
+    | "killedBySystem"
+    | "authorizationRevoked"
+    | "unknown";
+};
+
+// ============================================================================
 // TOKEN & SELECTION TYPES
 // ============================================================================
 
