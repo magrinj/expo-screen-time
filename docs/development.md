@@ -32,7 +32,10 @@ bun run build && bun run lint && bun run test
 `nativeApiParity.test.ts`: the TS declaration, the Swift module and the Kotlin
 registry must list the same functions with the same arity and sync/async kind,
 and the same views and events) and the plugin's (`plugin/src/ios/__tests__/`) —
-the pbxproj shape test that guards every past regression.
+the pbxproj shape test that guards every past regression. It ends with
+`tsc -p test/reference-apps`: the cross-platform reference apps
+(`test/reference-apps/apps/`) must type-check against `src/`, so an API change that
+breaks the contract fails CI.
 
 Touched `ios/ExpoScreenTimeModule.swift` or `src/ExpoScreenTimeModule.ts`? Add
 the matching line to `android/.../NativeFunctions.kt` (it fails with

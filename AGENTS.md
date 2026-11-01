@@ -25,7 +25,7 @@ monitoring, custom shields, usage reports.
 bun install            # bun is the package manager (packageManager: bun@1.3.14)
 bun run build          # module (build/) + config plugin (plugin/build/) — tsc
 bun run lint           # oxlint (Expo shared config, oxlint.config.mjs)
-bun run test           # config-plugin jest tests (plugin/src/**/__tests__)
+bun run test           # jest (src + plugin), then the reference apps type-checked against src/
 cd example && bun install && bun run ios   # example app (postinstall builds + links)
 cd website && bun install && bun start     # Docusaurus docs site
 ```

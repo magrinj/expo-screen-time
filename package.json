@@ -25,7 +25,7 @@
     "prepack": "EXPO_NONINTERACTIVE=1 bun run build",
     "clean": "expo-module clean",
     "lint": "oxlint --config oxlint.config.mjs src plugin/src",
-    "test": "expo-module test && expo-module test plugin",
+    "test": "expo-module test && expo-module test plugin && tsc -p test/reference-apps",
     "test:swift": "scripts/swift-tests/run.sh",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module",
