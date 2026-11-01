@@ -14,6 +14,12 @@ Shield every app, category, and web domain in a stored selection. The selection
 is created by the [`<ActivityPicker />`](../components.md#activity-picker) under
 the same ID.
 
+The manual block is one **block source**. Schedules started with
+[`startMonitoring`](./monitoring.md) and their `blockOnThreshold` events are
+separate sources, and the effective block is the union of every active source:
+calling `blockSelection` again replaces only the manual selection, and a
+schedule ending never lifts the manual block.
+
 ```typescript
 // 1. The user picked apps in <ActivityPicker selectionId="my-blocklist" />
 // 2. Apply the shield:
@@ -24,7 +30,9 @@ Throws if no selection exists under that ID.
 
 ### `unblockAll()`
 
-Remove all blocks applied via `blockSelection()` (also clears web-domain filters).
+Lift every active block now — the manual block, every schedule and threshold
+block in progress — and clear the web-domain filters. Monitoring keeps running:
+a schedule re-applies its block at its next interval start.
 
 ```typescript
 ExpoScreenTime.unblockAll();
@@ -32,8 +40,9 @@ ExpoScreenTime.unblockAll();
 
 ### `isBlocked(): boolean`
 
-Whether anything is currently shielded — reflects the real ManagedSettings state,
-not what you last asked for.
+Whether any source currently shields something — reflects the real
+ManagedSettings state, not what you last asked for. `false` during a temporary
+unlock.
 
 ```typescript
 const blocked = ExpoScreenTime.isBlocked();
@@ -83,11 +92,21 @@ works even if your app is killed), and unspent budget expires at midnight.
 
 ### `temporaryUnlock(budgetSeconds: number): Promise<TemporaryUnlockGrant>`
 
-Suspends the current block for a usage budget. Rejects with
+Suspends every active block — the manual block, the schedules and threshold
+blocks in progress — for a usage budget metered over all of them. Rejects with
 `NO_ACTIVE_BLOCK` if nothing is blocked. Budgets below 30 seconds are raised
 to 30 (iOS usage thresholds are unreliable under that). Calling it again
-replaces the active unlock with a fresh budget; calling `blockSelection`
-cancels it.
+replaces the active unlock with a fresh budget covering everything blocked or
+suspended at that moment — a renewal never rejects `NO_ACTIVE_BLOCK` while
+something is restorable; calling `blockSelection` cancels it.
+
+What the grant suspended stays suspended until `relock()` or expiry, whatever
+happens in between: a threshold firing or the system reporting an interval
+start does not re-shield it. A source that **starts during the grant** — a
+schedule reaching its start time, a `blockOnThreshold` event for a selection
+that was not suspended, or one firing again in a new interval after its
+activity was stopped and started again — is outside the grant: it is shielded
+and not metered.
 
 ```typescript
 await ExpoScreenTime.blockSelection('social-apps');
@@ -109,8 +128,9 @@ Whether an earned-time budget is currently active.
 
 ### `relock(): void`
 
-Ends any active unlock immediately and restores the shield. Safe to call
-when nothing is unlocked.
+Ends any active unlock immediately and restores exactly the sources that are
+still active: the manual block, and every schedule (plus its threshold blocks)
+whose interval is still in progress. Safe to call when nothing is unlocked.
 
 ## Shield interactions
 

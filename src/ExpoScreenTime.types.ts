@@ -98,18 +98,49 @@ export type DeviceActivitySchedule = {
 
 export type DeviceActivityEventThreshold = {
   eventName: string;
-  /** Selection to monitor — references SelectionStore by ID */
+  /**
+   * Selection whose usage is counted — references SelectionStore by ID. With
+   * `blockOnThreshold`, it is also the selection that gets shielded.
+   */
   selectionId: string;
+  /** Seconds of usage within the interval. */
   threshold: number;
   includesPastActivity?: boolean;
+  /**
+   * Shield `selectionId` from the moment the threshold is reached until the
+   * interval ends. The shield is one block source among the others (the
+   * activity's own selection, the manual block, other schedules): it goes
+   * away with the interval and leaves the rest in force.
+   */
+  blockOnThreshold?: boolean;
 };
 
 export type MonitoringConfiguration = {
+  /**
+   * Stable identity of the activity: events, `getMonitoredActivities`,
+   * per-activity shield configs and actions always use this name. One
+   * activity costs one of the 20 DeviceActivity slots, `weekdays` included.
+   * Must not be empty or contain `__expo_st_gen_` (reserved). Calling
+   * `startMonitoring` again with the same name updates the activity in
+   * place; an interval in progress keeps its shields.
+   */
   activityName: string;
+  /**
+   * `intervalEnd` at or before `intervalStart` crosses midnight. If the
+   * current time is inside the interval, the block is applied synchronously
+   * and `intervalDidStart` is recorded at once (the system callback is
+   * asynchronous).
+   */
   schedule: DeviceActivitySchedule;
   events?: DeviceActivityEventThreshold[];
-  /** Selection to block when interval starts — references SelectionStore by ID */
+  /** Selection to block while the interval is active — references SelectionStore by ID */
   selectionId?: string;
+  /**
+   * Restrict the schedule to these weekdays (1 = Sunday … 7 = Saturday). The
+   * activity is still registered once; occurrences on other days are ignored
+   * (no block, no events). An occurrence that crosses midnight belongs to the
+   * weekday on which it starts.
+   */
   weekdays?: number[];
 };
 
@@ -189,6 +220,13 @@ export type MonitoringErrorCode =
   | "INVALID_DATE_COMPONENTS"
   | "UNAUTHORIZED"
   | "INVALID_CONFIG"
+  /**
+   * `startMonitoring` failed after the activity's previous registration had
+   * to be released (the 20-activity limit), and putting that registration
+   * back failed too: the activity is no longer monitored.
+   * @platform ios
+   */
+  | "MONITORING_ROLLBACK_FAILED"
   | "UNSUPPORTED";
 
 // ============================================================================

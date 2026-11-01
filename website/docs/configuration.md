@@ -32,7 +32,7 @@ The `expo-screen-time` plugin automatically configures:
 Run `npx expo prebuild --clean` after adding the plugin so the extension targets are generated. Always use `--clean` when **upgrading `expo-screen-time`** (a new version may add or remove a target source file) or when **changing `ios.bundleIdentifier`**. Incremental prebuilds reuse the existing extension targets, App Group, and Sources build phase as-is.
 :::
 
-The shared App Group is `group.<your ios.bundleIdentifier>`, configured automatically and fixed at the first prebuild. It only changes if the bundle identifier changes — and then only with `--clean` (an incremental prebuild leaves the old group on the main app alongside the new one).
+The shared App Group is `group.<your ios.bundleIdentifier>`, configured automatically and fixed at the first prebuild. It only changes if the bundle identifier changes — and then only with `--clean` (an incremental prebuild leaves the old group on the main app alongside the new one). Besides the shared `UserDefaults` suite, the group's container holds `expo_st_block_state.lock`, an empty file the app and its extensions lock to serialize their changes to the block state; leave it alone.
 
 ## Extension Targets
 

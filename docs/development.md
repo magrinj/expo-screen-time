@@ -31,6 +31,14 @@ bun run build && bun run lint && bun run test
 `bun run test` runs the plugin's jest suite (`plugin/src/ios/__tests__/`) — the
 pbxproj shape test that guards every past regression.
 
+On a Mac, also run `bun run test:swift` after touching `ios/BlockComposition.swift`,
+`ios/BlockStateLock.swift`, `ios/DailySchedule.swift`, `ios/ActivityRegistration.swift`,
+`ios/MonitorEventCursor.swift` or any `SharedDefaults.swift` copy: it compiles those
+Foundation-only types with plain `swiftc`, runs the block-composition / precedence /
+weekday / registration / lock tests (`scripts/swift-tests/main.swift`), runs two
+`lockprobe` processes against the real `flock` (`scripts/swift-tests/lockprobe/`),
+and fails if a per-target copy under `targets/*/` drifted from `ios/`.
+
 ### Tier 2 — after any `plugin/` or `targets/` change
 
 ```bash

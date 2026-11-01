@@ -31,6 +31,12 @@ public class ExpoScreenTimeModule: Module {
             self.appContext?.permissions?.register([
                 ScreenTimePermissionRequester()
             ])
+
+            // Builds before block composition kept every shield in the unnamed
+            // store and one global "active activity" pointer: moved once.
+            self.screenTimeManager.migrateLegacyStore()
+            // Builds before the bounded owner map left one key per token.
+            self.sharedDefaults.removeLegacyShieldOwnerKeys()
         }
 
         // MARK: - Permissions
@@ -72,26 +78,44 @@ public class ExpoScreenTimeModule: Module {
         // MARK: - Blocking
 
         Function("blockSelection") { (selectionId: String) throws in
-            guard let selection = SelectionStore.shared.get(selectionId) else {
+            guard SelectionStore.shared.has(selectionId) else {
                 throw NSError(domain: "ExpoScreenTime", code: 2, userInfo: [
                     NSLocalizedDescriptionKey: "Selection '\(selectionId)' not found"
                 ])
             }
-            // An explicit block supersedes any in-flight temporary unlock.
-            self.cancelTemporaryUnlock()
-            // Persisted so a relock — from this process or from the monitor
-            // extension when the budget runs out — restores exactly this
-            // selection.
-            self.sharedDefaults.setBlockedSelectionId(selectionId)
-            screenTimeManager.blockSelection(selection)
+            // An explicit block supersedes any in-flight temporary unlock —
+            // including a grant still being committed (unlockOperations).
+            self.unlockOperations.lock()
+            defer { self.unlockOperations.unlock() }
+            self.stopUnlockMeter()
+            BlockStateLock.shared.withLock {
+                self.sharedDefaults.clearUnlockState()
+                // The manual block is one source among the schedules and
+                // thresholds in progress; it is persisted so a relock — from
+                // this process or from the monitor extension when the budget
+                // runs out — restores exactly this selection.
+                self.sharedDefaults.setBlockedSelectionId(selectionId)
+                self.screenTimeManager.applyActiveSources()
+            }
             // Force iOS to invoke ShieldConfigurationExtension for custom shield UI
             screenTimeManager.refreshShields()
         }
 
+        // Lifts every active block — manual, schedule, threshold — and the
+        // web-domain filter. Monitoring keeps running: an interval in progress
+        // stays in progress (its end is still recorded) and a schedule
+        // re-applies its block at its next interval start.
         Function("unblockAll") {
-            self.cancelTemporaryUnlock()
-            self.sharedDefaults.setBlockedSelectionId(nil)
-            screenTimeManager.unblockAll()
+            self.unlockOperations.lock()
+            defer { self.unlockOperations.unlock() }
+            self.stopUnlockMeter()
+            BlockStateLock.shared.withLock {
+                self.sharedDefaults.clearUnlockState()
+                self.sharedDefaults.setBlockedSelectionId(nil)
+                self.sharedDefaults.liftActiveIntervals()
+                self.screenTimeManager.unblockAll()
+                self.sharedDefaults.clearShieldOwners()
+            }
         }
 
         Function("isBlocked") { () -> Bool in
@@ -104,32 +128,80 @@ public class ExpoScreenTimeModule: Module {
                 return
             }
 
-            guard let selectionId = self.sharedDefaults.getBlockedSelectionId(),
-                  let selection = SelectionStore.shared.get(selectionId),
-                  self.screenTimeManager.isBlocked() else {
-                promise.reject("NO_ACTIVE_BLOCK", "Nothing is blocked — call blockSelection first")
-                return
-            }
+            // App-side unlock operations (grant, renewal, relock, expiry) run
+            // one at a time: they arm or stop the meter through
+            // DeviceActivityCenter, which BlockStateLock must not span.
+            self.unlockOperations.lock()
+            defer { self.unlockOperations.unlock() }
 
             // Apple's usage thresholds are unreliable below ~30s; a smaller
             // budget couldn't be metered.
             let budget = max(Self.unlockStepSeconds, budgetSeconds)
-            let grantedAt = Date()
 
-            do {
-                try self.armUnlockMonitoring(budget: budget, selection: selection)
-            } catch {
-                promise.reject("MONITORING_ERROR", "Could not arm usage metering: \(error.localizedDescription)")
-                return
+            // Everything blocked right now — the manual block plus every
+            // schedule and threshold in progress — is suspended and metered.
+            // Sources already suspended by a grant in progress count too: a
+            // renewal replaces that grant (every store is empty then, so the
+            // real stores cannot be the judge).
+            //
+            // The meter must be armed outside BlockStateLock, so the capture
+            // and the commit are two critical sections. The commit re-captures
+            // and only goes ahead if the shielded tokens are still exactly the
+            // ones being metered; otherwise (a `blockSelection` or a schedule
+            // start in between) it re-arms the meter for the new union.
+            var metered: Set<ShieldToken>? = nil
+            for _ in 0..<Self.grantAttempts {
+                let tokens = BlockStateLock.shared.withLock {
+                    BlockComposition.union(of: self.sharedDefaults.activeBlockSources(honouringSuspension: false))
+                }
+                guard !tokens.isEmpty else {
+                    promise.reject("NO_ACTIVE_BLOCK", "Nothing is blocked — call blockSelection or start a schedule first")
+                    return
+                }
+
+                do {
+                    try self.armUnlockMonitoring(budget: budget, tokens: tokens)
+                } catch {
+                    promise.reject("MONITORING_ERROR", "Could not arm usage metering: \(error.localizedDescription)")
+                    return
+                }
+
+                let grantedAt = Date()
+                let committed: Bool = BlockStateLock.shared.withLock {
+                    let records = self.sharedDefaults.blockRecords()
+                    let current = BlockComposition.union(of: self.sharedDefaults.activeBlockSources(honouringSuspension: false))
+                    guard current == tokens else { return false }
+                    // Persist what is suspended, then project every store from
+                    // the state: the suspended sources' stores come out empty,
+                    // and every later projection (here or in the monitor
+                    // extension) keeps them so until relock or expiry; a source
+                    // that starts after this commit is not suspended.
+                    self.sharedDefaults.setUnlockState(
+                        budgetSeconds: budget,
+                        grantedAt: grantedAt,
+                        suspended: SuspendedSources.capturing(records)
+                    )
+                    self.screenTimeManager.applyActiveSources()
+                    return true
+                }
+                if committed {
+                    metered = tokens
+                    promise.resolve([
+                        "budgetSeconds": budget,
+                        "grantedAt": grantedAt.timeIntervalSince1970 * 1000
+                    ])
+                    break
+                }
             }
-
-            self.sharedDefaults.setUnlockState(budgetSeconds: budget, grantedAt: grantedAt)
-            self.screenTimeManager.suspendShields()
-
-            promise.resolve([
-                "budgetSeconds": budget,
-                "grantedAt": grantedAt.timeIntervalSince1970 * 1000
-            ])
+            if metered == nil {
+                // The block kept changing under the grant. The meter armed for
+                // the last attempt measures shields that are not suspended, so
+                // drop it; any previous grant is left as it was.
+                if self.sharedDefaults.getUnlockBudgetSeconds() == 0 {
+                    self.stopUnlockMeter()
+                }
+                promise.reject("MONITORING_ERROR", "The block changed while the unlock was being granted; try again")
+            }
         }
 
         Function("isTemporarilyUnlocked") { () -> Bool in
@@ -143,10 +215,9 @@ public class ExpoScreenTimeModule: Module {
         // shield from here too, as a backstop in case the monitor extension's
         // final threshold never fired.
         Function("getRemainingUnlockSeconds") { () -> Int in
-            let hadBudget = self.sharedDefaults.getUnlockBudgetSeconds() > 0
             let remaining = self.remainingUnlockSeconds()
-            if remaining <= 0 && hadBudget {
-                self.relock()
+            if remaining <= 0 {
+                self.relockIfExpired()
             }
             return remaining
         }
@@ -213,7 +284,10 @@ public class ExpoScreenTimeModule: Module {
             var result: [String: Any] = [:]
             result["appGroup"] = self.sharedDefaults.getAppGroup()
             result["defaultConfig"] = self.sharedDefaults.getDefaultShieldConfig()
-            result["activeActivity"] = self.sharedDefaults.getActiveActivity()
+            result["blockedSelectionId"] = self.sharedDefaults.getBlockedSelectionId()
+            result["activeIntervals"] = self.sharedDefaults.getActiveIntervalNames()
+            result["shieldStores"] = self.sharedDefaults.shieldStoreNames()
+            result["suspended"] = self.sharedDefaults.getSuspendedSources()?.dictionary
 
             // Read shield extension debug log if it exists
             if let appGroup = self.sharedDefaults.getAppGroup(),
@@ -294,80 +368,39 @@ public class ExpoScreenTimeModule: Module {
                 return
             }
 
+            // The physical DeviceActivityName is `<activityName><separator><generation>`
+            // (ActivityRegistration); a name containing the separator could
+            // not be told apart from a generation suffix, and `expo_st_*` is
+            // the module's own namespace (the unlock meter).
+            guard ActivityRegistration.isValidLogicalName(activityName) else {
+                promise.reject("INVALID_CONFIG", Self.invalidActivityNameMessage)
+                return
+            }
+
             guard let scheduleDict = config["schedule"] as? [String: Any] else {
                 promise.reject("INVALID_CONFIG", "schedule is required")
                 return
             }
 
             do {
-                // Build events if provided
-                var deviceActivityEvents: [DeviceActivityEvent.Name: DeviceActivityEvent] = [:]
-                if let eventsArray = config["events"] as? [[String: Any]] {
-                    for eventConfig in eventsArray {
-                        if let (eventName, event) = try self.buildEvent(from: eventConfig) {
-                            deviceActivityEvents[eventName] = event
-                        }
-                    }
-                }
+                let deviceActivityEvents = try self.buildEvents(from: config)
 
-                let center = DeviceActivityCenter()
+                // One DeviceActivity per logical name. `weekdays` no longer
+                // registers one activity per weekday: the monitor extension
+                // ignores occurrences on unselected days (DailySchedule), so
+                // events and shield configs use this name and the activity
+                // costs one slot.
+                let weekdays = Array(DailySchedule.weekdays(from: config["weekdays"] as? [Any])).sorted()
+                let schedule = try self.buildSchedule(from: scheduleDict)
 
-                // Check if weekdays array is provided
-                if let weekdays = (config["weekdays"] as? [Any])?.compactMap(Self.intValue), !weekdays.isEmpty {
-                    // Create one activity per weekday
-                    var weekdayActivityNames: [String] = []
-
-                    for weekday in weekdays {
-                        let weekdayActivityName = "\(activityName)_weekday_\(weekday)"
-                        weekdayActivityNames.append(weekdayActivityName)
-
-                        // Build schedule with this specific weekday
-                        var weekdayScheduleDict = scheduleDict
-                        if var intervalStart = weekdayScheduleDict["intervalStart"] as? [String: Any] {
-                            intervalStart["weekday"] = weekday
-                            weekdayScheduleDict["intervalStart"] = intervalStart
-                        }
-                        if var intervalEnd = weekdayScheduleDict["intervalEnd"] as? [String: Any] {
-                            intervalEnd["weekday"] = weekday
-                            weekdayScheduleDict["intervalEnd"] = intervalEnd
-                        }
-
-                        let schedule = try self.buildSchedule(from: weekdayScheduleDict)
-
-                        // Store configuration for extension
-                        var weekdayConfig = config
-                        weekdayConfig["_parentActivity"] = activityName
-                        self.sharedDefaults.saveMonitoringConfig(activityName: weekdayActivityName, config: weekdayConfig)
-
-                        // Store selectionId if provided
-                        if let selectionId = config["selectionId"] as? String {
-                            self.sharedDefaults.saveSelectionId(activityName: weekdayActivityName, selectionId: selectionId)
-                        }
-
-                        let activity = DeviceActivityName(rawValue: weekdayActivityName)
-                        try center.startMonitoring(activity, during: schedule, events: deviceActivityEvents)
-                    }
-
-                    // Store parent activity with list of child activities
-                    var parentConfig = config
-                    parentConfig["_weekdayActivities"] = weekdayActivityNames
-                    self.sharedDefaults.saveMonitoringConfig(activityName: activityName, config: parentConfig)
-
-                } else {
-                    // Single activity (no weekdays array)
-                    let schedule = try self.buildSchedule(from: scheduleDict)
-
-                    // Store configuration for extension
-                    self.sharedDefaults.saveMonitoringConfig(activityName: activityName, config: config)
-
-                    // Store selectionId if provided
-                    if let selectionId = config["selectionId"] as? String {
-                        self.sharedDefaults.saveSelectionId(activityName: activityName, selectionId: selectionId)
-                    }
-
-                    let activity = DeviceActivityName(rawValue: activityName)
-                    try center.startMonitoring(activity, during: schedule, events: deviceActivityEvents)
-                }
+                try self.register(
+                    activityName: activityName,
+                    config: config,
+                    weekdays: weekdays,
+                    scheduleDict: scheduleDict,
+                    schedule: schedule,
+                    events: deviceActivityEvents
+                )
 
                 promise.resolve(nil)
             } catch let error as DeviceActivityCenter.MonitoringError {
@@ -385,6 +418,12 @@ public class ExpoScreenTimeModule: Module {
                 @unknown default:
                     promise.reject("MONITORING_ERROR", "Failed to start monitoring: \(error.localizedDescription)")
                 }
+            } catch let error as RollbackError {
+                promise.reject(
+                    "MONITORING_ROLLBACK_FAILED",
+                    "Failed to start monitoring '\(activityName)' (\(error.registration.localizedDescription)) and its previous "
+                        + "registration could not be restored (\(error.rollback.localizedDescription)): the activity is no longer monitored"
+                )
             } catch {
                 promise.reject("ERROR", "Failed to start monitoring: \(error.localizedDescription)")
             }
@@ -396,31 +435,27 @@ public class ExpoScreenTimeModule: Module {
                 return
             }
 
-            let center = DeviceActivityCenter()
-
-            // Check if this is a parent activity with weekday variants
-            if let config = self.sharedDefaults.getMonitoringConfig(activityName: activityName),
-               let weekdayActivities = config["_weekdayActivities"] as? [String] {
-                // Stop all weekday variant activities
-                let activities = weekdayActivities.map { DeviceActivityName(rawValue: $0) }
-                Self.stop(activities, on: center)
-
-                // Clean up all weekday configs
-                for weekdayActivityName in weekdayActivities {
-                    self.sharedDefaults.removeMonitoringConfig(activityName: weekdayActivityName)
-                    self.sharedDefaults.removeSelectionId(activityName: weekdayActivityName)
-                }
-
-                // Clean up parent config
-                self.sharedDefaults.removeMonitoringConfig(activityName: activityName)
-            } else {
-                // Single activity
-                let activity = DeviceActivityName(rawValue: activityName)
-                center.stopMonitoring([activity])
-
-                self.sharedDefaults.removeMonitoringConfig(activityName: activityName)
-                self.sharedDefaults.removeSelectionId(activityName: activityName)
+            // The same rule as `startMonitoring`: the module's own activities
+            // (the unlock meter) cannot be stopped through the public API.
+            guard ActivityRegistration.isValidLogicalName(activityName) else {
+                promise.reject("INVALID_CONFIG", Self.invalidActivityNameMessage)
+                return
             }
+
+            let center = DeviceActivityCenter()
+            let config = self.sharedDefaults.getMonitoringConfig(activityName: activityName)
+            let legacyVariants = ActivityRegistration.legacyWeekdayVariants(in: config, of: activityName)
+            let physicals = Self.registeredPhysicalNames(of: activityName, legacyVariants: legacyVariants, in: center)
+
+            // App Group first, under the lock: the `intervalDidEnd` the stop
+            // triggers arrives within milliseconds, takes the lock after this
+            // section, finds no registration, and records nothing — the end
+            // is recorded here, once.
+            BlockStateLock.shared.withLock {
+                self.endMonitoring(activityName)
+                self.removeLegacyVariantState(legacyVariants, of: activityName)
+            }
+            Self.stop(physicals, on: center)
 
             promise.resolve(nil)
         }
@@ -434,13 +469,26 @@ public class ExpoScreenTimeModule: Module {
             // Stop the app's activities only. The temporary-unlock meter is
             // internal: stopping it froze consumption, so a granted unlock
             // could never re-shield and the block stayed off until midnight.
+            // The manual block and the web filter are separate sources and
+            // stay in force.
             let center = DeviceActivityCenter()
-            Self.stop(center.activities.filter { !Self.isInternalActivity($0.rawValue) }, on: center)
+            let physicals = center.activities.filter { !ActivityRegistration.isInternalName($0.rawValue) }
 
-            for activityName in self.sharedDefaults.getAllActivityNames() {
-                self.sharedDefaults.removeMonitoringConfig(activityName: activityName)
-                self.sharedDefaults.removeSelectionId(activityName: activityName)
+            BlockStateLock.shared.withLock {
+                let activityNames = Set(self.sharedDefaults.getAllActivityNames())
+                    .union(self.sharedDefaults.getActiveIntervalNames())
+                for activityName in activityNames.sorted() {
+                    let config = self.sharedDefaults.getMonitoringConfig(activityName: activityName)
+                    if let parent = config?[ActivityRegistration.legacyParentKey] as? String,
+                       ActivityRegistration.isLegacyVariantState(config, variant: activityName, of: parent) {
+                        // A legacy weekday variant's config: no interval, no store of its own.
+                        self.removeLegacyVariantState([activityName], of: parent)
+                    } else {
+                        self.endMonitoring(activityName)
+                    }
+                }
             }
+            Self.stop(physicals, on: center)
 
             promise.resolve(nil)
         }
@@ -450,28 +498,16 @@ public class ExpoScreenTimeModule: Module {
                 return []
             }
 
+            // Physical names carry a generation suffix, and builds before
+            // block composition registered `<name>_weekday_<n>` variants:
+            // report every registration under its logical name.
             let center = DeviceActivityCenter()
-            let rawActivities = center.activities
-                .map { $0.rawValue }
-                .filter { !Self.isInternalActivity($0) }
-
-            // Consolidate weekday variants into parent names
-            var parentActivities = Set<String>()
-
-            for activityName in rawActivities {
-                // Check if this is a weekday variant (contains _weekday_)
-                if activityName.contains("_weekday_") {
-                    // Extract parent name
-                    if let range = activityName.range(of: "_weekday_") {
-                        let parentName = String(activityName[..<range.lowerBound])
-                        parentActivities.insert(parentName)
-                    }
-                } else {
-                    parentActivities.insert(activityName)
-                }
+            let lookup = { self.sharedDefaults.getMonitoringConfig(activityName: $0) }
+            var names = Set<String>()
+            for activity in center.activities where !ActivityRegistration.isInternalName(activity.rawValue) {
+                names.insert(ActivityRegistration.logicalName(ofRegistered: activity.rawValue, config: lookup))
             }
-
-            return Array(parentActivities).sorted()
+            return names.sorted()
         }
 
         // MARK: - Shield Configuration
@@ -636,16 +672,7 @@ public class ExpoScreenTimeModule: Module {
     /// `[String: Any]`, and `Double as? Int` is always nil, so every numeric
     /// read from a config dictionary goes through here.
     static func intValue(_ value: Any?) -> Int? {
-        switch value {
-        case let int as Int:
-            return int
-        case let double as Double where double.rounded() == double && abs(double) < Double(Int.max):
-            return Int(double)
-        case let number as NSNumber:
-            return number.intValue
-        default:
-            return nil
-        }
+        return DailySchedule.intValue(value)
     }
 
     private func buildDateComponents(from dict: [String: Any]) -> DateComponents {
@@ -726,6 +753,360 @@ public class ExpoScreenTimeModule: Module {
         return (DeviceActivityEvent.Name(rawValue: eventName), event)
     }
 
+    // MARK: - Monitoring Helpers
+
+    /// What the system has registered for `activityName`: its current (or
+    /// previous) generation, a legacy `<name>` registration, and the legacy
+    /// weekday variants its config lists.
+    @available(iOS 15.0, *)
+    static func registeredPhysicalNames(
+        of activityName: String,
+        legacyVariants: [String],
+        in center: DeviceActivityCenter
+    ) -> [DeviceActivityName] {
+        return center.activities.filter {
+            ActivityRegistration.parse($0.rawValue).logical == activityName || legacyVariants.contains($0.rawValue)
+        }
+    }
+
+    /// The registration `startMonitoring` replaces, as it was, for the rollback.
+    private struct PreviousRegistration {
+        var config: [String: Any]?
+        var selectionId: String?
+        var interval: ActiveInterval?
+        var thresholds: [String]
+        /// Legacy `<name>_weekday_<n>` variants: their config and selection.
+        var legacyVariants: [(name: String, config: [String: Any]?, selectionId: String?)]
+        /// What the system has registered for the activity.
+        var physicals: [DeviceActivityName]
+    }
+
+    /// A registration failed after the previous one had been released (the
+    /// 20-activity limit), and putting the previous one back failed too: the
+    /// activity is no longer monitored.
+    struct RollbackError: Error {
+        let registration: Error
+        let rollback: Error
+    }
+
+    static let invalidActivityNameMessage =
+        "activityName must not be empty, start with '\(ActivityRegistration.reservedPrefix)' "
+        + "or contain '\(ActivityRegistration.generationSeparator)'"
+
+    /// Register `activityName` — or re-register it: a schedule update, or a
+    /// restart right after a stop.
+    ///
+    /// Order matters, because the system calls back within milliseconds: the
+    /// new registration's `intervalDidStart` when now is inside the
+    /// interval, and the previous registration's `intervalDidEnd` when it is
+    /// stopped. So the App Group is put in its final state FIRST, in one
+    /// critical section of `BlockStateLock` — the config with a fresh
+    /// generation, the selection, the interval marker and the store per
+    /// `ActivityRegistration.intervalPlan`, the thresholds reset — then the
+    /// lock is released, the new physical name is registered, and the
+    /// previous registrations are stopped. The start callback takes the lock
+    /// after this section, finds the marker and records nothing; the end
+    /// callback carries a generation that is no longer current and is
+    /// ignored. The shields never drop. (The lock is not held across the
+    /// system calls: see BlockStateLock.)
+    ///
+    /// When the registration throws, the previous registration keeps running
+    /// and its state is put back (`rollBack`) — except at the 20-activity
+    /// limit, where the previous registration has to be released before the
+    /// new one can be tried: a failure after that re-registers the previous
+    /// schedule under a fresh generation, and if THAT fails the activity is
+    /// stopped and a `RollbackError` is thrown.
+    @available(iOS 15.0, *)
+    private func register(
+        activityName: String,
+        config: [String: Any],
+        weekdays: [Int],
+        scheduleDict: [String: Any],
+        schedule: DeviceActivitySchedule,
+        events: [DeviceActivityEvent.Name: DeviceActivityEvent]
+    ) throws {
+        let center = DeviceActivityCenter()
+        let defaults = sharedDefaults
+        let lock = BlockStateLock.shared
+        let now = Date()
+        let decision = DailySchedule.syncDecision(scheduleDict: scheduleDict, weekdays: weekdays, now: now, calendar: Calendar.current)
+
+        // What the system has registered for this activity — an XPC read,
+        // outside the lock.
+        let legacyVariantNames = ActivityRegistration.legacyWeekdayVariants(
+            in: defaults.getMonitoringConfig(activityName: activityName), of: activityName
+        )
+        let previousPhysicals = Self.registeredPhysicalNames(of: activityName, legacyVariants: legacyVariantNames, in: center)
+
+        // 1. Snapshot the previous registration, then the App Group in its
+        //    final state — one critical section.
+        let (previous, generation, plan) = lock.withLock { () -> (PreviousRegistration, Int, ActivityRegistration.IntervalPlan) in
+            let previous = PreviousRegistration(
+                config: defaults.getMonitoringConfig(activityName: activityName),
+                selectionId: defaults.getSelectionId(activityName: activityName),
+                interval: defaults.getActiveInterval(activityName: activityName),
+                thresholds: defaults.getThresholdSelectionIds(activityName: activityName),
+                legacyVariants: legacyVariantNames.map {
+                    ($0, defaults.getMonitoringConfig(activityName: $0), defaults.getSelectionId(activityName: $0))
+                },
+                physicals: previousPhysicals
+            )
+
+            let generation = defaults.nextRegistrationGeneration()
+            var storedConfig = config
+            storedConfig["weekdays"] = weekdays
+            storedConfig[ActivityRegistration.generationKey] = generation
+            defaults.saveMonitoringConfig(activityName: activityName, config: storedConfig)
+            if let selectionId = config["selectionId"] as? String {
+                defaults.saveSelectionId(activityName: activityName, selectionId: selectionId)
+            } else {
+                defaults.removeSelectionId(activityName: activityName)
+            }
+            removeLegacyVariantState(legacyVariantNames, of: activityName)
+
+            // `intervalDidStart` is asynchronous (it fires at the first device
+            // use after the boundary), so a schedule registered inside its own
+            // occurrence would not block until then: when now is inside an
+            // occurrence on a selected weekday, the block is applied here and
+            // the start recorded once. Outside, or when the new schedule is
+            // not a daily one, nothing of the previous registration's
+            // interval may linger (a daily activity replaced by a multi-day
+            // one kept shielding from the stale marker); the monitor applies
+            // the new one. A re-registration re-arms the thresholds, so they
+            // are reset before the registration — a threshold callback can
+            // fire within milliseconds of it.
+            let plan = ActivityRegistration.intervalPlan(for: decision, previous: previous.interval, now: now, restoring: false)
+            apply(plan, to: activityName)
+            return (previous, generation, plan)
+        }
+
+        // 2. Register the new physical name; 3. stop the previous ones.
+        let physical = DeviceActivityName(rawValue: ActivityRegistration.physicalName(logical: activityName, generation: generation))
+        var previousStopped = false
+        do {
+            do {
+                try center.startMonitoring(physical, during: schedule, events: events)
+            } catch DeviceActivityCenter.MonitoringError.excessiveActivities where !previous.physicals.isEmpty {
+                // At the limit the two registrations cannot overlap.
+                Self.stop(previous.physicals, on: center)
+                previousStopped = true
+                try center.startMonitoring(physical, during: schedule, events: events)
+            }
+            if !previousStopped {
+                Self.stop(previous.physicals, on: center)
+            }
+        } catch {
+            try rollBack(activityName, to: previous, previousStopped: previousStopped, after: error, on: center)
+            throw error
+        }
+
+        // 4. The events, now that the registration holds.
+        record(plan, for: activityName)
+    }
+
+    /// Apply a plan's state: the marker, the thresholds, this activity's
+    /// store (projected from the state). Call under the lock.
+    private func apply(_ plan: ActivityRegistration.IntervalPlan, to activityName: String) {
+        switch plan.marker {
+        case .keep:
+            break
+        case .set(let startedAt):
+            sharedDefaults.setActiveInterval(activityName: activityName, startedAt: startedAt)
+        case .clear:
+            sharedDefaults.clearActiveInterval(activityName: activityName)
+        }
+        if !plan.keepsThresholds {
+            sharedDefaults.clearThresholdSelections(activityName: activityName)
+        }
+        screenTimeManager.applyStore(forActivity: activityName)
+    }
+
+    /// Record the events a plan implies, once its registration holds.
+    private func record(_ plan: ActivityRegistration.IntervalPlan, for activityName: String) {
+        if plan.recordsEnd {
+            sharedDefaults.recordEvent(activityName: activityName, eventType: "intervalDidEnd")
+        }
+        if plan.recordsStart {
+            sharedDefaults.recordEvent(activityName: activityName, eventType: "intervalDidStart")
+        }
+        if plan.recordsStart || plan.recordsEnd {
+            notifyEventListeners()
+        }
+    }
+
+    /// The new registration failed. Put `previous` back, or forget the
+    /// activity when there was nothing before.
+    ///
+    /// Previous registration still running (`previousStopped` false): its
+    /// state goes back as it was, re-planned against the clock — a boundary
+    /// callback it fired during the window in which the config carried the
+    /// new generation was ignored, and for a daily schedule the plan
+    /// recovers the missed start or end. For a schedule this process cannot
+    /// evaluate, a boundary crossed inside that window (one XPC call) is
+    /// caught up at the next one.
+    ///
+    /// Previous registration released (the 20-activity limit): it is
+    /// re-registered from its stored config under a FRESH generation
+    /// (`ActivityRegistration.rollbackConfig`), its interval restored, so the
+    /// stale callbacks of the released registration stay stale. If that
+    /// registration fails too, the activity is stopped — an interval that
+    /// was in progress before the call ends here (one started by the plan
+    /// was never recorded, so it ends silently) — and a `RollbackError` is
+    /// thrown.
+    @available(iOS 15.0, *)
+    private func rollBack(
+        _ activityName: String,
+        to previous: PreviousRegistration,
+        previousStopped: Bool,
+        after error: Error,
+        on center: DeviceActivityCenter
+    ) throws {
+        let defaults = sharedDefaults
+        let lock = BlockStateLock.shared
+        let now = Date()
+
+        guard let previousConfig = previous.config else {
+            // Nothing was registered before: forget what step 1 wrote, with
+            // no event — no start was recorded.
+            lock.withLock { forget(activityName, recordingEnd: false) }
+            return
+        }
+
+        func restoreInterval() -> ActivityRegistration.IntervalPlan {
+            if let interval = previous.interval {
+                defaults.setActiveInterval(activityName: activityName, startedAt: interval.startedAt, lifted: interval.lifted)
+                defaults.setThresholdSelectionIds(activityName: activityName, selectionIds: previous.thresholds)
+            } else {
+                defaults.clearActiveInterval(activityName: activityName)
+            }
+            let plan = ActivityRegistration.intervalPlan(
+                for: Self.syncDecision(of: previousConfig, now: now), previous: previous.interval, now: now, restoring: true
+            )
+            apply(plan, to: activityName)
+            return plan
+        }
+
+        func restoreSelection() {
+            if let selectionId = previous.selectionId {
+                defaults.saveSelectionId(activityName: activityName, selectionId: selectionId)
+            } else {
+                defaults.removeSelectionId(activityName: activityName)
+            }
+        }
+
+        if !previousStopped {
+            let plan = lock.withLock { () -> ActivityRegistration.IntervalPlan in
+                defaults.saveMonitoringConfig(activityName: activityName, config: previousConfig)
+                restoreSelection()
+                for variant in previous.legacyVariants {
+                    if let variantConfig = variant.config {
+                        defaults.saveMonitoringConfig(activityName: variant.name, config: variantConfig)
+                    }
+                    if let variantSelectionId = variant.selectionId {
+                        defaults.saveSelectionId(activityName: variant.name, selectionId: variantSelectionId)
+                    }
+                }
+                return restoreInterval()
+            }
+            record(plan, for: activityName)
+            return
+        }
+
+        // Re-register the previous schedule under a fresh generation.
+        let restoredSchedule: DeviceActivitySchedule
+        let restoredEvents: [DeviceActivityEvent.Name: DeviceActivityEvent]
+        do {
+            guard let scheduleDict = previousConfig["schedule"] as? [String: Any] else {
+                throw NSError(domain: "ExpoScreenTime", code: 1, userInfo: [NSLocalizedDescriptionKey: "the stored schedule is missing"])
+            }
+            restoredSchedule = try buildSchedule(from: scheduleDict)
+            restoredEvents = try buildEvents(from: previousConfig)
+        } catch let rollbackError {
+            lock.withLock { forget(activityName, recordingEnd: previous.interval != nil) }
+            throw RollbackError(registration: error, rollback: rollbackError)
+        }
+
+        let (restoredPhysical, plan) = lock.withLock { () -> (DeviceActivityName, ActivityRegistration.IntervalPlan) in
+            let generation = defaults.nextRegistrationGeneration()
+            defaults.saveMonitoringConfig(
+                activityName: activityName,
+                config: ActivityRegistration.rollbackConfig(previous: previousConfig, generation: generation)
+            )
+            restoreSelection()
+            let plan = restoreInterval()
+            return (DeviceActivityName(rawValue: ActivityRegistration.physicalName(logical: activityName, generation: generation)), plan)
+        }
+        do {
+            try center.startMonitoring(restoredPhysical, during: restoredSchedule, events: restoredEvents)
+        } catch let rollbackError {
+            lock.withLock { forget(activityName, recordingEnd: previous.interval != nil) }
+            throw RollbackError(registration: error, rollback: rollbackError)
+        }
+        record(plan, for: activityName)
+    }
+
+    /// What a stored config says about now (`DailySchedule.syncDecision`).
+    private static func syncDecision(of config: [String: Any], now: Date) -> DailySchedule.SyncDecision {
+        guard let scheduleDict = config["schedule"] as? [String: Any] else { return .leaveToMonitor }
+        return DailySchedule.syncDecision(scheduleDict: scheduleDict, weekdays: config["weekdays"] as? [Any], now: now, calendar: Calendar.current)
+    }
+
+    /// The usage events of a config (`events`), built for the system.
+    @available(iOS 15.0, *)
+    private func buildEvents(from config: [String: Any]) throws -> [DeviceActivityEvent.Name: DeviceActivityEvent] {
+        var events: [DeviceActivityEvent.Name: DeviceActivityEvent] = [:]
+        for eventConfig in config["events"] as? [[String: Any]] ?? [] {
+            if let (eventName, event) = try buildEvent(from: eventConfig) {
+                events[eventName] = event
+            }
+        }
+        return events
+    }
+
+    /// Monitoring stopped for `activityName`: record its `intervalDidEnd` if an
+    /// occurrence was in progress, forget the interval and its thresholds,
+    /// drop its configuration, empty its store, forget its shield owners.
+    /// Call under the lock, BEFORE the system registration is stopped, so
+    /// the callback that stop triggers finds no registration and records
+    /// nothing.
+    private func endMonitoring(_ activityName: String) {
+        forget(activityName, recordingEnd: true)
+    }
+
+    /// Drop every trace of `activityName`'s registration. Call under the lock.
+    private func forget(_ activityName: String, recordingEnd: Bool) {
+        if recordingEnd, sharedDefaults.getActiveInterval(activityName: activityName) != nil {
+            sharedDefaults.recordEvent(activityName: activityName, eventType: "intervalDidEnd")
+            notifyEventListeners()
+        }
+        sharedDefaults.clearActiveInterval(activityName: activityName)
+        sharedDefaults.removeMonitoringConfig(activityName: activityName)
+        sharedDefaults.removeSelectionId(activityName: activityName)
+        screenTimeManager.clearStore(named: BlockStore.activity(activityName))
+        sharedDefaults.pruneShieldOwners(ofActivity: activityName)
+    }
+
+    /// Builds before block composition stored a config and a selection per
+    /// `<name>_weekday_<n>` variant. Variants never had a store or an
+    /// interval of their own. Only state that is STILL a legacy variant's is
+    /// removed: a name on the legacy list may have been registered since as
+    /// an activity of its own, with a generation. Call under the lock.
+    private func removeLegacyVariantState(_ variants: [String], of parent: String) {
+        for variant in variants
+        where ActivityRegistration.isLegacyVariantState(sharedDefaults.getMonitoringConfig(activityName: variant), variant: variant, of: parent) {
+            sharedDefaults.removeMonitoringConfig(activityName: variant)
+            sharedDefaults.removeSelectionId(activityName: variant)
+        }
+    }
+
+    /// An event was written by this process: deliver it like the monitor's
+    /// Darwin notification would.
+    private func notifyEventListeners() {
+        DispatchQueue.main.async {
+            self.pollForNewEvents()
+        }
+    }
+
     // MARK: - Temporary Unlock Helpers
 
     /// Reserved DeviceActivity name for the unlock's usage metering — the
@@ -741,11 +1122,6 @@ public class ExpoScreenTimeModule: Module {
         center.stopMonitoring(activities)
     }
 
-    /// Activities the module registers for itself (the unlock meter): never
-    /// listed by, or stopped through, the monitoring API.
-    static func isInternalActivity(_ name: String) -> Bool {
-        return name.hasPrefix("expo_st_")
-    }
     /// Event names carry their threshold: `expo_st_unlock_step_<seconds>`.
     static let unlockStepPrefix = "expo_st_unlock_step_"
     /// Metering grain. Below ~30s Apple's usage thresholds fire late or not
@@ -755,11 +1131,12 @@ public class ExpoScreenTimeModule: Module {
     /// event sets, so the step auto-coarsens for big budgets.
     static let maxUnlockSteps = 60
 
-    /// Register the usage-threshold ladder for `budget` seconds over the
-    /// blocked selection. Each step lets the monitor extension persist how
-    /// much of the budget is spent; the final step (== budget) re-blocks.
+    /// Register the usage-threshold ladder for `budget` seconds over every
+    /// token the active sources shield. Each step lets the monitor extension
+    /// persist how much of the budget is spent; the final step (== budget)
+    /// re-blocks.
     @available(iOS 15.0, *)
-    private func armUnlockMonitoring(budget: Int, selection: FamilyActivitySelection) throws {
+    private func armUnlockMonitoring(budget: Int, tokens: Set<ShieldToken>) throws {
         let center = DeviceActivityCenter()
         // Replace any previous unlock metering (a fresh grant restarts the count).
         center.stopMonitoring([DeviceActivityName(Self.unlockActivityName)])
@@ -771,9 +1148,9 @@ public class ExpoScreenTimeModule: Module {
         var events: [DeviceActivityEvent.Name: DeviceActivityEvent] = [:]
         for seconds in thresholds {
             events[DeviceActivityEvent.Name("\(Self.unlockStepPrefix)\(seconds)")] = DeviceActivityEvent(
-                applications: selection.applicationTokens,
-                categories: selection.categoryTokens,
-                webDomains: selection.webDomainTokens,
+                applications: tokens.applicationTokens,
+                categories: tokens.categoryTokens,
+                webDomains: tokens.webDomainTokens,
                 threshold: DateComponents(
                     hour: seconds / 3600,
                     minute: (seconds % 3600) / 60,
@@ -802,25 +1179,53 @@ public class ExpoScreenTimeModule: Module {
         )
     }
 
-    /// Stop the metering schedule and drop all unlock state. Does NOT touch
-    /// the shields — callers decide whether to re-apply or clear them.
-    private func cancelTemporaryUnlock() {
+    /// Stop the metering schedule — a system call, made outside the lock.
+    /// The unlock state is cleared by the caller, under the lock, together
+    /// with whatever it does to the shields.
+    private func stopUnlockMeter() {
         if #available(iOS 15.0, *) {
             DeviceActivityCenter().stopMonitoring([DeviceActivityName(Self.unlockActivityName)])
         }
-        sharedDefaults.clearUnlockState()
     }
 
-    /// End any active unlock and restore the shield from the persisted
-    /// blocked selection.
+    /// End any active unlock and restore exactly the sources still active:
+    /// the manual block, and every interval (plus its thresholds) still in
+    /// progress.
     private func relock() {
-        cancelTemporaryUnlock()
-        guard let selectionId = sharedDefaults.getBlockedSelectionId(),
-              let selection = SelectionStore.shared.get(selectionId) else {
-            return
+        unlockOperations.lock()
+        defer { unlockOperations.unlock() }
+        stopUnlockMeter()
+        BlockStateLock.shared.withLock {
+            sharedDefaults.clearUnlockState()
+            screenTimeManager.applyActiveSources()
         }
-        screenTimeManager.blockSelection(selection)
     }
+
+    /// The backstop behind `getRemainingUnlockSeconds`: relock only if the
+    /// grant is STILL spent when checked under the lock, so a renewal that
+    /// landed after the caller read 0 is not cancelled.
+    private func relockIfExpired() {
+        unlockOperations.lock()
+        defer { unlockOperations.unlock() }
+        let expired: Bool = BlockStateLock.shared.withLock {
+            guard sharedDefaults.getUnlockBudgetSeconds() > 0, remainingUnlockSeconds() <= 0 else { return false }
+            sharedDefaults.clearUnlockState()
+            screenTimeManager.applyActiveSources()
+            return true
+        }
+        if expired {
+            stopUnlockMeter()
+        }
+    }
+
+    /// Serializes this process's unlock operations (grant, renewal, relock,
+    /// expiry). In-process only, so — unlike BlockStateLock — it may be held
+    /// across the DeviceActivityCenter calls that arm or stop the meter: the
+    /// monitor extension never takes it.
+    private let unlockOperations = NSLock()
+
+    /// How many times a grant re-captures when the block changes under it.
+    static let grantAttempts = 3
 
     /// Budget minus consumption, floored at 0. A grant from a previous
     /// calendar day is stale (the daily reset may not have fired if the

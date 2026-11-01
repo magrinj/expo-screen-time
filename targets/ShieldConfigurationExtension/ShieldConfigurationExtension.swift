@@ -8,6 +8,7 @@ import SwiftUI
 class ShieldConfigurationExtension: ShieldConfigurationDataSource {
 
     private let defaults = SharedDefaults.shared
+    private let lock = BlockStateLock.shared
 
     // MARK: - Configuration Methods
 
@@ -17,22 +18,38 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
         // Log to a file since we can't use print() in extensions
         logDebug("configuration(shielding application) called")
         #endif
-        return buildConfiguration()
+        return buildConfiguration(
+            primary: application.token.map(ShieldToken.application),
+            category: nil,
+            context: .application
+        )
     }
 
     /// Configuration for shielded application categories
     override func configuration(shielding application: Application, in category: ActivityCategory) -> ShieldConfiguration {
-        return buildConfiguration()
+        return buildConfiguration(
+            primary: application.token.map(ShieldToken.application),
+            category: category.token.map(ShieldToken.category),
+            context: .application
+        )
     }
 
     /// Configuration for shielded web domains
     override func configuration(shielding webDomain: WebDomain) -> ShieldConfiguration {
-        return buildConfiguration()
+        return buildConfiguration(
+            primary: webDomain.token.map(ShieldToken.webDomain),
+            category: nil,
+            context: .webDomain
+        )
     }
 
     /// Configuration for shielded web domain categories
     override func configuration(shielding webDomain: WebDomain, in category: ActivityCategory) -> ShieldConfiguration {
-        return buildConfiguration()
+        return buildConfiguration(
+            primary: webDomain.token.map(ShieldToken.webDomain),
+            category: category.token.map(ShieldToken.category),
+            context: .webDomain
+        )
     }
 
     // MARK: - Private Helpers
@@ -60,16 +77,50 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
     }
     #endif
 
-    /// Build the shield configuration from stored settings
-    private func buildConfiguration() -> ShieldConfiguration {
-        // Try to get activity-specific config first, then fall back to default
+    /// Build the shield configuration from stored settings. `primary` is the
+    /// app or web domain shielded, `category` the category it was shielded
+    /// through, if any (the tokens a shield may have matched: an app shielded
+    /// through its category is matched by either).
+    private func buildConfiguration(
+        primary: ShieldToken?,
+        category: ShieldToken?,
+        context: ShieldOwnerMap.Context
+    ) -> ShieldConfiguration {
+        // The config of the source that shields this target — a threshold,
+        // else the latest schedule covering it, else the manual block — then
+        // the default. Several sources can be active at once; a single
+        // "active activity" pointer used to pick whichever started last.
         var configDict: [String: Any]?
 
-        if let activeActivity = defaults.getActiveActivity() {
+        let targets = Set([primary, category].compactMap { $0 })
+        // Resolve and hand off in one critical section, so the owner the
+        // action extension reads is the one resolved against the same state.
+        let owningActivity: String? = lock.withLock {
+            // Sources a temporary unlock suspended are not active (they shield
+            // nothing right now), so they never own a shield.
+            let owner = BlockComposition.owner(ofAnyOf: targets, in: defaults.activeBlockSources())
+            // Hand the owner to the action extension, which sees only one of
+            // these tokens and could otherwise resolve a different source:
+            // under the primary token always, under the category only when
+            // the owner shields through it (never an app's own owner under a
+            // key every app of the category shares).
+            if let primary = primary {
+                let handoff = BlockComposition.handoffTargets(of: owner, primary: primary, category: category)
+                let keyed = handoff.compactMap { token -> (key: String, context: ShieldOwnerMap.Context)? in
+                    guard let key = token.persistentKey else { return nil }
+                    return (key, token == primary ? context : .category)
+                }
+                var map = defaults.getShieldOwnerMap()
+                map.record(owner?.kind, under: keyed, at: Date().timeIntervalSince1970 * 1000)
+                defaults.setShieldOwnerMap(map)
+            }
+            return owner?.kind.activityName
+        }
+        if let activityName = owningActivity {
             #if DEBUG
-            logDebug("Active activity: \(activeActivity)")
+            logDebug("Owning activity: \(activityName)")
             #endif
-            configDict = defaults.getShieldConfig(activityName: activeActivity)
+            configDict = defaults.getShieldConfig(activityName: activityName)
         }
 
         if configDict == nil {

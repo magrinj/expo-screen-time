@@ -22,6 +22,7 @@
     "clean": "expo-module clean",
     "lint": "expo-module lint",
     "test": "expo-module test && expo-module test plugin",
+    "test:swift": "scripts/swift-tests/run.sh",
     "prepare": "expo-module prepare",
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module",

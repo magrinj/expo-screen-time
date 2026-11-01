@@ -40,12 +40,15 @@ JS/TS (src/)  ──bridge──  Native module (ios/)  ──App Group──  E
   then `Function`/`AsyncFunction` blocks organized with `// MARK: -` sections that
   mirror the TS declaration's grouping. Errors are thrown as `NSError` with domain
   `"ExpoScreenTime"`.
-- `ios/ScreenTimeManager.swift` — the only place that touches
-  `ManagedSettingsStore`. **Every access is serialized through a private
-  `DispatchQueue`** (`queue.sync`). It also keeps local state for what the store
+- `ios/ScreenTimeManager.swift` — the only place in the app that touches
+  `ManagedSettingsStore`. **Every access runs under `BlockStateLock`**, the
+  cross-process mutex below. It also keeps local state for what the store
   can't read back (e.g. `blockedWebDomains` — ManagedSettings is write-mostly).
   `refreshShields()` is a deliberate toggle-off/on workaround to force iOS to
-  re-invoke the ShieldConfigurationExtension.
+  re-invoke the ShieldConfigurationExtension; its "on" half re-projects the
+  current App Group state (never a snapshot). Shields live in **named stores**
+  (`BlockStore`: manual, web, one per activity), enumerated from the
+  `expo_st_shield_store_*` registry every writer maintains.
 - `ios/SelectionStore.swift` — persists `FamilyActivitySelection`s as JSON in the
   App Group `UserDefaults` under `expo_st_sel_<id>`, with an in-memory handle
   cache. This is what makes the opaque-`selectionId` API possible.
@@ -67,10 +70,32 @@ name + bundle-id slug; deployment target 16.0):
 - Extensions communicate with the app **exclusively via App Group UserDefaults**
   (`group.<bundleId>`) — configs written by the app under `expo_st_*` keys, events
   written back by the monitor.
-- `SharedDefaults.swift` / `SelectionStore.swift` are **duplicated per target dir
-  on purpose** — the plugin only copies `targets/<targetName>/`, so per-target
-  copies are canonical (a shared dir was dead weight and got deleted; keep the
-  copies byte-identical when editing).
+- `SharedDefaults.swift` / `SelectionStore.swift` / `BlockComposition.swift` /
+  `BlockStateLock.swift` / `DailySchedule.swift` / `ActivityRegistration.swift`
+  are **duplicated per target dir on purpose** — the plugin only copies `targets/<targetName>/`, so
+  per-target copies are canonical (a shared dir was dead weight and got
+  deleted; keep the copies byte-identical when editing — `bun run test:swift`
+  fails when they drift).
+- The monitor registers **physical** `DeviceActivityName`s:
+  `<activityName>__expo_st_gen_<generation>` (`ActivityRegistration`). The
+  system keeps calling back for a stopped registration, so the monitor honours
+  a callback only when its generation is the one in the activity's config.
+  Everything else (events, configs, store names, the JS API) uses the logical
+  name.
+- **One cross-process mutex — `BlockStateLock`** (`ios/BlockStateLock.swift`,
+  copied into every extension). The app and the three extensions are separate
+  processes that each read the block state, decide, and write the state and
+  the stores; every such read-decide-write runs inside
+  `BlockStateLock.shared.withLock { … }`: an exclusive `flock` on
+  `expo_st_block_state.lock` in the App Group container (released by the
+  kernel if the holder dies), re-entrant within a process. The generation
+  check and the writes it guards live in the same critical section; the
+  stores are always recomputed from the whole state under the lock (never
+  "clear, then re-apply"); a store leaves the registry only when that
+  recompute emptied it. The lock is **never held across
+  `DeviceActivityCenter` calls** (state first, release, then tell the
+  system) — the rationale is in the file header. `scripts/swift-tests`
+  shows four threads and two processes serializing on it.
 - ⚠️ **Adding a target?** Both `ios/SharedDefaults.swift` and
   `ios/SelectionStore.swift` (and the copies in `targets/*/`) strip known extension
   bundle-id suffixes to derive the base app bundle id — a new target's suffix must

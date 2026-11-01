@@ -30,7 +30,11 @@ ExpoScreenTime.setShieldConfig({
 
 ### `setShieldConfigForActivity(activityName: string, config: ShieldConfig)`
 
-Shield appearance for a specific monitoring activity.
+Shield appearance for a specific monitoring activity. When several block
+sources cover the same app, the configuration is chosen by membership:
+a `blockOnThreshold` block covering the app wins, then the schedule covering it
+that started most recently, then the manual block (which uses the default
+configuration), then the default configuration.
 
 ```typescript
 ExpoScreenTime.setShieldConfigForActivity('bedtime', {
@@ -69,10 +73,11 @@ ExpoScreenTime.setShieldActions({
 **Actions:**
 
 - `'close'` — close the blocked app; the block stays.
-- `'unblock'` — lift the shield on this app until a block is applied again
-  (the next `blockSelection()`, or the next start of a monitored interval).
-  For an app shielded through its category, that category is lifted; for a
-  web domain, that domain.
+- `'unblock'` — lift the shield on this app in every source that shields it
+  (the manual block and each schedule in progress), until a block is applied
+  again (the next `blockSelection()`, `relock()`, or the next start of a
+  monitored interval). For an app shielded through its category, that category
+  is lifted; for a web domain, that domain.
 - `'defer'` — keep the shield on screen and let it redraw. The press is still
   recorded for [`drainShieldInteractions()`](./blocking.md).
 - `{ type: 'snooze', duration }` — **not functional yet**: it behaves like
@@ -84,6 +89,19 @@ Up to 0.1.1, a native key mismatch made every configured action behave like
 `'close'`.
 
 ### `setShieldActionsForActivity(activityName: string, config: ShieldActionConfig)`
+
+Resolved like [`setShieldConfigForActivity`](#setshieldconfigforactivityactivityname-string-config-shieldconfig):
+threshold block, then latest schedule, then the default actions.
+
+The buttons follow the screen: when iOS asks for a shield's appearance it
+names the app **and** its category, while a button press names only one of
+them. The appearance step records the source it resolved for each of those
+tokens, and the button press reuses it as long as that source is still active
+(a source suspended by `temporaryUnlock` never owns a shield). Two limits
+remain: iOS caches shield appearances, so if the active sources change
+without the shield being drawn again, the press resolves on its own, by token
+membership; and the record for a category is shared by every app shielded
+through that category, so the most recently drawn shield wins.
 
 ```typescript
 ExpoScreenTime.setShieldActionsForActivity('workHours', {

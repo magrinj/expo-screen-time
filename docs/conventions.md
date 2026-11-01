@@ -20,8 +20,10 @@ API design, commits/releases, dependencies, packaging, docs. The load-bearing on
 - **Async when it can fail or leaves the main thread** (`AsyncFunction` +
   `Promise`), sync `Function` for cheap store reads/writes. Errors: `NSError`
   domain `"ExpoScreenTime"`, message includes the offending ID.
-- **Swift**: all `ManagedSettingsStore` access via `ScreenTimeManager`'s serial
-  queue; all App Group keys via `SharedDefaultsKeys` with the `expo_st_` prefix;
+- **Swift**: every read-decide-write over block state (App Group records and
+  `ManagedSettingsStore`s) inside `BlockStateLock.shared.withLock`, in the app
+  via `ScreenTimeManager`; all App Group keys via `SharedDefaultsKeys` with the
+  `expo_st_` prefix;
   `// MARK: -` sections mirroring the TS grouping.
 
 ## Commits & releases (conventional commits are load-bearing)

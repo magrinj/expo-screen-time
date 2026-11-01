@@ -4,11 +4,38 @@ import ManagedSettings
 import Foundation
 
 /// Device Activity Monitor Extension
-/// Handles scheduled monitoring events and usage thresholds
+/// Applies and removes blocks on schedule, records events, and meters the
+/// temporary unlock.
+///
+/// Every block source has its own named store (BlockComposition): an interval
+/// writes its activity's store when it starts and empties only that store
+/// when it ends. Before this, every `intervalDidEnd` cleared the single store
+/// the app and the extensions shared — the manual block included.
+///
+/// Callbacks arrive under the PHYSICAL name (`<activity><separator><generation>`,
+/// see ActivityRegistration) and keep arriving for a registration after it
+/// was stopped. A callback whose generation is not the one the activity's
+/// config records is stale and ignored: stopping A then restarting A, or
+/// re-registering A with a new schedule, used to let the old registration's
+/// `intervalDidEnd` clear the new interval and its store.
+///
+/// Every callback runs as ONE critical section of `BlockStateLock`, the mutex
+/// shared with the app and the shield extensions: the generation check, the
+/// state writes and the store projection happen together, so a stale
+/// callback that passed its check before the app re-registered can no longer
+/// clear what the new generation wrote — the check and the writes are not
+/// separable any more. The app puts the state in its final form under the
+/// lock BEFORE it registers or stops a physical name, so a callback the
+/// system then triggers takes the lock after the app released it and judges
+/// the final state.
 class DeviceActivityMonitorExtension: DeviceActivityMonitor {
 
     private let defaults = SharedDefaults.shared
-    private let store = ManagedSettingsStore()
+    private let lock = BlockStateLock.shared
+
+    /// Read per callback: this process can outlive a time-zone or calendar
+    /// change, and a calendar captured at launch would keep the old one.
+    private var calendar: Calendar { return Calendar.current }
 
     // MARK: - Temporary Unlock (internal activity)
 
@@ -16,81 +43,130 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     private let unlockActivityName = "expo_st_temporary_unlock"
     private let unlockStepPrefix = "expo_st_unlock_step_"
 
+    // MARK: - Registrations
+
+    private struct Registration {
+        /// The logical name: events, markers, store and configs use it.
+        let activityName: String
+        let config: [String: Any]
+    }
+
+    /// The current registration a callback belongs to, or `nil` when the
+    /// callback is stale (a stopped or replaced registration) or the activity
+    /// was stopped before the callback arrived — the app recorded the end and
+    /// cleared the state itself, or a newer registration owns them now. Call
+    /// under the lock, in the critical section that acts on the answer.
+    private func registration(for activity: DeviceActivityName) -> Registration? {
+        guard let current = ActivityRegistration.currentRegistration(
+            forPhysical: activity.rawValue,
+            config: { defaults.getMonitoringConfig(activityName: $0) }
+        ) else {
+            return nil
+        }
+        return Registration(activityName: current.logical, config: current.config)
+    }
+
     // MARK: - Interval Events
 
     /// Called when a scheduled interval starts (first device use after start time)
     override func intervalDidStart(for activity: DeviceActivityName) {
-        let activityName = activity.rawValue
-
         // The unlock's metering schedule is module-internal: no monitoring
-        // config, no JS event, and it must never become the "active activity"
-        // (that would repoint shield configs).
-        guard activityName != unlockActivityName else { return }
+        // config, no JS event, no block source.
+        guard activity.rawValue != unlockActivityName else { return }
 
-        // Record event
-        saveEvent(activityName: activityName, eventType: "intervalDidStart")
+        lock.withLock {
+            guard let registration = registration(for: activity) else { return }
+            let activityName = registration.activityName
 
-        // Get monitoring configuration and apply blocks
-        if defaults.getMonitoringConfig(activityName: activityName) != nil,
-           let selectionId = defaults.getSelectionId(activityName: activityName),
-           let selection = SelectionStore.shared.get(selectionId) {
-            applyBlocks(selection: selection)
+            let now = Date()
+            let calendar = self.calendar
+            var alreadyStarted = defaults.getActiveInterval(activityName: activityName) != nil
+            if let daily = Self.dailySchedule(of: registration.config) {
+                let occurrenceStart = daily.latestStart(at: now, calendar: calendar)
+                // One DeviceActivity per logical activity: an occurrence on an
+                // unselected weekday is ignored entirely — no block, no event.
+                guard daily.isSelected(occurrenceStart: occurrenceStart, calendar: calendar) else { return }
+                // The module marks the interval BEFORE registering when the
+                // schedule is registered inside its own occurrence, so this
+                // callback — which fires within milliseconds — records nothing
+                // for that occurrence; a marker from an earlier occurrence does
+                // not count.
+                alreadyStarted = defaults.getActiveInterval(activityName: activityName).map {
+                    DailySchedule.isSameOccurrence(markedAt: $0.startedAt, occurrenceStart: occurrenceStart)
+                } ?? false
+            }
+
+            if !alreadyStarted {
+                defaults.setActiveInterval(activityName: activityName, startedAt: now.timeIntervalSince1970 * 1000)
+                defaults.clearThresholdSelections(activityName: activityName)
+                saveEvent(activityName: activityName, eventType: "intervalDidStart")
+            }
+
+            applyStore(forActivity: activityName)
         }
-
-        // Mark this activity as active
-        defaults.setActiveActivity(activityName)
     }
 
     /// Called when a scheduled interval ends (first device use after end time)
     override func intervalDidEnd(for activity: DeviceActivityName) {
-        let activityName = activity.rawValue
-
-        guard activityName != unlockActivityName else {
+        guard activity.rawValue != unlockActivityName else {
             handleUnlockIntervalEnd()
             return
         }
 
-        // Record event
-        saveEvent(activityName: activityName, eventType: "intervalDidEnd")
+        lock.withLock {
+            guard let registration = registration(for: activity) else { return }
+            let activityName = registration.activityName
 
-        // Remove blocks when interval ends
-        removeBlocks()
+            // Recorded only for an occurrence that started: not on unselected
+            // weekdays, and not when `stopMonitoring` already recorded it.
+            if defaults.getActiveInterval(activityName: activityName) != nil {
+                saveEvent(activityName: activityName, eventType: "intervalDidEnd")
+            }
 
-        // Clear active activity
-        defaults.setActiveActivity(nil)
+            // Forget the interval and the thresholds that fired inside it, and
+            // empty THIS activity's store only — every other source keeps its
+            // shields. Its shield owners are gone with it.
+            defaults.clearActiveInterval(activityName: activityName)
+            write([], toStoreNamed: BlockStore.activity(activityName))
+            defaults.pruneShieldOwners(ofActivity: activityName)
+        }
     }
 
     // MARK: - Threshold Events
 
     /// Called when a usage threshold is reached
     override func eventDidReachThreshold(_ event: DeviceActivityEvent.Name, activity: DeviceActivityName) {
-        let activityName = activity.rawValue
         let eventName = event.rawValue
 
-        guard activityName != unlockActivityName else {
+        guard activity.rawValue != unlockActivityName else {
             handleUnlockStep(eventName: eventName)
             return
         }
 
-        // Record event
-        saveEvent(activityName: activityName, eventType: "eventDidReachThreshold", eventName: eventName)
-
-        // Get event configuration to decide what to do
-        if let config = defaults.getMonitoringConfig(activityName: activityName),
-           let events = config["events"] as? [[String: Any]] {
-
-            // Find the event configuration
-            for eventConfig in events {
-                if eventConfig["eventName"] as? String == eventName {
-                    // Check if we should block on threshold
-                    if eventConfig["blockOnThreshold"] as? Bool == true,
-                       let selectionId = defaults.getSelectionId(activityName: activityName),
-                       let selection = SelectionStore.shared.get(selectionId) {
-                        applyBlocks(selection: selection)
-                    }
-                    break
-                }
+        lock.withLock {
+            guard let registration = registration(for: activity),
+                  isSelectedOccurrence(registration.config) else {
+                return
             }
+            let activityName = registration.activityName
+
+            // Record event
+            saveEvent(activityName: activityName, eventType: "eventDidReachThreshold", eventName: eventName)
+
+            // `blockOnThreshold` shields the EVENT's selection until the interval
+            // ends. It lives in this activity's store, so it goes away with the
+            // interval; the projection also leaves it unshielded while a
+            // temporary unlock has suspended it for this occurrence.
+            guard let events = registration.config["events"] as? [[String: Any]],
+                  let eventConfig = events.first(where: { $0["eventName"] as? String == eventName }),
+                  eventConfig["blockOnThreshold"] as? Bool == true,
+                  let selectionId = eventConfig["selectionId"] as? String,
+                  SelectionStore.shared.has(selectionId) else {
+                return
+            }
+
+            defaults.appendThresholdSelection(activityName: activityName, selectionId: selectionId)
+            applyStore(forActivity: activityName)
         }
     }
 
@@ -98,9 +174,14 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
 
     /// Called before interval ends (if warningTime is set)
     override func intervalWillEndWarning(for activity: DeviceActivityName) {
-        let activityName = activity.rawValue
-        guard activityName != unlockActivityName else { return }
-        saveEvent(activityName: activityName, eventType: "intervalWillEndWarning")
+        guard activity.rawValue != unlockActivityName else { return }
+        lock.withLock {
+            guard let registration = registration(for: activity),
+                  isSelectedOccurrence(registration.config) else {
+                return
+            }
+            saveEvent(activityName: registration.activityName, eventType: "intervalWillEndWarning")
+        }
     }
 
     /// Called before threshold is reached
@@ -108,47 +189,53 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         _ event: DeviceActivityEvent.Name,
         activity: DeviceActivityName
     ) {
-        let activityName = activity.rawValue
-        guard activityName != unlockActivityName else { return }
-        let eventName = event.rawValue
-        saveEvent(activityName: activityName, eventType: "eventWillReachThresholdWarning", eventName: eventName)
+        guard activity.rawValue != unlockActivityName else { return }
+        lock.withLock {
+            guard let registration = registration(for: activity),
+                  isSelectedOccurrence(registration.config) else {
+                return
+            }
+            saveEvent(activityName: registration.activityName, eventType: "eventWillReachThresholdWarning", eventName: event.rawValue)
+        }
     }
 
     // MARK: - Temporary Unlock Handling
 
     /// A usage step fired: `<budget spent so far>` seconds of the blocked
     /// selection have been used since the unlock was granted. Record it, and
-    /// re-apply the shield once the budget is spent.
+    /// re-apply the shields once the budget is spent.
     private func handleUnlockStep(eventName: String) {
-        guard eventName.hasPrefix(unlockStepPrefix),
-              let stepSeconds = Int(eventName.dropFirst(unlockStepPrefix.count)),
-              stepSeconds > 0 else {
-            // Unrecognized event on the internal activity — fail closed:
-            // ending the unlock early beats leaving the shield off forever.
-            defaults.clearUnlockState()
-            relockFromPersistedSelection()
-            return
-        }
+        lock.withLock {
+            guard eventName.hasPrefix(unlockStepPrefix),
+                  let stepSeconds = Int(eventName.dropFirst(unlockStepPrefix.count)),
+                  stepSeconds > 0 else {
+                // Unrecognized event on the internal activity — fail closed:
+                // ending the unlock early beats leaving the shields off forever.
+                defaults.clearUnlockState()
+                restoreActiveSources()
+                return
+            }
 
-        // Sanity bound: measured usage can never exceed the wall-clock time
-        // since the grant. iOS occasionally fires thresholds immediately on
-        // registration (observed on iOS 26 betas) — such a fire claims more
-        // usage than physically possible and must be ignored, or a fresh
-        // grant would be consumed instantly.
-        if let grantedAt = defaults.getUnlockGrantedAt() {
-            let elapsed = Date().timeIntervalSince(grantedAt)
-            if Double(stepSeconds) > elapsed + 30 { return }
-        }
+            // Sanity bound: measured usage can never exceed the wall-clock time
+            // since the grant. iOS occasionally fires thresholds immediately on
+            // registration (observed on iOS 26 betas) — such a fire claims more
+            // usage than physically possible and must be ignored, or a fresh
+            // grant would be consumed instantly.
+            if let grantedAt = defaults.getUnlockGrantedAt() {
+                let elapsed = Date().timeIntervalSince(grantedAt)
+                if Double(stepSeconds) > elapsed + 30 { return }
+            }
 
-        // Steps can arrive out of order — consumption only moves forward.
-        if stepSeconds > defaults.getUnlockConsumedSeconds() {
-            defaults.setUnlockConsumedSeconds(stepSeconds)
-        }
+            // Steps can arrive out of order — consumption only moves forward.
+            if stepSeconds > defaults.getUnlockConsumedSeconds() {
+                defaults.setUnlockConsumedSeconds(stepSeconds)
+            }
 
-        let budget = defaults.getUnlockBudgetSeconds()
-        if budget <= 0 || stepSeconds >= budget {
-            defaults.clearUnlockState()
-            relockFromPersistedSelection()
+            let budget = defaults.getUnlockBudgetSeconds()
+            if budget <= 0 || stepSeconds >= budget {
+                defaults.clearUnlockState()
+                restoreActiveSources()
+            }
         }
     }
 
@@ -157,52 +244,84 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     /// `stopMonitoring` also fires this callback — on every re-grant or
     /// cancel, at any time of day — so only honor it near the boundary.
     private func handleUnlockIntervalEnd() {
-        let components = Calendar.current.dateComponents([.hour, .minute], from: Date())
+        let components = calendar.dateComponents([.hour, .minute], from: Date())
         guard components.hour == 23, (components.minute ?? 0) >= 58 else { return }
-        defaults.clearUnlockState()
-        relockFromPersistedSelection()
-    }
-
-    /// Restore the shield from the selection `blockSelection` persisted.
-    private func relockFromPersistedSelection() {
-        guard let selectionId = defaults.getBlockedSelectionId(),
-              let selection = SelectionStore.shared.get(selectionId) else {
-            return
+        lock.withLock {
+            defaults.clearUnlockState()
+            restoreActiveSources()
         }
-        applyBlocks(selection: selection)
     }
 
-    // MARK: - Private Helpers
+    // MARK: - Stores
 
-    /// Apply blocks to the ManagedSettingsStore
-    private func applyBlocks(selection: FamilyActivitySelection) {
-        store.shield.applications = selection.applicationTokens.isEmpty ? nil : selection.applicationTokens
-        store.shield.applicationCategories = selection.categoryTokens.isEmpty
-            ? nil
-            : ShieldSettings.ActivityCategoryPolicy.specific(selection.categoryTokens)
-        store.shield.webDomains = selection.webDomainTokens.isEmpty ? nil : selection.webDomainTokens
+    /// Project EVERY store from the state — the manual block and every
+    /// interval (plus its thresholds) still in progress — and empty every
+    /// other store in the registry. Called once the unlock state is cleared,
+    /// so nothing is suspended any more. Call under the lock.
+    private func restoreActiveSources() {
+        let sources = defaults.activeBlockSources()
+        let contents = BlockComposition.storeContents(of: sources)
+        let names = Set(defaults.shieldStoreNames()).union(contents.keys)
+        for name in names {
+            write(contents[name] ?? [], toStoreNamed: name)
+        }
+        defaults.pruneShieldOwners(keeping: sources.map(\.kind))
     }
 
-    /// Remove all blocks from the ManagedSettingsStore
-    private func removeBlocks() {
-        store.shield.applications = nil
-        store.shield.applicationCategories = nil
-        store.shield.webDomains = nil
+    /// Project one activity's store from the state (its schedule selection
+    /// plus any threshold selections, minus what a temporary unlock in
+    /// progress suspended). Call under the lock.
+    private func applyStore(forActivity activityName: String) {
+        let contents = BlockComposition.storeContents(of: defaults.activeBlockSources())
+        let name = BlockStore.activity(activityName)
+        write(contents[name] ?? [], toStoreNamed: name)
     }
+
+    /// Write `tokens` into the store called `name`, keeping the shared
+    /// registry in step so the app enumerates this store too. Call under the
+    /// lock: the registry entry goes only when the projection that emptied
+    /// the store ran under it.
+    private func write(_ tokens: Set<ShieldToken>, toStoreNamed name: String) {
+        let store = ManagedSettingsStore(named: ManagedSettingsStore.Name(name))
+        if tokens.isEmpty {
+            write([], to: store)
+            defaults.unregisterShieldStore(name)
+        } else {
+            defaults.registerShieldStore(name)
+            write(tokens, to: store)
+        }
+    }
+
+    private func write(_ tokens: Set<ShieldToken>, to store: ManagedSettingsStore) {
+        let applications = tokens.applicationTokens
+        let categories = tokens.categoryTokens
+        let webDomains = tokens.webDomainTokens
+        store.shield.applications = applications.isEmpty ? nil : applications
+        store.shield.applicationCategories = categories.isEmpty ? nil : .specific(categories)
+        store.shield.webDomains = webDomains.isEmpty ? nil : webDomains
+    }
+
+    // MARK: - Schedules
+
+    /// Whether the occurrence in progress is on a selected weekday (always
+    /// true for schedules without a weekday restriction, and for weekly
+    /// multi-day intervals, which the system already restricts).
+    private func isSelectedOccurrence(_ config: [String: Any]) -> Bool {
+        guard let daily = Self.dailySchedule(of: config) else { return true }
+        let calendar = self.calendar
+        return daily.isSelected(occurrenceStart: daily.latestStart(at: Date(), calendar: calendar), calendar: calendar)
+    }
+
+    private static func dailySchedule(of config: [String: Any]) -> DailySchedule? {
+        guard let scheduleDict = config["schedule"] as? [String: Any] else { return nil }
+        return DailySchedule(scheduleDict: scheduleDict, weekdays: config["weekdays"] as? [Any])
+    }
+
+    // MARK: - Events
 
     /// Save an event to history
     private func saveEvent(activityName: String, eventType: String, eventName: String? = nil) {
-        var event: [String: Any] = [
-            "activityName": activityName,
-            "eventType": eventType,
-            "timestamp": Date().timeIntervalSince1970 * 1000
-        ]
-
-        if let eventName = eventName {
-            event["eventName"] = eventName
-        }
-
-        defaults.saveEvent(activityName: activityName, event: event)
+        defaults.recordEvent(activityName: activityName, eventType: eventType, eventName: eventName)
 
         // Post Darwin notification to alert the main app
         postDarwinNotification()

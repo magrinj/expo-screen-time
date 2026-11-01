@@ -65,9 +65,11 @@ type DateComponents = {
 
 ```typescript
 type MonitoringConfiguration = {
+  /** Stable identity: events, shield configs and getMonitoredActivities use it */
   activityName: string;
+  /** intervalEnd at or before intervalStart crosses midnight */
   schedule: DeviceActivitySchedule;
-  /** Selection to block when the interval starts — a stored selection ID */
+  /** Selection to block while the interval is active — a stored selection ID */
   selectionId?: string;
   events?: DeviceActivityEventThreshold[];
   /** Restrict to specific weekdays (1 = Sunday … 7 = Saturday) */
@@ -76,12 +78,19 @@ type MonitoringConfiguration = {
 
 type DeviceActivityEventThreshold = {
   eventName: string;
-  /** Stored selection to meter */
+  /** Stored selection to meter (and to shield with blockOnThreshold) */
   selectionId: string;
-  threshold: number; // seconds
+  threshold: number; // seconds of usage within the interval
   includesPastActivity?: boolean;
+  /** Shield selectionId from the threshold until the interval ends */
+  blockOnThreshold?: boolean;
 };
 ```
+
+One activity is registered per `activityName`, `weekdays` included: it costs one
+of the 20 DeviceActivity slots, and its events carry that name. Occurrences on
+unselected weekdays are ignored (no block, no events); an occurrence that
+crosses midnight belongs to the weekday on which it starts.
 
 ## `ShieldConfig`
 
