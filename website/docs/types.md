@@ -164,3 +164,42 @@ type ShieldInteraction = {
   timestamp: number; // Unix milliseconds
 };
 ```
+
+## `ScreenTimeErrorCode` {#screentimeerrorcode}
+
+Every rejected promise and thrown error from the module carries one of these
+codes. Narrow a caught value with `isScreenTimeError`, then branch on `code`:
+
+```typescript
+import ExpoScreenTime, { isScreenTimeError } from "expo-screen-time";
+
+try {
+  await ExpoScreenTime.temporaryUnlock(15 * 60);
+} catch (error) {
+  if (isScreenTimeError(error) && error.code === "NO_ACTIVE_BLOCK") {
+    return; // nothing to unlock
+  }
+  throw error;
+}
+```
+
+| Code | When |
+|---|---|
+| `UNAUTHORIZED` | Family Controls authorization is missing (`startMonitoring`). |
+| `UNSUPPORTED` | The OS version is too old for the call. |
+| `SELECTION_NOT_FOUND` | `blockSelection` with a `selectionId` that was never saved. |
+| `NO_ACTIVE_BLOCK` | `temporaryUnlock` while nothing is blocked. |
+| `EXCESSIVE_ACTIVITIES` | `startMonitoring` past the system limit of monitored activities. |
+| `INTERVAL_TOO_SHORT` | A schedule shorter than 15 minutes. |
+| `INTERVAL_TOO_LONG` | A schedule longer than a week. |
+| `INVALID_DATE_COMPONENTS` | A schedule the system rejects as invalid dates. |
+| `INVALID_CONFIG` | A missing or malformed argument: no `activityName` or `schedule`, a reserved activity name, missing interval bounds. |
+| `MONITORING_ERROR` | The system refused the monitoring request for another reason; the message carries its description. |
+| `MONITORING_ROLLBACK_FAILED` | Re-registering an activity failed and its previous schedule could not be restored: the activity is no longer monitored. |
+
+Errors raised by Expo itself (for example `ERR_ARGUMENT_CAST` on a wrong
+argument type) are not `ScreenTimeError`s. `SCREEN_TIME_ERROR_CODES` lists
+every code at runtime.
+
+If `error.code` is always `undefined`, see
+[Troubleshooting](./troubleshooting.md#errorcode-is-undefined).

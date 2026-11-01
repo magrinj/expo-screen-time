@@ -25,19 +25,9 @@ The `ShieldConfigurationExtension` must be included in your targets. Check your 
 
 The `DeviceActivityMonitorExtension` must be included. Monitor events fire when the device is first used after the schedule time (not exactly at the scheduled time).
 
-## `error.code` is `undefined`
+## `error.code` is `undefined` {#errorcode-is-undefined}
 
-Rejected calls carry a `code` (`NO_ACTIVE_BLOCK`, `INVALID_CONFIG`, `MONITORING_ROLLBACK_FAILED`, …) that you can branch on:
-
-```ts
-try {
-  await ExpoScreenTime.temporaryUnlock(60);
-} catch (error: any) {
-  if (error.code === "NO_ACTIVE_BLOCK") {
-    // nothing is blocked
-  }
-}
-```
+Rejected calls carry a [`code`](./types.md#screentimeerrorcode) (`NO_ACTIVE_BLOCK`, `INVALID_CONFIG`, …) that `isScreenTimeError` narrows.
 
 If `error.code` is `undefined` while `error.message` is set, your app resolves an `expo-modules-jsi` older than 56.0.11, which drops the code on rejected promises. This library does not ship that package; your app's Expo SDK provides it. Update to the latest SDK 56 patch (`npx expo install --fix`), or to SDK 57 or later.
 

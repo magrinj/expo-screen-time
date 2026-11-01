@@ -79,9 +79,7 @@ public class ExpoScreenTimeModule: Module {
 
         Function("blockSelection") { (selectionId: String) throws in
             guard SelectionStore.shared.has(selectionId) else {
-                throw NSError(domain: "ExpoScreenTime", code: 2, userInfo: [
-                    NSLocalizedDescriptionKey: "Selection '\(selectionId)' not found"
-                ])
+                throw screenTimeError(.selectionNotFound, "Selection '\(selectionId)' not found")
             }
             // An explicit block supersedes any in-flight temporary unlock —
             // including a grant still being committed (unlockOperations).
@@ -124,7 +122,7 @@ public class ExpoScreenTimeModule: Module {
 
         AsyncFunction("temporaryUnlock") { (budgetSeconds: Int, promise: Promise) in
             guard #available(iOS 15.0, *) else {
-                promise.reject("UNSUPPORTED", "Temporary unlock requires iOS 15.0+")
+                promise.reject(.unsupported, "Temporary unlock requires iOS 15.0+")
                 return
             }
 
@@ -155,14 +153,14 @@ public class ExpoScreenTimeModule: Module {
                     BlockComposition.union(of: self.sharedDefaults.activeBlockSources(honouringSuspension: false))
                 }
                 guard !tokens.isEmpty else {
-                    promise.reject("NO_ACTIVE_BLOCK", "Nothing is blocked — call blockSelection or start a schedule first")
+                    promise.reject(.noActiveBlock, "Nothing is blocked — call blockSelection or start a schedule first")
                     return
                 }
 
                 do {
                     try self.armUnlockMonitoring(budget: budget, tokens: tokens)
                 } catch {
-                    promise.reject("MONITORING_ERROR", "Could not arm usage metering: \(error.localizedDescription)")
+                    promise.reject(.monitoringError, "Could not arm usage metering: \(error.localizedDescription)")
                     return
                 }
 
@@ -200,7 +198,7 @@ public class ExpoScreenTimeModule: Module {
                 if self.sharedDefaults.getUnlockBudgetSeconds() == 0 {
                     self.stopUnlockMeter()
                 }
-                promise.reject("MONITORING_ERROR", "The block changed while the unlock was being granted; try again")
+                promise.reject(.monitoringError, "The block changed while the unlock was being granted; try again")
             }
         }
 
@@ -359,12 +357,12 @@ public class ExpoScreenTimeModule: Module {
 
         AsyncFunction("startMonitoring") { (config: [String: Any], promise: Promise) in
             guard #available(iOS 15.0, *) else {
-                promise.reject("UNSUPPORTED", "DeviceActivity monitoring requires iOS 15.0+")
+                promise.reject(.unsupported, "DeviceActivity monitoring requires iOS 15.0+")
                 return
             }
 
             guard let activityName = config["activityName"] as? String else {
-                promise.reject("INVALID_CONFIG", "activityName is required")
+                promise.reject(.invalidConfig, "activityName is required")
                 return
             }
 
@@ -373,12 +371,12 @@ public class ExpoScreenTimeModule: Module {
             // not be told apart from a generation suffix, and `expo_st_*` is
             // the module's own namespace (the unlock meter).
             guard ActivityRegistration.isValidLogicalName(activityName) else {
-                promise.reject("INVALID_CONFIG", Self.invalidActivityNameMessage)
+                promise.reject(.invalidConfig, Self.invalidActivityNameMessage)
                 return
             }
 
             guard let scheduleDict = config["schedule"] as? [String: Any] else {
-                promise.reject("INVALID_CONFIG", "schedule is required")
+                promise.reject(.invalidConfig, "schedule is required")
                 return
             }
 
@@ -406,39 +404,42 @@ public class ExpoScreenTimeModule: Module {
             } catch let error as DeviceActivityCenter.MonitoringError {
                 switch error {
                 case .excessiveActivities:
-                    promise.reject("EXCESSIVE_ACTIVITIES", "Maximum of 20 activities can be monitored simultaneously")
+                    promise.reject(.excessiveActivities, "Maximum of 20 activities can be monitored simultaneously")
                 case .intervalTooLong:
-                    promise.reject("INTERVAL_TOO_LONG", "Schedule interval cannot exceed 1 week")
+                    promise.reject(.intervalTooLong, "Schedule interval cannot exceed 1 week")
                 case .intervalTooShort:
-                    promise.reject("INTERVAL_TOO_SHORT", "Schedule interval must be at least 15 minutes")
+                    promise.reject(.intervalTooShort, "Schedule interval must be at least 15 minutes")
                 case .invalidDateComponents:
-                    promise.reject("INVALID_DATE_COMPONENTS", "Invalid date components in schedule")
+                    promise.reject(.invalidDateComponents, "Invalid date components in schedule")
                 case .unauthorized:
-                    promise.reject("UNAUTHORIZED", "Family Controls authorization required")
+                    promise.reject(.unauthorized, "Family Controls authorization required")
                 @unknown default:
-                    promise.reject("MONITORING_ERROR", "Failed to start monitoring: \(error.localizedDescription)")
+                    promise.reject(.monitoringError, "Failed to start monitoring: \(error.localizedDescription)")
                 }
             } catch let error as RollbackError {
                 promise.reject(
-                    "MONITORING_ROLLBACK_FAILED",
+                    .monitoringRollbackFailed,
                     "Failed to start monitoring '\(activityName)' (\(error.registration.localizedDescription)) and its previous "
                         + "registration could not be restored (\(error.rollback.localizedDescription)): the activity is no longer monitored"
                 )
+            } catch let error as Exception {
+                // Already coded (e.g. INVALID_CONFIG from buildSchedule).
+                promise.reject(error)
             } catch {
-                promise.reject("ERROR", "Failed to start monitoring: \(error.localizedDescription)")
+                promise.reject(.monitoringError, "Failed to start monitoring: \(error.localizedDescription)")
             }
         }
 
         AsyncFunction("stopMonitoring") { (activityName: String, promise: Promise) in
             guard #available(iOS 15.0, *) else {
-                promise.reject("UNSUPPORTED", "DeviceActivity monitoring requires iOS 15.0+")
+                promise.reject(.unsupported, "DeviceActivity monitoring requires iOS 15.0+")
                 return
             }
 
             // The same rule as `startMonitoring`: the module's own activities
             // (the unlock meter) cannot be stopped through the public API.
             guard ActivityRegistration.isValidLogicalName(activityName) else {
-                promise.reject("INVALID_CONFIG", Self.invalidActivityNameMessage)
+                promise.reject(.invalidConfig, Self.invalidActivityNameMessage)
                 return
             }
 
@@ -462,7 +463,7 @@ public class ExpoScreenTimeModule: Module {
 
         AsyncFunction("stopAllMonitoring") { (promise: Promise) in
             guard #available(iOS 15.0, *) else {
-                promise.reject("UNSUPPORTED", "DeviceActivity monitoring requires iOS 15.0+")
+                promise.reject(.unsupported, "DeviceActivity monitoring requires iOS 15.0+")
                 return
             }
 
@@ -646,7 +647,7 @@ public class ExpoScreenTimeModule: Module {
     private func buildSchedule(from dict: [String: Any]) throws -> DeviceActivitySchedule {
         guard let intervalStartDict = dict["intervalStart"] as? [String: Any],
               let intervalEndDict = dict["intervalEnd"] as? [String: Any] else {
-            throw NSError(domain: "ExpoScreenTime", code: 1, userInfo: [NSLocalizedDescriptionKey: "intervalStart and intervalEnd are required"])
+            throw screenTimeError(.invalidConfig, "schedule.intervalStart and schedule.intervalEnd are required")
         }
 
         let intervalStart = buildDateComponents(from: intervalStartDict)
@@ -1017,7 +1018,7 @@ public class ExpoScreenTimeModule: Module {
         let restoredEvents: [DeviceActivityEvent.Name: DeviceActivityEvent]
         do {
             guard let scheduleDict = previousConfig["schedule"] as? [String: Any] else {
-                throw NSError(domain: "ExpoScreenTime", code: 1, userInfo: [NSLocalizedDescriptionKey: "the stored schedule is missing"])
+                throw screenTimeError(.monitoringError, "the stored schedule is missing")
             }
             restoredSchedule = try buildSchedule(from: scheduleDict)
             restoredEvents = try buildEvents(from: previousConfig)

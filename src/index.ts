@@ -121,5 +121,9 @@ export {
   importSelection,
 } from "./utils";
 
+// Errors
+export { isScreenTimeError, SCREEN_TIME_ERROR_CODES } from "./errors";
+export type { ScreenTimeError, ScreenTimeErrorCode } from "./errors";
+
 // Types
 export * from "./ExpoScreenTime.types";

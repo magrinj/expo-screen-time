@@ -26,12 +26,15 @@ import ExpoScreenTime, {
   listSelections,
   getTokens,
   deleteSelection,
+  // Errors
+  isScreenTimeError,
+  SCREEN_TIME_ERROR_CODES,
 } from 'expo-screen-time';
 ```
 
 The default export (`ExpoScreenTime`) holds all the imperative functions
 documented in this section. Hooks, components, and the selection utilities are
-named exports.
+named exports. Errors carry a [`ScreenTimeErrorCode`](../types.md#screentimeerrorcode).
 
 ## The `selectionId` model
 

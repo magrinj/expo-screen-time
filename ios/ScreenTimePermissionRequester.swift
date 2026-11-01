@@ -36,7 +36,7 @@ public class ScreenTimePermissionRequester: NSObject, EXPermissionsRequester {
     
     public func requestPermissions(resolver resolve: @escaping EXPromiseResolveBlock, rejecter reject: @escaping EXPromiseRejectBlock) {
         guard #available(iOS 16.0, *) else {
-            reject("E_UNSUPPORTED_IOS", "Screen Time API is not supported on this iOS version", nil)
+            reject(ScreenTimeErrorCode.unsupported.rawValue, "Screen Time API requires iOS 16.0 or later", nil)
             return
         }
 
