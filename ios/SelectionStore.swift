@@ -98,6 +98,12 @@ class SelectionStore {
 
     /// Generate a stable handle by encoding the token to JSON and base64-ing it.
     /// Unlike hashValue, this is deterministic across app launches.
+    ///
+    /// Invariant: a handle is exactly `ShieldToken.encoded.token` for the
+    /// same token, so `ShieldToken(kind:encoded:)` decodes a handle back into
+    /// its token — `ExpoScreenTimeTokenLabelView` relies on it to label a
+    /// handle without its selection. Change one encoding only with the other
+    /// (and persisted handles in consumers' apps would stop resolving).
     private func stableHandle<T: Encodable>(for token: T) -> String {
         guard let data = try? JSONEncoder().encode(token) else { return "unknown" }
         return data.base64EncodedString()

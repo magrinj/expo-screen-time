@@ -115,11 +115,21 @@ export type DisplayMode = "icon-only" | "title-only" | "title-and-icon";
  */
 export type TokenLabelProps = {
   style?: StyleProp<ViewStyle>;
-  /** ID of the selection containing this token */
-  selectionId: string;
+  /**
+   * Selection that holds the token. Optional: a handle is self-describing,
+   * so the label resolves it natively on its own — this is how you label a
+   * handle you persisted that no longer belongs to a stored selection. When
+   * given, the handle is looked up inside that selection and renders the
+   * placeholder if it is not part of it.
+   */
+  selectionId?: string;
   /** Handle identifying the specific token */
   handle: string;
-  /** Type of token: determines which native Label to render */
+  /**
+   * Type of token: determines which native Label to render. Must be the
+   * handle's own `TokenHandle.type` — a handle of another type is not
+   * detected natively and renders a blank label.
+   */
   tokenType: "application" | "category" | "webDomain";
   /** Display mode */
   displayMode?: DisplayMode;

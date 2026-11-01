@@ -1,7 +1,7 @@
 import { requireNativeView } from "expo";
 import * as React from "react";
 
-import type { TokenLabelProps, DisplayMode } from "./ExpoScreenTime.types";
+import type { TokenLabelProps } from "./ExpoScreenTime.types";
 
 const NativeView: React.ComponentType<TokenLabelProps> = requireNativeView(
   "ExpoScreenTime",
@@ -11,18 +11,15 @@ const NativeView: React.ComponentType<TokenLabelProps> = requireNativeView(
 /**
  * Renders an app/category/domain icon and/or name from a token handle.
  * The actual token data stays on the native side — only the handle crosses the bridge.
+ * `selectionId` is optional: a handle resolves on its own, so a handle from
+ * `getTokens` or the picker renders even once persisted on its own.
  * @platform ios
  */
 export default function TokenLabel(props: TokenLabelProps) {
   return <NativeView {...props} />;
 }
 
-type ConvenienceLabelProps = {
-  selectionId: string;
-  handle: string;
-  style?: TokenLabelProps["style"];
-  displayMode?: DisplayMode;
-};
+type ConvenienceLabelProps = Omit<TokenLabelProps, "tokenType">;
 
 export function ApplicationLabel({
   selectionId,

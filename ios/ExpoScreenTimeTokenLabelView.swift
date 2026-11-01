@@ -159,27 +159,57 @@ class ExpoScreenTimeTokenLabelView: ExpoView {
         resolveAndUpdate()
     }
 
+    /// Resolve `handle` to a token. A handle is the token's own encoding
+    /// (`ShieldToken.encoded.token`, what `SelectionStore` hands out), so it
+    /// is self-describing: without a `selectionId` the view decodes it
+    /// directly — no store read, no search, pure and O(1) per label — which
+    /// is what lets a handle be labelled wherever it came from (a handle the
+    /// app persisted, a token removed from its selection since). With a
+    /// `selectionId`, the handle is looked up inside that selection as
+    /// before, so a handle that is not in it still renders the placeholder.
+    /// A handle this build cannot decode renders the placeholder, never
+    /// crashes.
+    ///
+    /// The decoder cannot check the kind: every token kind is the same
+    /// `Token<T>` struct with one Codable shape, so an application handle
+    /// decodes as a (bogus) category token too. `tokenType` must be the
+    /// handle's own `TokenHandle.type` — the selection lookup used to
+    /// enforce that for free; the direct decode cannot.
     private func resolveAndUpdate() {
         // Reset all tokens
         applicationToken = nil
         categoryToken = nil
         webDomainToken = nil
 
-        guard let selectionId = selectionId, let handle = handle else {
+        guard let handle = handle else {
             updateView()
             return
         }
 
-        // Lookup via SelectionStore
-        switch tokenType {
-        case "application":
-            applicationToken = SelectionStore.shared.resolveApplicationToken(selectionId, handle: handle)
-        case "category":
-            categoryToken = SelectionStore.shared.resolveCategoryToken(selectionId, handle: handle)
-        case "webDomain":
-            webDomainToken = SelectionStore.shared.resolveWebDomainToken(selectionId, handle: handle)
-        default:
-            break
+        if let selectionId = selectionId {
+            // Lookup via SelectionStore
+            switch tokenType {
+            case "application":
+                applicationToken = SelectionStore.shared.resolveApplicationToken(selectionId, handle: handle)
+            case "category":
+                categoryToken = SelectionStore.shared.resolveCategoryToken(selectionId, handle: handle)
+            case "webDomain":
+                webDomainToken = SelectionStore.shared.resolveWebDomainToken(selectionId, handle: handle)
+            default:
+                break
+            }
+        } else {
+            // Decode the handle itself (kind unchecked — see above).
+            switch ShieldToken(kind: tokenType, encoded: handle) {
+            case .application(let token)?:
+                applicationToken = token
+            case .category(let token)?:
+                categoryToken = token
+            case .webDomain(let token)?:
+                webDomainToken = token
+            case nil:
+                break
+            }
         }
 
         updateView()

@@ -43,6 +43,22 @@ type OnSelectionChangeEvent = {
 };
 ```
 
+## `TokenLabelProps`
+
+Props of [`TokenLabel`](./components.md#token-labels); `ApplicationLabel`,
+`CategoryLabel` and `WebDomainLabel` take the same props without `tokenType`.
+
+```typescript
+type TokenLabelProps = {
+  style?: StyleProp<ViewStyle>;
+  /** Optional — a handle is self-describing; given, the handle must be in it */
+  selectionId?: string;
+  handle: string; // opaque TokenHandle.handle
+  tokenType: "application" | "category" | "webDomain";
+  displayMode?: "icon-only" | "title-only" | "title-and-icon"; // default title-and-icon
+};
+```
+
 ## `DeviceActivitySchedule`
 
 ```typescript

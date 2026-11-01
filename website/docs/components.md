@@ -117,12 +117,29 @@ const apps = tokens?.filter((t) => t.type === 'application') ?? [];
 />
 ```
 
+`selectionId` is optional. A handle is self-describing — the native side
+resolves it on its own — so a label renders a handle wherever it came from,
+even one that is no longer part of any stored selection (a token the user
+removed, a handle you persisted earlier):
+
+```typescript
+// A handle you kept from an earlier getTokens() — no selection needed
+<ApplicationLabel handle={savedHandle} displayMode="title-and-icon" />
+```
+
+With `selectionId`, the handle is looked up inside that selection instead and
+renders a placeholder if it is not part of it — use it when the label should
+follow the selection's contents. Either way the handle stays opaque to JS:
+never parse or construct one. The label cannot tell an application handle from
+a category handle, so pass each handle to the label of its own
+`TokenHandle.type` (`ApplicationLabel` for `'application'`, and so on).
+
 **Props (all labels):**
 
 | Prop | Type | Description |
 |------|------|-------------|
-| `selectionId` | `string` | Selection containing the token |
+| `selectionId` | `string` (optional) | Selection to look the handle up in; omit to resolve the handle on its own |
 | `handle` | `string` | Opaque token handle |
 | `displayMode` | `'icon-only' \| 'title-only' \| 'title-and-icon'` | Default `'title-and-icon'` |
 | `style` | `StyleProp<ViewStyle>` | Container style |
-| `tokenType` | `'application' \| 'category' \| 'webDomain'` | `TokenLabel` only |
+| `tokenType` | `'application' \| 'category' \| 'webDomain'` | `TokenLabel` only; must be the handle's `TokenHandle.type` |

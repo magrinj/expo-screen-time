@@ -3,6 +3,7 @@ import { useFocusEffect } from "expo-router";
 import {
   ApplicationLabel,
   CategoryLabel,
+  TokenLabel,
   WebDomainLabel,
   type TokenHandle,
 } from "expo-screen-time";
@@ -206,6 +207,32 @@ export default function LabelsScreen() {
         </>
       )}
 
+      {/* Handle-only demo: no selectionId, the handle resolves on its own */}
+      {hasAnyToken && (
+        <>
+          <SectionHeader title="Handle Only (no selectionId)" />
+          <Card>
+            <Text style={styles.combinedDescription}>
+              A handle is self-describing: these labels receive no selectionId
+              and still render, so a handle you kept from an earlier getTokens()
+              or onSelectionChange can be labelled on its own.
+            </Text>
+            {[appToken, categoryToken, domainToken]
+              .filter((token): token is TokenHandle => token !== undefined)
+              .map((token) => (
+                <View key={`handle-only-${token.handle}`} style={styles.combinedRow}>
+                  <TokenLabel
+                    handle={token.handle}
+                    tokenType={token.type}
+                    displayMode="title-and-icon"
+                    style={styles.fullDemo}
+                  />
+                </View>
+              ))}
+          </Card>
+        </>
+      )}
+
       {/* Category Labels Demo */}
       {hasCategories && categoryToken && (
         <>
@@ -280,6 +307,13 @@ export default function LabelsScreen() {
 <ApplicationLabel
   selectionId="blocked_apps"
   handle={token.handle}
+  displayMode="title-and-icon"
+  style={{ height: 44 }}
+/>
+
+// selectionId is optional: a handle resolves on its own
+<ApplicationLabel
+  handle={savedHandle}
   displayMode="title-and-icon"
   style={{ height: 44 }}
 />`}

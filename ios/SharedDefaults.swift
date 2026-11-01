@@ -67,7 +67,9 @@ enum ShieldToken: Hashable {
 extension ShieldToken {
     /// The token's kind and encoded form (base64), stable across processes
     /// and launches — what a `ShieldSnooze` persists. Tokens are opaque, but
-    /// their encoding is stable (it is what `SelectionStore` persists).
+    /// their encoding is stable (it is what `SelectionStore` persists). The
+    /// encoded form is also the token's JS handle (`SelectionStore
+    /// .stableHandle`), which is what makes a handle self-describing.
     var encoded: (kind: String, token: String)? {
         let data: Data?
         let kind: String
