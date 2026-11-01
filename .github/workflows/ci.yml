@@ -48,3 +48,15 @@ jobs:
             echo "::error::found 'undefined/' path in pbxproj (group path regression)"
             exit 1
           fi
+
+  swift:
+    # The pure Swift layer the module and its extensions share (block
+    # composition, schedules, registrations, the cross-process lock, ...):
+    # its logic tests, the byte-identity of every per-target copy, and two
+    # processes contending on the real flock. Needs swiftc, hence macOS.
+    name: Swift logic tests
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - run: swiftc --version
+      - run: bash scripts/swift-tests/run.sh

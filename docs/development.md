@@ -41,7 +41,7 @@ Touched `ios/ExpoScreenTimeModule.swift` or `src/ExpoScreenTimeModule.ts`? Add
 the matching line to `android/.../NativeFunctions.kt` (it fails with
 `UNSUPPORTED` until implemented) or the parity test fails.
 
-On a Mac, also run `bun run test:swift` after touching `ios/BlockComposition.swift`,
+CI runs it too (the **Swift logic tests** job, on macOS). On a Mac, also run `bun run test:swift` after touching `ios/BlockComposition.swift`,
 `ios/BlockStateLock.swift`, `ios/DailySchedule.swift`, `ios/ActivityRegistration.swift`,
 `ios/MonitorEventCursor.swift` or any `SharedDefaults.swift` copy: it compiles those
 Foundation-only types with plain `swiftc`, runs the block-composition / precedence /
