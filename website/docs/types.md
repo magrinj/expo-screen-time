@@ -9,6 +9,39 @@ sidebar_position: 7
 As exported from `expo-screen-time` (source of truth:
 [`ExpoScreenTime.types.ts`](https://github.com/magrinj/expo-screen-time/blob/main/src/ExpoScreenTime.types.ts)).
 
+## `ScreenTimeFeature`, `PermissionStepId`, `PermissionStep`
+
+What the app intends to use, and the steps the user must allow for it — see
+[Permissions](./api/permissions.md).
+
+```typescript
+type ScreenTimeFeature =
+  | "blocking" | "monitoring" | "usageReports"
+  | "shieldOpenApp" | "appRemovalProtection" | "webDomainBlocking";
+
+type PermissionStepId =
+  | "screenTime"      // iOS: the Family Controls prompt
+  | "notifications"   // iOS: for shieldOpenApp
+  // Android ids, so shared code can label every step; iOS never lists them:
+  | "usageAccess" | "overlay" | "accessibility"
+  | "batteryOptimization" | "backgroundAutostart" | "deviceAdmin";
+
+type PermissionStep = {
+  id: PermissionStepId;
+  status: "granted" | "denied" | "undetermined" | "restricted" | "unknown";
+  required: boolean;                     // needed by the requested features
+  kind: "prompt" | "settings" | "guide"; // a system dialog on iOS
+  error?: { code: string; message: string };
+};
+
+type ScreenTimePermissionOptions = {
+  features?: ScreenTimeFeature[];        // default ["blocking", "monitoring"]
+  member?: "individual" | "child";
+};
+
+type ScreenTimePermissionResponse = PermissionResponse & { steps: PermissionStep[] };
+```
+
 ## `TokenHandle`
 
 Opaque, stable reference to a native token. Never parse or construct one in JS.
@@ -144,20 +177,34 @@ type ShieldConfig = {
 };
 ```
 
+## `ShieldAction`
+
+What a shield button does — see [Shield Actions](./api/shields.md#shield-actions).
+
+```typescript
+type ShieldAction =
+  | "close"                                // dismiss; the block stays
+  | "unblock"                              // lift the pressed target until the next block
+  | "defer"                                // keep the shield up; the press is recorded
+  | { type: "snooze"; duration: number }   // lift the pressed target for `duration` seconds of use
+  | { type: "openApp" };                   // bring the host app forward (iOS: a notification to tap)
+
+type ShieldActionType = "close" | "unblock" | "defer"; // the string actions alone
+```
+
+Snooze is expressed as an object with its duration in seconds **of use** of
+the pressed target (at least 30) — see [Snooze](./api/shields.md#snooze).
+`openApp` posts a notification on iOS — see
+[Open app](./api/shields.md#open-app).
+
 ## `ShieldActionConfig`
 
 ```typescript
 type ShieldActionConfig = {
-  primaryAction: ShieldActionType | { type: "snooze"; duration: number };
-  secondaryAction?: ShieldActionType | { type: "snooze"; duration: number };
+  primaryAction: ShieldAction;
+  secondaryAction?: ShieldAction;
 };
-
-type ShieldActionType = "close" | "unblock" | "defer";
 ```
-
-Snooze is expressed as an object with its duration in seconds **of use** of
-the pressed target (at least 30) — see
-[Snooze](./api/shields.md#snooze).
 
 ## `MonitorEvent`
 

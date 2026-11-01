@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import ExpoScreenTime, {
   MonitoringConfiguration,
   ShieldConfig,
+  ShieldAction,
   ShieldActionConfig,
   MonitorEvent,
   getSelectionMetadata,
@@ -29,6 +30,10 @@ import {
   SectionHeader,
   Separator,
 } from "../components/ui";
+
+// openApp posts a notification on iOS (getCapabilities().shieldOpenApp).
+const SHIELD_ACTION_CHOICES = ["close", "snooze", "unblock", "openApp"] as const;
+type ShieldActionChoice = (typeof SHIELD_ACTION_CHOICES)[number];
 
 type TimePickerProps = {
   label: string;
@@ -98,8 +103,8 @@ export default function SchedulingScreen() {
   const [shieldButtonColor, setShieldButtonColor] = useState("#4a4ae8");
 
   // Shield actions state
-  const [primaryAction, setPrimaryAction] = useState<"close" | "snooze" | "unblock">("close");
-  const [secondaryAction, setSecondaryAction] = useState<"close" | "snooze" | "unblock">("close");
+  const [primaryAction, setPrimaryAction] = useState<ShieldActionChoice>("close");
+  const [secondaryAction, setSecondaryAction] = useState<ShieldActionChoice>("close");
   const [snoozeDuration, setSnoozeDuration] = useState(5); // minutes
 
   const loadData = useCallback(async () => {
@@ -195,14 +200,16 @@ export default function SchedulingScreen() {
     Alert.alert("Success", "Shield configuration applied!\nBlock an app to see the custom shield.");
   };
 
+  const toShieldAction = (choice: ShieldActionChoice): ShieldAction => {
+    if (choice === "snooze") return { type: "snooze", duration: snoozeDuration * 60 };
+    if (choice === "openApp") return { type: "openApp" };
+    return choice;
+  };
+
   const handleApplyShieldActions = () => {
     const config: ShieldActionConfig = {
-      primaryAction: primaryAction === "snooze"
-        ? { type: "snooze", duration: snoozeDuration * 60 }
-        : primaryAction,
-      secondaryAction: secondaryAction === "snooze"
-        ? { type: "snooze", duration: snoozeDuration * 60 }
-        : secondaryAction,
+      primaryAction: toShieldAction(primaryAction),
+      secondaryAction: toShieldAction(secondaryAction),
     };
 
     ExpoScreenTime.setShieldActions(config);
@@ -403,7 +410,7 @@ export default function SchedulingScreen() {
           showChevron={false}
           rightElement={
             <View style={styles.actionPicker}>
-              {(["close", "snooze", "unblock"] as const).map((action) => (
+              {SHIELD_ACTION_CHOICES.map((action) => (
                 <Text
                   key={action}
                   style={[
@@ -427,7 +434,7 @@ export default function SchedulingScreen() {
           showChevron={false}
           rightElement={
             <View style={styles.actionPicker}>
-              {(["close", "snooze", "unblock"] as const).map((action) => (
+              {SHIELD_ACTION_CHOICES.map((action) => (
                 <Text
                   key={action}
                   style={[

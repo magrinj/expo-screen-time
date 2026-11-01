@@ -5,8 +5,43 @@ import type { StyleProp, ViewStyle } from "react-native";
 // PERMISSIONS
 // ============================================================================
 
-/** One thing the user must allow. iOS has one step: the Screen Time prompt. */
-export type PermissionStepId = "screenTime";
+/**
+ * What the app intends to use. Decides which permission steps are required:
+ * on iOS, `shieldOpenApp` adds the `notifications` step (a shield's
+ * `{ type: "openApp" }` action reaches the app through a notification the
+ * user taps); the other features all rest on the `screenTime` step.
+ */
+export type ScreenTimeFeature =
+  | "blocking"
+  | "monitoring"
+  | "usageReports"
+  | "shieldOpenApp"
+  | "appRemovalProtection"
+  | "webDomainBlocking";
+
+/**
+ * One thing the user must allow. iOS lists `screenTime` (the Family Controls
+ * prompt) and, for the `shieldOpenApp` feature, `notifications`. The other
+ * ids are Android's; they exist so shared code can label every step, and
+ * iOS never lists them.
+ */
+export type PermissionStepId =
+  /** iOS: Family Controls authorization (system prompt). */
+  | "screenTime"
+  /** Android: Settings › Usage access. */
+  | "usageAccess"
+  /** Android: Settings › Display over other apps. */
+  | "overlay"
+  /** Android: Settings › Accessibility. */
+  | "accessibility"
+  /** iOS: for `shieldOpenApp`. Android 13+: the protection notice. */
+  | "notifications"
+  /** Android: the system's battery-optimization list. */
+  | "batteryOptimization"
+  /** Android OEMs: the vendor autostart screen. */
+  | "backgroundAutostart"
+  /** Android: device admin activation. */
+  | "deviceAdmin";
 
 export type PermissionStep = {
   id: PermissionStepId;
@@ -16,30 +51,44 @@ export type PermissionStep = {
    * device). `unknown`: the status cannot be read back.
    */
   status: "granted" | "denied" | "undetermined" | "restricted" | "unknown";
-  /** `true`: needed by the module. `false`: recommended for reliability. */
+  /** `true`: needed by the requested features. `false`: recommended for reliability. */
   required: boolean;
   /** `prompt`: a system dialog. `settings`: a settings screen. `guide`: a vendor screen. */
   kind: "prompt" | "settings" | "guide";
   /**
-   * Why the last request failed, verbatim from the OS: on iOS the
+   * Why the last request failed, verbatim from the OS: for `screenTime` the
    * `FamilyControlsError` case name (`restricted`, `invalidAccountType`,
-   * `authorizationCanceled`, `networkError`, …) and its description. Absent
-   * when the last request succeeded or once access is granted. Kept for the
-   * app's lifetime only.
+   * `authorizationCanceled`, `networkError`, …) and its description; for
+   * `notifications` an error thrown by the request (a refusal is not an
+   * error: the step reads `denied`). Absent when the last request succeeded
+   * or once the step is granted. Kept for the app's lifetime only.
    */
   error?: { code: string; message: string };
 };
 
 /**
- * Expo's `PermissionResponse` plus the steps behind it:
+ * Expo's `PermissionResponse` plus the ordered steps behind it:
  * - `granted` is `true` when every `required` step is `granted`;
- * - a `restricted` step reports `status: "denied"` and `canAskAgain: false`.
+ * - `status` is `granted` if so; else `denied` if a required step is
+ *   `denied` or `restricted`; else `undetermined`;
+ * - `canAskAgain` is `true` when no required step is `restricted` and every
+ *   required step still to grant can show its prompt: Family Controls asks
+ *   again after a denial, the notification prompt is shown once (after a
+ *   denial only Settings can grant it).
+ * iOS reports one required step (`screenTime`), plus `notifications` when
+ * `shieldOpenApp` is among the `features`.
  */
 export type ScreenTimePermissionResponse = PermissionResponse & {
   steps: PermissionStep[];
 };
 
 export type ScreenTimePermissionOptions = {
+  /**
+   * What the app will use; decides which steps are listed and required.
+   * Default `["blocking", "monitoring"]`. Add `shieldOpenApp` to list the
+   * `notifications` step.
+   */
+  features?: ScreenTimeFeature[];
   /**
    * Who authorizes. `individual` (default): the user approves for this
    * device. `child`: Family Sharing authorization of a child account, approved
@@ -93,8 +142,10 @@ export type ScreenTimeCapabilities = {
   /** `<DeviceActivityReport>` renders data: the report extension is in this build. */
   usageReports: boolean;
   /**
-   * How a shield's open-app action reaches the host app: at once, or
-   * through a notification the user taps (iOS).
+   * How a shield's `{ type: "openApp" }` action reaches the host app: at
+   * once, or through a notification the user taps (iOS, which needs the
+   * `notifications` permission step, requested with the `shieldOpenApp`
+   * feature).
    */
   shieldOpenApp: "direct" | "notification";
   /** `openApplication(handle)` works. iOS cannot launch another app: `false`. */
@@ -348,9 +399,32 @@ export type ShieldConfig = {
 
 export type ShieldActionType = "close" | "unblock" | "defer";
 
+/** What a shield button does. */
+export type ShieldAction =
+  /** Dismiss to the Home screen; the block stays. */
+  | "close"
+  /**
+   * Lift the shield on the pressed target in every source shielding it,
+   * until a block is applied again.
+   */
+  | "unblock"
+  /** Keep the shield up; the press is still recorded. */
+  | "defer"
+  /** Lift the pressed target for `duration` seconds of its use (at least 30). */
+  | { type: "snooze"; duration: number }
+  /**
+   * Bring the host app forward; `getCapabilities().shieldOpenApp` says how.
+   * iOS cannot launch an app from a shield, so it posts a local
+   * notification the user taps (the `notifications` permission step,
+   * requested with the `shieldOpenApp` feature); without it the press
+   * behaves like `"close"`. The press is recorded either way, so the app,
+   * once open, finds the shielded `target` in `drainShieldInteractions()`.
+   */
+  | { type: "openApp" };
+
 export type ShieldActionConfig = {
-  primaryAction: ShieldActionType | { type: "snooze"; duration: number };
-  secondaryAction?: ShieldActionType | { type: "snooze"; duration: number };
+  primaryAction: ShieldAction;
+  secondaryAction?: ShieldAction;
 };
 
 // ============================================================================

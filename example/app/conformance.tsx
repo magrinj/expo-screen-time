@@ -32,6 +32,7 @@ import {
   isTemporarilyUnlocked,
   openApplication,
   relock,
+  requestScreenTimePermissionsAsync,
   startMonitoring,
   stopAllMonitoring,
   stopMonitoring,
@@ -127,6 +128,24 @@ const scenarios: Scenario[] = [
       expect(!!step && step.required, "a required screenTime step");
       expect(response.granted && step!.status === "granted", `screen time access must be granted to run the suite (status=${response.status})`);
       return `granted, ${response.steps.length} step(s)`;
+    },
+  },
+  {
+    id: "C11",
+    title: "Features decide the required steps",
+    async run(caps) {
+      if (caps.blocking === "none") {
+        await expectCode("UNSUPPORTED", () => getScreenTimePermissionsAsync({ features: ["blocking", "shieldOpenApp"] }));
+        return "UNSUPPORTED (blocking off)";
+      }
+      const plain = await getScreenTimePermissionsAsync({ features: ["blocking"] });
+      expect(!plain.steps.some((s) => s.id === "notifications" && s.required), "no required notifications step without shieldOpenApp");
+      const withOpenApp = await getScreenTimePermissionsAsync({ features: ["blocking", "shieldOpenApp"] });
+      const notifications = withOpenApp.steps.find((s) => s.id === "notifications");
+      expect(!!notifications && notifications.required, "shieldOpenApp requires the notifications step");
+      expect(withOpenApp.granted === withOpenApp.steps.filter((s) => s.required).every((s) => s.status === "granted"), "granted iff every required step is granted");
+      await expectCode("INVALID_CONFIG", () => requestScreenTimePermissionsAsync({ features: ["blocking"], step: "usageAccess" }));
+      return `notifications step ${notifications!.status}; unlisted step rejected`;
     },
   },
   {

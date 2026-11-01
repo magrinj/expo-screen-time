@@ -1,10 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useFocusEffect } from "expo-router";
-import { PermissionResponse } from "expo-modules-core";
 import ExpoScreenTime, {
   ApplicationLabel,
   CategoryLabel,
   WebDomainLabel,
+  type PermissionStep,
+  type ScreenTimePermissionOptions,
+  type ScreenTimePermissionResponse,
 } from "expo-screen-time";
 import { useCallback, useEffect, useState } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
@@ -21,9 +23,20 @@ import {
   StatusBadge,
 } from "../components/ui";
 
+// shieldOpenApp adds the notifications step (the shield's openApp action
+// posts a notification), so both steps show up in the checklist below.
+const PERMISSION_OPTIONS: ScreenTimePermissionOptions = {
+  features: ["blocking", "monitoring", "shieldOpenApp"],
+};
+
+const STEP_TITLE: Partial<Record<PermissionStep["id"], string>> = {
+  screenTime: "Screen Time access",
+  notifications: "Notifications (shield → open app)",
+};
+
 export default function HomeScreen() {
   const { tokens, metadata, refresh } = useNativeSelection(SELECTION_ID);
-  const [permissions, setPermissions] = useState<PermissionResponse | null>(null);
+  const [permissions, setPermissions] = useState<ScreenTimePermissionResponse | null>(null);
   const [isBlocked, setIsBlocked] = useState(false);
 
   useFocusEffect(
@@ -37,7 +50,7 @@ export default function HomeScreen() {
   );
 
   useEffect(() => {
-    ExpoScreenTime.getScreenTimePermissionsAsync().then(setPermissions, () => setPermissions(null));
+    ExpoScreenTime.getScreenTimePermissionsAsync(PERMISSION_OPTIONS).then(setPermissions, () => setPermissions(null));
   }, []);
 
   const appsCount = metadata?.applicationCount ?? 0;
@@ -50,6 +63,13 @@ export default function HomeScreen() {
   const domainTokens = tokens.filter((t) => t.type === "webDomain");
 
   const permissionGranted = permissions?.granted ?? false;
+  const requestStep = async (step?: PermissionStep["id"]) => {
+    const res = await ExpoScreenTime.requestScreenTimePermissionsAsync({
+      ...PERMISSION_OPTIONS,
+      step,
+    });
+    setPermissions(res);
+  };
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -60,19 +80,41 @@ export default function HomeScreen() {
           icon="shield-checkmark"
           iconColor={permissionGranted ? colors.success : colors.warning}
           title="Screen Time Access"
-          subtitle={permissionGranted ? "Full access granted" : "Permission required"}
+          subtitle={
+            permissionGranted
+              ? "Every step granted"
+              : `${permissions?.status ?? "…"} · canAskAgain: ${String(permissions?.canAskAgain ?? "…")}`
+          }
         />
+        {permissions?.steps.map((step) => (
+          <View key={step.id}>
+            <Separator />
+            <Row
+              icon={step.status === "granted" ? "checkmark-circle" : "ellipse-outline"}
+              iconColor={step.status === "granted" ? colors.success : colors.textTertiary}
+              title={STEP_TITLE[step.id] ?? step.id}
+              subtitle={step.error ? `${step.status} · ${step.error.code}` : step.status}
+              rightElement={
+                step.status !== "granted" ? (
+                  <ActionButton
+                    title="Allow"
+                    icon="lock-open"
+                    compact
+                    onPress={() => requestStep(step.id)}
+                  />
+                ) : undefined
+              }
+            />
+          </View>
+        ))}
         {!permissionGranted && (
           <>
             <Separator />
             <View style={styles.permissionAction}>
               <ActionButton
-                title="Grant Permission"
-                icon="lock-open"
-                onPress={async () => {
-                  const res = await ExpoScreenTime.requestScreenTimePermissionsAsync();
-                  setPermissions(res);
-                }}
+                title="Request next step"
+                icon="arrow-forward-circle"
+                onPress={() => requestStep()}
               />
             </View>
           </>

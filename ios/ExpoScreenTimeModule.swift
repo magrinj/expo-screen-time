@@ -63,22 +63,44 @@ public class ExpoScreenTimeModule: Module {
 
         // MARK: - Permissions
 
-        // `options` (`ScreenTimePermissionOptions`) only matter when requesting:
-        // the authorization status is the same whichever member asked.
-        AsyncFunction("getScreenTimePermissionsAsync") { (_: [String: Any]?, promise: Promise) in
-            appContext?.permissions?.getPermissionUsingRequesterClass(
-                ScreenTimePermissionRequester.self,
-                resolve: promise.legacyResolver,
-                reject: promise.legacyRejecter
+        // `options` (`ScreenTimePermissionOptions`): `features` decides which
+        // steps are listed and required (`PermissionSteps`); `member` is only
+        // read when requesting `screenTime` (the status is the same whichever
+        // member asked). The requester composes the response itself — Expo's
+        // permission service would recompute `canAskAgain` from `status`.
+        AsyncFunction("getScreenTimePermissionsAsync") { (options: [String: Any]?) async -> [String: Any] in
+            return await self.permissionRequester.response(
+                features: PermissionSteps.features(from: options?["features"])
             )
         }
 
-        AsyncFunction("requestScreenTimePermissionsAsync") { (options: [String: Any]?, promise: Promise) in
-            self.permissionRequester.prepareRequest(member: options?["member"] as? String)
-            appContext?.permissions?.askForPermission(
-                usingRequesterClass: ScreenTimePermissionRequester.self,
-                resolve: promise.legacyResolver,
-                reject: promise.legacyRejecter
+        // Advances onboarding by one step: `step` if given, else the first
+        // required step not granted. Never rejects for a refused prompt; an
+        // Android step id, an unknown one, or a step the requested features
+        // do not list (its outcome could not be reported) is a caller error.
+        AsyncFunction("requestScreenTimePermissionsAsync") { (options: [String: Any]?) async throws -> [String: Any] in
+            guard #available(iOS 16.0, *) else {
+                throw screenTimeError(.unsupported, "Screen Time API requires iOS 16.0 or later")
+            }
+            let features = PermissionSteps.features(from: options?["features"])
+            let step: PermissionSteps.StepId?
+            switch PermissionSteps.requestedStep(from: options?["step"]) {
+            case .next:
+                step = nil
+            case .step(let id):
+                guard PermissionSteps.stepIds(for: features).contains(id) else {
+                    throw screenTimeError(.invalidConfig, "The permission step '\(id.rawValue)' is not needed by the requested features (\(features.map(\.rawValue).joined(separator: ", "))); request the steps the response lists")
+                }
+                step = id
+            case .notOnThisPlatform(let name):
+                throw screenTimeError(.invalidConfig, "The permission step '\(name)' does not exist on iOS; request the steps the response lists")
+            case .unknown(let name):
+                throw screenTimeError(.invalidConfig, "Unknown permission step '\(name)'")
+            }
+            return await self.permissionRequester.request(
+                step: step,
+                member: options?["member"] as? String,
+                features: features
             )
         }
 

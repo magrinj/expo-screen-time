@@ -13,15 +13,24 @@ import type {
   TemporaryUnlockGrant,
   TokenHandle,
   MonitorEvent,
+  PermissionStepId,
   ScreenTimePermissionOptions,
   ScreenTimePermissionResponse,
 } from "./ExpoScreenTime.types";
 
 declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEvents> {
   // Permissions
+  /**
+   * Advances onboarding by ONE step: `step` if given, else the first
+   * required step not granted; resolves with the whole response. Never
+   * rejects for a refused prompt (the step's `error` says why); rejects with
+   * `INVALID_CONFIG` for a step this platform does not have, and with
+   * `UNSUPPORTED` before iOS 16.
+   */
   requestScreenTimePermissionsAsync(
-    options?: ScreenTimePermissionOptions,
+    options?: ScreenTimePermissionOptions & { step?: PermissionStepId },
   ): Promise<ScreenTimePermissionResponse>;
+  /** The current status of every step `options.features` needs, without prompting. */
   getScreenTimePermissionsAsync(
     options?: ScreenTimePermissionOptions,
   ): Promise<ScreenTimePermissionResponse>;

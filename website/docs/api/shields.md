@@ -60,8 +60,8 @@ ExpoScreenTime.clearShieldConfig();
 ### `setShieldActions(config: ShieldActionConfig)`
 
 Configure what the shield buttons do. Actions are `'close'`, `'unblock'`,
-`'defer'`, or a snooze object — see
-[`ShieldActionConfig`](../types.md#shieldactionconfig).
+`'defer'`, a snooze object or an open-app object — see
+[`ShieldAction`](../types.md#shieldaction).
 
 ```typescript
 ExpoScreenTime.setShieldActions({
@@ -86,6 +86,8 @@ ExpoScreenTime.setShieldActions({
   [`temporaryUnlock`](./blocking.md#temporary-unlock-earned-time)), then
   shield it again. See [Snooze](#snooze) below. The same grant from your app
   is [`temporaryUnlock(duration, { target })`](./blocking.md#targeted-unlock).
+- `{ type: 'openApp' }` — bring your app forward, through a notification the
+  user taps. See [Open app](#open-app) below.
 
 Up to 0.1.1, a native key mismatch made every configured action behave like
 `'close'`, and `snooze` behaved like `'close'` until it was implemented.
@@ -146,6 +148,44 @@ ExpoScreenTime.setShieldActions({
   secondaryAction: { type: 'snooze', duration: 5 * 60 }, // 5 minutes of use
 });
 ```
+
+### Open app
+
+iOS lets no extension launch an app, so an `openApp` press posts a **local
+notification**; tapping it opens your app (the system's default, no handler to
+write). [`getCapabilities().shieldOpenApp`](./capabilities.md) reports
+`"notification"` so shared copy can say "tap Continue, then the notification".
+The shield closes (the user lands on the Home screen with the banner on top).
+
+The press is recorded for
+[`drainShieldInteractions()`](./blocking.md#shield-interactions) like any
+other, with the shielded `target`: once open, your app reads which app the
+user wanted, and can [`temporaryUnlock`](./blocking.md#temporary-unlock-earned-time)
+it or show its label.
+
+```typescript
+ExpoScreenTime.setShieldConfig({
+  title: { text: "Take a breath" },
+  subtitle: { text: "Tap Continue, then the notification." },
+  primaryButton: { text: "Continue" },
+  secondaryButton: { text: "Close app" },
+});
+ExpoScreenTime.setShieldActions({
+  primaryAction: { type: "openApp" },
+  secondaryAction: "close",
+});
+
+// On foreground:
+const intercept = ExpoScreenTime.drainShieldInteractions()
+  .filter((press) => press.button === "primary")
+  .at(-1);
+```
+
+Posting needs the `notifications` permission step: request it with the
+`shieldOpenApp` feature (see [Permissions](./permissions.md#steps)). Without
+it, or if the notification cannot be posted, the press behaves like `'close'`
+— still recorded. The banner's title is the shield's `title`, else your app's
+name; its body names your app and nothing else.
 
 ### `setShieldActionsForActivity(activityName: string, config: ShieldActionConfig)`
 

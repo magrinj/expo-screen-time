@@ -1132,5 +1132,61 @@ check(Press(button: "primary", timestamp: 1, activityName: "expo_st_snooze_X").a
       "a reserved (expo_st_) or empty activity name is never exposed")
 check(Press(button: "primary", timestamp: 1, activityName: "work").activityName == "work", "a user's activity name is")
 
+// MARK: - PermissionSteps
+
+section("PermissionSteps — features and the steps they need")
+typealias PermStep = PermissionSteps.Step
+check(PermissionSteps.features(from: nil) == [.blocking, .monitoring], "no features option is the default: blocking and monitoring")
+check(PermissionSteps.features(from: "blocking") == [.blocking, .monitoring], "a non-array features option is the default")
+check(PermissionSteps.features(from: ["shieldOpenApp", "blocking", "shieldOpenApp", "teleport", 3]) == [.shieldOpenApp, .blocking],
+      "features keep their order, drop duplicates, and ignore names this build does not know")
+check(PermissionSteps.features(from: [String]()) == [], "an empty list is no feature (nothing beyond screenTime is needed)")
+check(PermissionSteps.stepIds(for: [.blocking, .monitoring]) == [.screenTime], "the default features need the screenTime step alone")
+check(PermissionSteps.stepIds(for: [.blocking, .shieldOpenApp]) == [.screenTime, .notifications], "shieldOpenApp adds the notifications step, after screenTime")
+check(PermissionSteps.stepIds(for: []) == [.screenTime], "screenTime is required whatever the features")
+check(PermissionSteps.requestedStep(from: nil) == .next && PermissionSteps.requestedStep(from: NSNull()) == .next, "no step option, or null: the next required step")
+check(PermissionSteps.requestedStep(from: "notifications") == .step(.notifications), "an iOS step id is that step")
+check(PermissionSteps.requestedStep(from: "usageAccess") == .notOnThisPlatform("usageAccess"), "an Android step id is told apart…")
+check(PermissionSteps.requestedStep(from: "screentime") == .unknown("screentime") && PermissionSteps.requestedStep(from: 1) == .unknown("1"),
+      "…from an id that is not a PermissionStepId")
+
+section("PermissionSteps.response — granted, status and canAskAgain from the steps")
+let stGranted = PermStep(id: .screenTime, status: .granted, required: true, canPrompt: true)
+let stUndetermined = PermStep(id: .screenTime, status: .undetermined, required: true, canPrompt: true)
+let stDenied = PermStep(id: .screenTime, status: .denied, required: true, error: .init(code: "authorizationCanceled", message: "canceled"), canPrompt: true)
+let stRestricted = PermStep(id: .screenTime, status: .restricted, required: true, error: .init(code: "restricted", message: "restricted"), canPrompt: false)
+let nGranted = PermStep(id: .notifications, status: .granted, required: true, canPrompt: true)
+let nUndetermined = PermStep(id: .notifications, status: .undetermined, required: true, canPrompt: true)
+let nDenied = PermStep(id: .notifications, status: .denied, required: true, canPrompt: false)
+func permResponse(_ steps: [PermStep]) -> (status: String, granted: Bool, canAskAgain: Bool) {
+    let response = PermissionSteps.response(steps: steps)
+    return (response["status"] as? String ?? "?", response["granted"] as? Bool ?? false, response["canAskAgain"] as? Bool ?? false)
+}
+check(permResponse([stGranted]) == ("granted", true, true), "screenTime granted: granted")
+check(permResponse([stUndetermined]) == ("undetermined", false, true), "screenTime undetermined: undetermined, can ask")
+check(permResponse([stDenied]) == ("denied", false, true), "screenTime denied: denied, but Family Controls prompts again — can ask")
+check(permResponse([stRestricted]) == ("denied", false, false), "screenTime restricted: denied, cannot ask")
+check(permResponse([stGranted, nGranted]) == ("granted", true, true), "both steps granted: granted")
+check(permResponse([stGranted, nUndetermined]) == ("undetermined", false, true), "screenTime granted, notifications not asked yet: undetermined (not granted), can ask")
+check(permResponse([stGranted, nDenied]) == ("denied", false, false), "notifications denied: denied, and the prompt cannot be shown again — cannot ask")
+check(permResponse([stDenied, nUndetermined]) == ("denied", false, true), "screenTime denied, notifications pending: denied, can ask")
+check(permResponse([stRestricted, nGranted]) == ("denied", false, false), "a restricted required step: cannot ask whatever the others")
+check(permResponse([stUndetermined, nDenied]) == ("denied", false, false), "a denied required step wins over an undetermined one")
+let shieldOpenAppResponse = PermissionSteps.response(steps: [stGranted, nDenied])
+check(shieldOpenAppResponse["expires"] as? String == "never" && (shieldOpenAppResponse["steps"] as? [[String: Any]])?.count == 2,
+      "the response carries Expo's `expires: never` and every step")
+let deniedDictionary = stDenied.dictionary
+check(deniedDictionary["id"] as? String == "screenTime" && deniedDictionary["status"] as? String == "denied"
+      && deniedDictionary["required"] as? Bool == true && deniedDictionary["kind"] as? String == "prompt"
+      && (deniedDictionary["error"] as? [String: String]) == ["code": "authorizationCanceled", "message": "canceled"],
+      "a step is { id, status, required, kind: prompt, error }")
+check(nGranted.dictionary["error"] == nil && nGranted.dictionary["id"] as? String == "notifications", "…with no error key when nothing failed")
+
+section("PermissionSteps.nextStep — the one step a request advances")
+check(PermissionSteps.nextStep(in: [stUndetermined, nUndetermined]) == .screenTime, "screenTime comes first")
+check(PermissionSteps.nextStep(in: [stGranted, nUndetermined]) == .notifications, "then notifications")
+check(PermissionSteps.nextStep(in: [stGranted, nDenied]) == .notifications, "a denied step is still the next one (the response says it cannot prompt)")
+check(PermissionSteps.nextStep(in: [stGranted, nGranted]) == nil && PermissionSteps.nextStep(in: [stGranted]) == nil, "nothing pending: no step to request")
+
 print("\n\(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

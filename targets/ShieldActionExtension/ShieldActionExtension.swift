@@ -1,12 +1,15 @@
 import DeviceActivity
 import ManagedSettings
 import Foundation
+import UserNotifications
 
 /// Shield Action Extension
 /// Handles user interactions with the shield (blocking) screen: `close`,
-/// `defer`, `unblock` (lift the pressed target until the next block), and
+/// `defer`, `unblock` (lift the pressed target until the next block),
 /// `snooze` (lift the pressed target for a budget of its own use, metered by
-/// a DeviceActivity this extension arms — spike S1 showed it may).
+/// a DeviceActivity this extension arms — spike S1 showed it may), and
+/// `openApp` (bring the host app forward: iOS lets no extension launch an
+/// app, so a local notification is posted for the user to tap).
 class ShieldActionExtension: ShieldActionDelegate {
 
     private let defaults = SharedDefaults.shared
@@ -51,15 +54,24 @@ class ShieldActionExtension: ShieldActionDelegate {
         case unblock
         case defer_
         case snooze(seconds: Int)
+        case openApp
     }
 
-    /// What `processAction` decided under the lock: a response, or a snooze
+    /// What `processAction` decided under the lock: a response, a snooze
     /// still to be granted — that one arms a DeviceActivity, a system call
-    /// `BlockStateLock` must not span, so it runs after the critical section.
+    /// `BlockStateLock` must not span, so it runs after the critical section
+    /// — or an open-app notification still to be posted (asynchronous, and
+    /// no business of the lock either). `shieldTitle` is the title drawn on
+    /// the shield the user pressed, for the notification to continue it.
     private enum Decision {
         case respond(ShieldActionResponse)
         case snooze(seconds: Int)
+        case openApp(shieldTitle: String?)
     }
+
+    /// The identifier of the open-app notification: one per host app, so a
+    /// second press replaces the banner instead of stacking another.
+    private static let openAppNotificationId = "expo_st_shield_open_app"
 
     // MARK: - Action Handlers
 
@@ -69,7 +81,7 @@ class ShieldActionExtension: ShieldActionDelegate {
         for application: ApplicationToken,
         completionHandler: @escaping (ShieldActionResponse) -> Void
     ) {
-        completionHandler(processAction(action, target: .application(application)))
+        processAction(action, target: .application(application), completionHandler: completionHandler)
     }
 
     /// Handle action for a shielded web domain
@@ -78,7 +90,7 @@ class ShieldActionExtension: ShieldActionDelegate {
         for webDomain: WebDomainToken,
         completionHandler: @escaping (ShieldActionResponse) -> Void
     ) {
-        completionHandler(processAction(action, target: .webDomain(webDomain)))
+        processAction(action, target: .webDomain(webDomain), completionHandler: completionHandler)
     }
 
     /// Handle action for a shielded application in a category
@@ -87,13 +99,15 @@ class ShieldActionExtension: ShieldActionDelegate {
         for category: ActivityCategoryToken,
         completionHandler: @escaping (ShieldActionResponse) -> Void
     ) {
-        completionHandler(processAction(action, target: .category(category)))
+        processAction(action, target: .category(category), completionHandler: completionHandler)
     }
 
     // MARK: - Private Helpers
 
-    /// Process a shield action and return the appropriate response
-    private func processAction(_ action: ShieldAction, target: ShieldedTarget) -> ShieldActionResponse {
+    /// Process a shield action and hand the appropriate response to
+    /// `completionHandler` — synchronously, except for an `openApp` press,
+    /// which responds once its notification is posted.
+    private func processAction(_ action: ShieldAction, target: ShieldedTarget, completionHandler: @escaping (ShieldActionResponse) -> Void) {
         let button: String
         switch action {
         case .primaryButtonPressed:
@@ -101,7 +115,8 @@ class ShieldActionExtension: ShieldActionDelegate {
         case .secondaryButtonPressed:
             button = "secondary"
         @unknown default:
-            return .close
+            completionHandler(.close)
+            return
         }
 
         // The actions of the source that shields this target — a threshold,
@@ -175,15 +190,37 @@ class ShieldActionExtension: ShieldActionDelegate {
                 return .respond(.defer)
             case .snooze(let seconds):
                 return .snooze(seconds: seconds)
+            case .openApp:
+                // The config the configuration extension drew for this
+                // owner, so the banner reads as the shield's continuation.
+                let config = owner?.kind.activityName.flatMap { defaults.getShieldConfig(activityName: $0) }
+                    ?? defaults.getDefaultShieldConfig()
+                return .openApp(shieldTitle: Self.title(in: config))
             }
         }
 
         switch decision {
         case .respond(let response):
-            return response
+            completionHandler(response)
         case .snooze(let seconds):
-            return snooze(target, requestedSeconds: seconds)
+            completionHandler(snooze(target, requestedSeconds: seconds))
+        case .openApp(let shieldTitle):
+            postOpenAppNotification(shieldTitle: shieldTitle, completionHandler: completionHandler)
         }
+    }
+
+    /// The title text of a stored shield config: the nested shape
+    /// (`{ title: { text } }`) or the legacy flat string. Nil when unset or
+    /// blank.
+    private static func title(in config: [String: Any]?) -> String? {
+        var text: String?
+        if let title = config?["title"] as? [String: Any] {
+            text = title["text"] as? String
+        } else {
+            text = config?["title"] as? String
+        }
+        let trimmed = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func isSnooze(_ action: ConfiguredAction) -> Bool {
@@ -223,9 +260,77 @@ class ShieldActionExtension: ShieldActionDelegate {
         case "snooze":
             guard let duration = duration, duration > 0 else { return .close }
             return .snooze(seconds: duration)
+        case "openApp":
+            return .openApp
         default:
             return nil
         }
+    }
+
+    // MARK: - Open app
+
+    /// Bring the host app forward, the only way an extension can: post a
+    /// local notification the user taps (tapping opens the host app; no
+    /// handler is needed). The press was recorded above, so once open the
+    /// app reads from `drainShieldInteractions()` which target the user
+    /// wanted. `getCapabilities().shieldOpenApp` reports `"notification"`.
+    ///
+    /// Text: the title the shield shows (so the banner continues it), else
+    /// none (iOS heads the banner with the host app's name already); the
+    /// body names the host app and nothing else — never the blocked app.
+    /// Posting needs the `notifications` permission
+    /// step (requested with the `shieldOpenApp` feature); without it, or on
+    /// any error, the press behaves like `close`: the user lands on the Home
+    /// screen, and the recorded press still tells the app what happened.
+    ///
+    /// Response: `.close`, posted or not. `.defer` would keep the shield up
+    /// under the banner, and a banner that never shows (Focus, a revoked
+    /// permission) would leave the user stuck on a shield whose button does
+    /// nothing visible; `.close` sends them to the Home screen with the
+    /// banner on top. The completion is called exactly once — after the
+    /// system answered, or after a short deadline should it not.
+    private func postOpenAppNotification(shieldTitle: String?, completionHandler: @escaping (ShieldActionResponse) -> Void) {
+        let hostAppName = Self.hostAppName()
+        let content = UNMutableNotificationContent()
+        content.title = shieldTitle ?? ""
+        content.body = hostAppName.map { "Tap to open \($0)." } ?? "Tap to continue."
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: Self.openAppNotificationId, content: content, trigger: nil)
+
+        let once = NSLock()
+        var completed = false
+        let finish = {
+            once.lock()
+            let first = !completed
+            completed = true
+            once.unlock()
+            if first {
+                completionHandler(.close)
+            }
+        }
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                NSLog("[expo-screen-time] openApp: could not post the notification (%@); the shield closes", error.localizedDescription)
+            }
+            finish()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 3) {
+            finish()
+        }
+    }
+
+    /// The display name of the app this extension is embedded in
+    /// (`<App>.app/PlugIns/<This>.appex`), for the notification text.
+    private static func hostAppName() -> String? {
+        let hostURL = Bundle.main.bundleURL.deletingLastPathComponent().deletingLastPathComponent()
+        guard hostURL.pathExtension == "app", let host = Bundle(url: hostURL) else { return nil }
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let name = host.object(forInfoDictionaryKey: key) as? String,
+               !name.trimmingCharacters(in: .whitespaces).isEmpty {
+                return name
+            }
+        }
+        return nil
     }
 
     // MARK: - Snooze

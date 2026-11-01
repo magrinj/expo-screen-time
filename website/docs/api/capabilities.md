@@ -27,7 +27,7 @@ const shortest = limits.minIntervalSeconds; // 900 on iOS
 | `webDomainBlocking` | `true` |
 | `appRemovalProtection`, `appInstallationBlocking` | `"friction"` after an `individual` authorization (the user can revoke Screen Time access in Settings, which lifts them); `"enforced"` after a `child` one (a parent holds it). |
 | `usageReports` | `true` when the report extension is in the build (the config plugin can leave it out). |
-| `shieldOpenApp` | `"notification"` |
+| `shieldOpenApp` | `"notification"`: a shield's [`openApp` action](./shields.md#open-app) posts a notification the user taps, which needs the `notifications` [permission step](./permissions.md#steps). |
 | `openApplication` | `false`: iOS cannot launch another app. |
 | `limits` | 19 monitored activities, intervals from 15 minutes to 7 days. |
 
