@@ -9,7 +9,7 @@ An Expo module that wraps Apple's Screen Time APIs (FamilyControls, ManagedSetti
 
 📚 **[Full documentation → magrinj.github.io/expo-screen-time](https://magrinj.github.io/expo-screen-time/)**
 
-> **Note:** This module is iOS-only. Screen Time APIs are not available on Android.
+> **Note:** This module is iOS-only. On Android it installs and builds, but every call fails with `UNSUPPORTED` — see [Platform support](https://magrinj.github.io/expo-screen-time/platform-support).
 
 ## Features
 

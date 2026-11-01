@@ -28,8 +28,15 @@ all of it on every PR.
 bun run build && bun run lint && bun run test
 ```
 
-`bun run test` runs the plugin's jest suite (`plugin/src/ios/__tests__/`) — the
-pbxproj shape test that guards every past regression.
+`bun run test` runs the module's jest suite (`src/**/__tests__/`, including
+`nativeApiParity.test.ts`: the TS declaration, the Swift module and the Kotlin
+registry must list the same functions with the same arity and sync/async kind,
+and the same views and events) and the plugin's (`plugin/src/ios/__tests__/`) —
+the pbxproj shape test that guards every past regression.
+
+Touched `ios/ExpoScreenTimeModule.swift` or `src/ExpoScreenTimeModule.ts`? Add
+the matching line to `android/.../NativeFunctions.kt` (it fails with
+`UNSUPPORTED` until implemented) or the parity test fails.
 
 On a Mac, also run `bun run test:swift` after touching `ios/BlockComposition.swift`,
 `ios/BlockStateLock.swift`, `ios/DailySchedule.swift`, `ios/ActivityRegistration.swift`,
@@ -59,9 +66,10 @@ project is the belt-and-braces check).
 npm pack --dry-run --ignore-scripts
 ```
 
-Expect ~87 files / ~311KB. Must contain: `build/`, `plugin/` (build+src), `src/`,
-`ios/`, `targets/`, `app.plugin.js`, `expo-module.config.json`, `README.md`,
-`LICENSE`. Must NOT contain: `android/`, `example/`, `website/`, `docs/`, any
+Expect ~90 files / ~320KB. Must contain: `build/`, `plugin/` (build+src), `src/`,
+`ios/`, `android/` (`build.gradle` + `src/main/**`), `targets/`, `app.plugin.js`,
+`expo-module.config.json`, `README.md`, `LICENSE`. Must NOT contain:
+`android/build`, `example/`, `website/`, `docs/`, any `__tests__`, any
 `.keystore`, or internal MD files (`TODO`, `PLAN`…). The `files`
 allowlist in `package.json` is the mechanism — update it consciously.
 

@@ -64,9 +64,11 @@ scope — apply the bump directly on main and close the PR as superseded.
 
 - `package.json` `files` is an **allowlist** — the only packaging mechanism. When
   adding top-level files/dirs, decide explicitly: ship it or not.
-- Never ship: `android/` (stray app project), `example/`, `website/`, `docs/`,
-  internal MDs, keystores. Always ship: `build/`, `plugin/build`, `src`,
-  `plugin/src`, `ios/`, `targets/`, `app.plugin.js`, `expo-module.config.json`
+- Never ship: `android/build`, `example/`, `website/`, `docs/`,
+  internal MDs, keystores, tests (`src/__tests__`, `src/report/__tests__`,
+  `plugin/src/ios/__tests__`). Always ship: `build/`, `plugin/build`, `src`,
+  `plugin/src`, `ios/`, `android/` (build.gradle + sources), `targets/`,
+  `app.plugin.js`, `expo-module.config.json`
   (+ auto-included `README`/`LICENSE`).
 - Verify with `npm pack --dry-run --ignore-scripts` (Tier 3 of the verification
   loop). `prepack` must keep `EXPO_NONINTERACTIVE=1` or publish hangs in watch
@@ -86,6 +88,8 @@ scope — apply the bump directly on main and close the PR as superseded.
 
 - `build/` and `plugin/build` are gitignored but shipped (built by `prepack`).
 - `example/ios` + `example/android` are gitignored (prebuild artifacts).
-- The root `android/` directory is a stray app project — unused, unshipped;
-  delete it when the real Android module work starts.
+- The root `android/` directory is the Android module library (`build.gradle`
+  per the create-expo-module template, Kotlin under
+  `src/main/java/expo/modules/screentime/`). `android/build` and `.gradle`
+  are build output: gitignored and excluded from the npm tarball.
 - Tool caches (`.serena/`…) go in `.gitignore`, never in commits.

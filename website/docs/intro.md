@@ -11,9 +11,10 @@ sidebar_label: Introduction
 An Expo module that wraps Apple's Screen Time APIs (FamilyControls, ManagedSettings, DeviceActivity) for React Native. Enables parental control features like app blocking, usage monitoring, scheduled restrictions, and custom shield configurations.
 
 :::note iOS only
-Screen Time APIs are not available on Android — this module currently declares
-the `apple` and `web` platforms only. An Android implementation (Usage Stats /
-Digital Wellbeing equivalents) is planned but not implemented.
+Screen Time APIs are not available on Android. The module installs and builds
+there, but every function fails with the `UNSUPPORTED` error code and the views
+render empty — see [Platform support](./platform-support.md). An Android
+implementation is planned.
 :::
 
 ## Features

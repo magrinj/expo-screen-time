@@ -1,11 +1,17 @@
 {
   "platforms": [
     "apple",
+    "android",
     "web"
   ],
   "apple": {
     "modules": [
       "ExpoScreenTimeModule"
+    ]
+  },
+  "android": {
+    "modules": [
+      "expo.modules.screentime.ExpoScreenTimeModule"
     ]
   }
 }

@@ -9,7 +9,8 @@ Expo module wrapping Apple's Screen Time APIs (FamilyControls, ManagedSettings,
 DeviceActivity) for React Native: app/category/web-domain blocking, schedule
 monitoring, custom shields, usage reports.
 
-- **iOS-only today.** Android is a placeholder — the planned API mapping lives in
+- **iOS-only today.** Android is a skeleton (autolinks, every function fails
+  with `UNSUPPORTED`) — the planned API mapping lives in
   the platform support page. Don't start Android work
   without reading it.
 - Ships a **first-party config plugin** (`plugin/`) that generates 4 iOS
@@ -40,7 +41,7 @@ cd website && bun install && bun start     # Docusaurus docs site
 | `example/` | expo-router example app exercising every feature |
 | `website/` | Docusaurus **user docs** (deployed to GitHub Pages) |
 | `docs/` | **Agent/contributor rules** (this repo's conventions — see below) |
-| `android/` | Stray app project, unused and unshipped — ignore it |
+| `android/` | Android module (Kotlin): autolinks, mirrors the iOS surface, every function fails with `UNSUPPORTED` — stage 1 of the platform support page |
 
 ## Rules — read before touching the matching area
 
