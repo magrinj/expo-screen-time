@@ -402,16 +402,30 @@ export type MonitoringErrorCode =
 // ============================================================================
 
 /**
- * Result of `temporaryUnlock`. `budgetSeconds` is the granted usage budget
- * (after the 30s floor); `grantedAt` is Unix milliseconds.
+ * Result of `temporaryUnlock`.
  *
  * There is deliberately no `expiresAt`: the budget is spent by usage, not by
  * the clock, so its end time depends on how the user behaves. Unspent budget
  * expires at midnight.
  */
 export type TemporaryUnlockGrant = {
+  /** Granted usage budget, after the 30s floor. */
   budgetSeconds: number;
+  /** Unix milliseconds. */
   grantedAt: number;
+  /**
+   * How coarsely the budget is metered: consumption is reported in steps of
+   * this many seconds of use, so the remaining time moves by this much at a
+   * time. iOS: 30 for budgets up to 30 minutes, then `ceil(budget / 60)`
+   * (120 for a 2-hour budget). Tell the user "about N minutes" rather than
+   * counting down.
+   */
+  meteringSeconds: number;
+  /**
+   * The single app, category or web domain this grant lifts (the `target`
+   * option, echoed back), or `null` for a whole-block unlock.
+   */
+  target: TokenHandle | null;
 };
 
 /**

@@ -5,9 +5,10 @@ import ExpoScreenTime, {
   CategoryLabel,
   isScreenTimeError,
   WebDomainLabel,
+  type TokenHandle,
 } from "expo-screen-time";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { SELECTION_ID, useNativeSelection } from "../_layout";
 import {
@@ -59,6 +60,30 @@ export default function BlockingScreen() {
   const handleRelock = () => {
     ExpoScreenTime.relock();
     setRemainingUnlock(0);
+  };
+
+  // Targeted unlock: lift ONE item of the selection for 3 minutes of its
+  // use — the shield snooze, granted from the app. The other items stay
+  // blocked; relock() ends it too.
+  const handleTargetedUnlock = (target: TokenHandle) => {
+    Alert.alert("Unlock this item only?", "3 minutes of its use; everything else stays blocked.", [
+      { text: "Cancel", style: "cancel" },
+      {
+        text: "Unlock",
+        onPress: async () => {
+          try {
+            const grant = await ExpoScreenTime.temporaryUnlock(3 * 60, { target });
+            Alert.alert(
+              "Unlocked",
+              `${grant.budgetSeconds}s of use granted, metered in ${grant.meteringSeconds}s steps.`
+            );
+          } catch (error) {
+            const code = isScreenTimeError(error) ? error.code : "unknown";
+            Alert.alert("Error", `Could not unlock this item (${code})`);
+          }
+        },
+      },
+    ]);
   };
 
   const appsCount = metadata?.applicationCount ?? 0;
@@ -142,6 +167,7 @@ export default function BlockingScreen() {
       {totalSelected > 0 && (
         <>
           <SectionHeader title="Current Selection" />
+          <Text style={styles.hint}>Long-press an item to unlock it alone for 3 min of use</Text>
           <Card>
             {appsCount > 0 && (
               <>
@@ -150,7 +176,11 @@ export default function BlockingScreen() {
                   <Text style={styles.selectionTitle}>Apps ({appsCount})</Text>
                 </View>
                 {appTokens.map((token) => (
-                  <View key={`sel-app-${token.handle}`} style={styles.selectionItem}>
+                  <Pressable
+                    key={`sel-app-${token.handle}`}
+                    style={styles.selectionItem}
+                    onLongPress={() => handleTargetedUnlock(token)}
+                  >
                     <ApplicationLabel
                       selectionId={SELECTION_ID}
                       handle={token.handle}
@@ -163,7 +193,7 @@ export default function BlockingScreen() {
                       displayMode="title-only"
                       style={styles.selectionName}
                     />
-                  </View>
+                  </Pressable>
                 ))}
               </>
             )}
@@ -176,7 +206,11 @@ export default function BlockingScreen() {
                   <Text style={styles.selectionTitle}>Categories ({categoriesCount})</Text>
                 </View>
                 {catTokens.map((token) => (
-                  <View key={`sel-cat-${token.handle}`} style={styles.selectionItem}>
+                  <Pressable
+                    key={`sel-cat-${token.handle}`}
+                    style={styles.selectionItem}
+                    onLongPress={() => handleTargetedUnlock(token)}
+                  >
                     <CategoryLabel
                       selectionId={SELECTION_ID}
                       handle={token.handle}
@@ -189,7 +223,7 @@ export default function BlockingScreen() {
                       displayMode="title-only"
                       style={styles.selectionName}
                     />
-                  </View>
+                  </Pressable>
                 ))}
               </>
             )}
@@ -202,14 +236,18 @@ export default function BlockingScreen() {
                   <Text style={styles.selectionTitle}>Web Domains ({domainsCount})</Text>
                 </View>
                 {domTokens.map((token) => (
-                  <View key={`sel-dom-${token.handle}`} style={styles.selectionItem}>
+                  <Pressable
+                    key={`sel-dom-${token.handle}`}
+                    style={styles.selectionItem}
+                    onLongPress={() => handleTargetedUnlock(token)}
+                  >
                     <WebDomainLabel
                       selectionId={SELECTION_ID}
                       handle={token.handle}
                       displayMode="title-and-icon"
                       style={styles.selectionFull}
                     />
-                  </View>
+                  </Pressable>
                 ))}
               </>
             )}
@@ -296,6 +334,12 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: 100,
+  },
+  hint: {
+    fontSize: 12,
+    color: colors.textTertiary,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
   },
   selectionHeader: {
     flexDirection: "row",

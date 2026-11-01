@@ -84,7 +84,8 @@ ExpoScreenTime.setShieldActions({
 - `{ type: 'snooze', duration }` — lift the shield on **this app only**, for
   `duration` seconds of its **use** (a usage budget, like
   [`temporaryUnlock`](./blocking.md#temporary-unlock-earned-time)), then
-  shield it again. See [Snooze](#snooze) below.
+  shield it again. See [Snooze](#snooze) below. The same grant from your app
+  is [`temporaryUnlock(duration, { target })`](./blocking.md#targeted-unlock).
 
 Up to 0.1.1, a native key mismatch made every configured action behave like
 `'close'`, and `snooze` behaved like `'close'` until it was implemented.
@@ -108,15 +109,25 @@ extension even if your app never runs. Budgets below 30 seconds are raised to
 in ~30-second steps. Unspent budget expires at midnight. Use of the target
 before the press does not count.
 
-Snoozes are independent of one another and of `temporaryUnlock`:
+A snooze is exactly what
+[`temporaryUnlock(duration, { target })`](./blocking.md#targeted-unlock)
+grants from your app — same record, same meter, same 30-second floor — so the
+two replace each other on the same target, and everything below applies to
+both.
+
+Snoozes are independent of one another and of the whole-block
+`temporaryUnlock`:
 
 - Pressing snooze on a **second app** starts a second snooze with its own
   budget; the first keeps running. Pressing it again on the same target (for
   instance after its category was snoozed while the app is also shielded
-  directly) restarts that target's budget.
-- A `temporaryUnlock` granted while a snooze runs meters the snoozed app too;
-  when the unlock's budget is spent, the snooze still in progress keeps its
-  target lifted, and the other way round.
+  directly) — or granting a targeted unlock for it — restarts that target's
+  budget.
+- A whole-block `temporaryUnlock` granted while a snooze runs meters the
+  snoozed app too; when the unlock's budget is spent, the snooze still in
+  progress keeps its target lifted, and the other way round.
+  `isTemporarilyUnlocked()` and `getRemainingUnlockSeconds()` do not report
+  snoozes.
 - `blockSelection()`, `unblockAll()` and `relock()` end every snooze.
   `stopMonitoring()` / `stopAllMonitoring()` and a schedule ending do not: a
   snooze outlives the source that was shielding its target, and still applies

@@ -39,7 +39,7 @@ internal val NATIVE_FUNCTIONS: List<NativeFunction> = listOf(
   sync("isBlocked", 0),
 
   // Temporary unlock (earned time)
-  async("temporaryUnlock", 1),
+  async("temporaryUnlock", 2),
   sync("isTemporarilyUnlocked", 0),
   sync("getRemainingUnlockSeconds", 0),
   sync("relock", 0),

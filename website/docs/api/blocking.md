@@ -78,7 +78,8 @@ ExpoScreenTime.blockSelection('focus-apps', { mode: 'allowlist' });
   and snooze buttons close the shield without lifting anything (there is no
   way to single out the app); the press is still recorded. Which callback
   iOS uses for an allowlist shield is not yet measured on a device.
-- **`temporaryUnlock` rejects `UNSUPPORTED`** while an allowlist is active:
+- **`temporaryUnlock` without a target rejects `UNSUPPORTED`** while an
+  allowlist is active:
   the unlock is a usage budget over the shielded apps, and "every other
   app" cannot be metered. Lift the block with `unblockAll()` and apply it
   again, or put the allowlist on a [schedule](./monitoring.md).
@@ -149,17 +150,23 @@ and resumes when they come back. The shield re-applies automatically once
 the budget is spent (enforced by the DeviceActivityMonitor extension, so it
 works even if your app is killed), and unspent budget expires at midnight.
 
-### `temporaryUnlock(budgetSeconds: number): Promise<TemporaryUnlockGrant>`
+### `temporaryUnlock(budgetSeconds, options?): Promise<TemporaryUnlockGrant>`
 
-Suspends every active block — the manual block, the schedules and threshold
-blocks in progress — for a usage budget metered over all of them. Rejects with
-`NO_ACTIVE_BLOCK` if nothing is blocked, and with `UNSUPPORTED` while an
-[allowlist](#allowlist) is active (its shield covers every other app, which
-no usage meter can count). Budgets below 30 seconds are raised
-to 30 (iOS usage thresholds are unreliable under that). Calling it again
-replaces the active unlock with a fresh budget covering everything blocked or
-suspended at that moment — a renewal never rejects `NO_ACTIVE_BLOCK` while
-something is restorable; calling `blockSelection` cancels it.
+Without `options.target`, suspends every active block — the manual block, the
+schedules and threshold blocks in progress — for a usage budget metered over
+all of them. Rejects with `NO_ACTIVE_BLOCK` if nothing is blocked, and with
+`UNSUPPORTED` while an [allowlist](#allowlist) is active (its shield covers
+every other app, which no usage meter can count). Budgets below 30 seconds are
+raised to 30 (iOS usage thresholds are unreliable under that). Calling it
+again replaces the active unlock with a fresh budget covering everything
+blocked or suspended at that moment — a renewal never rejects
+`NO_ACTIVE_BLOCK` while something is restorable; calling `blockSelection`
+cancels it.
+
+The grant's `meteringSeconds` is the step the budget is spent in: 30 seconds
+for budgets up to 30 minutes, then `ceil(budget / 60)` (120 seconds for a
+2-hour budget). The remaining time only ever moves by that much, so say
+"about N minutes" rather than counting down.
 
 What the grant suspended stays suspended until `relock()` or expiry, whatever
 happens in between: a threshold firing or the system reporting an interval
@@ -173,26 +180,69 @@ and not metered.
 await ExpoScreenTime.blockSelection('social-apps');
 // ... user earns 15 minutes ...
 const grant = await ExpoScreenTime.temporaryUnlock(15 * 60);
-// { budgetSeconds: 900, grantedAt: 1720512000000 }
+// { budgetSeconds: 900, grantedAt: 1720512000000, meteringSeconds: 30, target: null }
 ```
+
+#### Unlocking one target {#targeted-unlock}
+
+`temporaryUnlock(budgetSeconds, { target })` lifts **one** app, category or
+web domain — `target` is a [`TokenHandle`](../types.md#tokenhandle) from
+`getTokens` or from a [shield interaction](#shield-interactions) — for
+`budgetSeconds` of **its** use, and nothing else: every other shielded app
+stays shielded and the sources covering the target stay active. It is the
+shield [snooze](./shields.md#snooze) action granted from your app instead of
+from the shield, with the same mechanism, floor and accounting; the grant's
+`target` echoes the handle back.
+
+```typescript
+// The app the user just hit a shield on, from drainShieldInteractions()
+const grant = await ExpoScreenTime.temporaryUnlock(3 * 60, { target: press.target });
+// { budgetSeconds: 180, grantedAt: …, meteringSeconds: 30, target: { handle, type: 'application' } }
+```
+
+- The target must be shielded by an active block (suspended by a whole-block
+  unlock in progress or not), else `NO_ACTIVE_BLOCK`. Tokens are opaque, so
+  an app shielded only **through its category** is not known to be shielded:
+  target the category — the handle the shield reports for such an app.
+- An app or a web domain an [allowlist](#allowlist) shields **can** be
+  targeted (it is excepted from the allowlist, like a snoozed app), unlike
+  the whole-block unlock. A category cannot while an allowlist is active
+  (`UNSUPPORTED`): the allowlist shields every app, and "every app" cannot
+  except a category, so nothing would open.
+- A handle that does not decode to a token rejects `INVALID_CONFIG`. Pass
+  handles unchanged: a handle from another device, or of another type than
+  its `type` says, is misuse the module cannot detect. When no
+  DeviceActivity slot is free for the meter, `EXCESSIVE_ACTIVITIES`.
+- Targeted grants are independent of the whole-block unlock:
+  `isTemporarilyUnlocked()` and `getRemainingUnlockSeconds()` describe the
+  whole-block one only, and either can end without ending the other. A second
+  targeted grant — or a snooze press — on the same target replaces the first;
+  grants on other targets run concurrently, each holding one DeviceActivity
+  slot until it is spent or the day ends.
+- `relock()`, `blockSelection()` and `unblockAll()` end every targeted grant
+  (and every snooze); `stopMonitoring` and a schedule ending do not.
 
 ### `getRemainingUnlockSeconds(): number`
 
-Seconds left on the active budget, or `0`. Consumption is reported by the
-monitor extension in ~30-second steps, **only while a blocked app is in
-use** — don't render this as a smooth countdown. Reading `0` after a grant
-also re-applies the shield as a backstop.
+Seconds left on the active whole-block budget, or `0`. Consumption is reported
+by the monitor extension in `meteringSeconds` steps (30 seconds for budgets
+up to 30 minutes), **only while a blocked app is in use** — don't render this
+as a smooth countdown. Reading `0` after a grant also re-applies the shield as
+a backstop. [Targeted grants](#targeted-unlock) are not reported here.
 
 ### `isTemporarilyUnlocked(): boolean`
 
-Whether an earned-time budget is currently active.
+Whether a whole-block earned-time budget is currently active. `false` while
+only [targeted grants](#targeted-unlock) or snoozes are in progress.
 
 ### `relock(): void`
 
-Ends any active unlock — and every shield [snooze](./shields.md#snooze) —
-immediately and restores exactly the sources that are still active: the manual
-block, and every schedule (plus its threshold blocks) whose interval is still
-in progress. Safe to call when nothing is unlocked.
+Ends any active unlock — the whole-block one, every
+[targeted grant](#targeted-unlock) and every shield
+[snooze](./shields.md#snooze) — immediately and restores exactly the sources
+that are still active: the manual block, and every schedule (plus its
+threshold blocks) whose interval is still in progress. Safe to call when
+nothing is unlocked.
 
 ## Shield interactions
 

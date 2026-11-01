@@ -72,8 +72,9 @@ threshold selection cannot override the allowlist of its own activity (the
 two share one store, where "every app except…" already covers the category
 and an allowed app inside it cannot be told apart), so list the apps. The
 selection is read live: editing it changes the running allowlist at the
-next re-projection. `temporaryUnlock` rejects `UNSUPPORTED` while such an
-interval is active.
+next re-projection. `temporaryUnlock` without a target rejects `UNSUPPORTED`
+while such an interval is active (a
+[targeted unlock](./blocking.md#targeted-unlock) of a shielded app works).
 
 Activity names are free-form, except that they must not be empty, start with
 `expo_st_` (the module's own namespace — its temporary-unlock meter and its

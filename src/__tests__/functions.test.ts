@@ -52,10 +52,13 @@ describe("forward", () => {
       const module = require("../ExpoScreenTimeModule").default;
       expect(functions.blockSelection("work")).toBe("blockSelection-result");
       expect(functions.temporaryUnlock(60)).toBe("temporaryUnlock-result");
+      const target = { handle: "QUJD", type: "application" as const };
+      expect(functions.temporaryUnlock(60, { target })).toBe("temporaryUnlock-result");
       expect(functions.isBlocked()).toBe("isBlocked-result");
       expect(calls).toEqual([
         { name: "blockSelection", self: module, args: ["work"] },
         { name: "temporaryUnlock", self: module, args: [60] },
+        { name: "temporaryUnlock", self: module, args: [60, { target }] },
         { name: "isBlocked", self: module, args: [] },
       ]);
     });

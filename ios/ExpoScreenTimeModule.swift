@@ -152,7 +152,7 @@ public class ExpoScreenTimeModule: Module {
             return screenTimeManager.isBlocked()
         }
 
-        AsyncFunction("temporaryUnlock") { (budgetSeconds: Int, promise: Promise) in
+        AsyncFunction("temporaryUnlock") { (budgetSeconds: Int, options: [String: Any]?, promise: Promise) in
             guard #available(iOS 15.0, *) else {
                 promise.reject(.unsupported, "Temporary unlock requires iOS 15.0+")
                 return
@@ -167,6 +167,21 @@ public class ExpoScreenTimeModule: Module {
             // Apple's usage thresholds are unreliable below ~30s; a smaller
             // budget couldn't be metered.
             let budget = UsageMeter.budget(for: budgetSeconds)
+
+            // `{ target }` lifts ONE app, category or web domain for a budget
+            // of ITS use — the shield snooze, granted from the app. Everything
+            // below is the whole-block unlock.
+            if let target = options?["target"], !(target is NSNull) {
+                guard let handle = target as? [String: Any],
+                      let type = handle["type"] as? String,
+                      let encoded = handle["handle"] as? String,
+                      let token = ShieldToken(kind: type, encoded: encoded) else {
+                    promise.reject(.invalidConfig, "target must be a TokenHandle ({ handle, type }) of this device: pass one returned by getTokens or a shield interaction, unchanged")
+                    return
+                }
+                self.grantTargetedUnlock(budget: budget, target: token, handle: ["handle": encoded, "type": type], promise: promise)
+                return
+            }
 
             // Everything blocked right now — the manual block plus every
             // schedule and threshold in progress — is suspended and metered.
@@ -232,7 +247,9 @@ public class ExpoScreenTimeModule: Module {
                     metered = tokens
                     promise.resolve([
                         "budgetSeconds": budget,
-                        "grantedAt": grantedAt.timeIntervalSince1970 * 1000
+                        "grantedAt": grantedAt.timeIntervalSince1970 * 1000,
+                        "meteringSeconds": UsageMeter.step(forBudget: budget),
+                        "target": NSNull()
                     ])
                     break
                 }
@@ -1310,12 +1327,129 @@ public class ExpoScreenTimeModule: Module {
     // MARK: - Shield snooze helpers
     //
     // A shield snooze (`ShieldSnooze`) is granted by the shield action
-    // extension, which also arms its meter; the monitor extension spends it.
-    // The app only ends snoozes (`blockSelection`, `unblockAll`, `relock`)
-    // and tidies up: the records go first, under the lock, so that the
-    // `intervalDidEnd` a stop triggers finds no snooze; then the meters are
-    // stopped, outside the lock. A meter is one of the 20 DeviceActivity
-    // slots, so none may be left running without its snooze.
+    // extension, which also arms its meter, or by `temporaryUnlock(…, {
+    // target })` below — the same grant made from the app; the monitor
+    // extension spends it. The app ends snoozes (`blockSelection`,
+    // `unblockAll`, `relock`) and tidies up: the records go first, under the
+    // lock, so that the `intervalDidEnd` a stop triggers finds no snooze;
+    // then the meters are stopped, outside the lock. A meter is one of the
+    // 20 DeviceActivity slots, so none may be left running without its
+    // snooze.
+
+    /// `temporaryUnlock(budget, { target })`: lift `target` alone for
+    /// `budget` seconds of its use. It is a shield snooze (`ShieldSnooze`)
+    /// granted from the app instead of the shield — same record, same
+    /// meter (`SnoozeMeter`), same floor, spent by the monitor extension,
+    /// ended by `relock`, `blockSelection` and `unblockAll`, void at
+    /// midnight — so a snooze and a targeted grant over the same target
+    /// replace each other, whichever came first, and the other snoozes run
+    /// on. The whole-block unlock is untouched: `isTemporarilyUnlocked` and
+    /// `getRemainingUnlockSeconds` keep describing that one, as they do for
+    /// a snooze.
+    ///
+    /// The target must be shielded by a source in force — suspended by a
+    /// whole-block grant or not (`BlockComposition.targetedUnlockVerdict`):
+    /// `NO_ACTIVE_BLOCK` otherwise; `UNSUPPORTED` for a category only an
+    /// allowlist shields. An app an allowlist shields IS liftable (the
+    /// allowlist projection excepts snoozed apps), unlike the whole-block
+    /// unlock, which has no set of tokens to meter under an allowlist.
+    ///
+    /// Same order as the shield action extension's snooze: record and
+    /// project under the lock, release the meters of snoozes no longer
+    /// recorded, arm this one outside the lock; if arming fails, take the
+    /// snooze back under the lock and reject (the shield stays — and so
+    /// does the shield of a snooze this grant replaced, whose meter is
+    /// gone: fail closed, like the extension). `unlockOperations` is held,
+    /// so no relock or block of THIS process interleaves between the record
+    /// and the arm; the extensions do not take it, hence the stale-meter
+    /// rule and the final re-check below.
+    @available(iOS 15.0, *)
+    private func grantTargetedUnlock(budget: Int, target: ShieldToken, handle: [String: String], promise: Promise) {
+        guard let encoded = target.encoded else {
+            promise.reject(.invalidConfig, "target could not be encoded")
+            return
+        }
+        let center = DeviceActivityCenter()
+        let snooze = ShieldSnooze(
+            id: UUID().uuidString,
+            tokenKind: encoded.kind,
+            token: encoded.token,
+            budgetSeconds: budget,
+            grantedAt: Date().timeIntervalSince1970 * 1000
+        )
+
+        // The snooze meters the system runs, read BEFORE the critical
+        // section: a record always precedes its arm, so a meter registered
+        // now whose snooze is not recorded under the lock is truly stale —
+        // whereas a meter listed after the lock may belong to a snooze the
+        // shield action extension recorded and armed in between, which a
+        // `live` set captured under the lock would miss and stop.
+        let registered = center.activities.map(\.rawValue).filter(ShieldSnooze.isActivityName)
+
+        // 1. Judge, record and lift, in one critical section.
+        let (verdict, live): (BlockComposition.TargetVerdict, Set<String>) = BlockStateLock.shared.withLock {
+            let sources = sharedDefaults.activeBlockSources(honouringSuspension: false)
+            let verdict = BlockComposition.targetedUnlockVerdict(for: target, in: sources)
+            guard verdict == .liftable else { return (verdict, []) }
+            let (snoozes, _) = ShieldSnoozes.granting(snooze, in: sharedDefaults.currentSnoozes())
+            sharedDefaults.setSnoozes(snoozes)
+            screenTimeManager.applyActiveSources()
+            return (verdict, Set(snoozes.map(\.activityName)))
+        }
+        switch verdict {
+        case .notShielded:
+            promise.reject(.noActiveBlock, "The target is not shielded by any active block (an app shielded only through its category is targeted by that category's handle)")
+            return
+        case .categoryUnderAllowlist:
+            promise.reject(.unsupported, "A category cannot be unlocked from an allowlist block (it shields every app); target the app instead")
+            return
+        case .liftable:
+            break
+        }
+
+        // 2. Release the slots of meters without a snooze (the one this
+        // grant replaced, spent ones the monitor extension cannot stop…):
+        // this grant needs one of the 20.
+        Self.stop(registered.filter { !live.contains($0) }.map { DeviceActivityName($0) }, on: center)
+
+        // 3. Arm the meter.
+        do {
+            try SnoozeMeter.arm(snooze, over: target, on: center)
+        } catch {
+            BlockStateLock.shared.withLock {
+                sharedDefaults.setSnoozes(sharedDefaults.getSnoozes().filter { $0.id != snooze.id })
+                screenTimeManager.applyActiveSources()
+            }
+            switch error as? DeviceActivityCenter.MonitoringError {
+            case .excessiveActivities?:
+                promise.reject(.excessiveActivities, "Could not arm usage metering: all 20 DeviceActivity slots are in use (your activities, the unlock meter and the snoozes in progress)")
+            case .unauthorized?:
+                promise.reject(.unauthorized, "Family Controls authorization required")
+            default:
+                promise.reject(.monitoringError, "Could not arm usage metering: \(error.localizedDescription)")
+            }
+            return
+        }
+
+        // 4. The shield action extension may have replaced this snooze
+        // (a snooze press on the same target) between the record and the
+        // arm: its stale-meter sweep ran before this meter existed, so
+        // release it here, or it would hold a slot for a snooze that no
+        // longer exists. The press's own snooze is in force; report it.
+        let stillRecorded = BlockStateLock.shared.withLock { sharedDefaults.getSnoozes().contains { $0.id == snooze.id } }
+        if !stillRecorded {
+            center.stopMonitoring([DeviceActivityName(snooze.activityName)])
+            promise.reject(.monitoringError, "The target was snoozed from its shield while the unlock was being granted; that snooze is in force")
+            return
+        }
+
+        promise.resolve([
+            "budgetSeconds": budget,
+            "grantedAt": snooze.grantedAt,
+            "meteringSeconds": UsageMeter.step(forBudget: budget),
+            "target": handle
+        ])
+    }
 
     /// Stop every snooze meter the system still runs except `live` —
     /// those of snoozes that were spent, replaced, expired or ended. Outside

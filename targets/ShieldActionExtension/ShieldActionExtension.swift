@@ -43,24 +43,6 @@ class ShieldActionExtension: ShieldActionDelegate {
             if case .category = self { return true }
             return false
         }
-
-        /// The usage event that meters this target alone. Use before the
-        /// grant does not count because the meter's interval starts at the
-        /// press; a threshold iOS fires implausibly early is dropped by
-        /// `UsageMeter.isPlausible`. NOT `includesPastActivity: false`: on
-        /// iOS 26.6.1 a meter armed with it never fired (device, 2026-11-01;
-        /// the same ladder without it re-shields after the budget).
-        func usageEvent(threshold: DateComponents) -> DeviceActivityEvent {
-            var applications = Set<ApplicationToken>()
-            var categories = Set<ActivityCategoryToken>()
-            var webDomains = Set<WebDomainToken>()
-            switch self {
-            case .application(let token): applications = [token]
-            case .webDomain(let token): webDomains = [token]
-            case .category(let token): categories = [token]
-            }
-            return DeviceActivityEvent(applications: applications, categories: categories, webDomains: webDomains, threshold: threshold)
-        }
     }
 
     /// A configured action, parsed from the stored JS shape.
@@ -252,8 +234,10 @@ class ShieldActionExtension: ShieldActionDelegate {
     /// least `UsageMeter.stepSeconds`, like `temporaryUnlock`): record a
     /// `ShieldSnooze`, re-project every store (the target comes out of each
     /// store covering it; everything else stays shielded), then arm the
-    /// snooze's meter. The monitor extension spends the budget and puts the
-    /// target's shields back.
+    /// snooze's meter (`SnoozeMeter`, shared with the app's
+    /// `temporaryUnlock(…, { target })`, which is this grant made from the
+    /// app). The monitor extension spends the budget and puts the target's
+    /// shields back.
     ///
     /// Order, per `BlockStateLock`'s rules: the state is final under the
     /// lock BEFORE the system is told, so the meter's first callbacks find
@@ -279,6 +263,13 @@ class ShieldActionExtension: ShieldActionDelegate {
             grantedAt: Date().timeIntervalSince1970 * 1000
         )
 
+        // The snooze meters the system runs, read BEFORE the critical
+        // section: a record always precedes its arm, so a meter registered
+        // now whose snooze is not recorded under the lock is truly stale —
+        // a meter listed after the lock may be one the app
+        // (`temporaryUnlock(…, { target })`) recorded and armed in between.
+        let registered = center.activities.filter { ShieldSnooze.isActivityName($0.rawValue) }
+
         // 1. Record and lift, under the lock.
         let live: Set<String> = lock.withLock {
             let (snoozes, _) = ShieldSnoozes.granting(snooze, in: defaults.currentSnoozes())
@@ -292,31 +283,15 @@ class ShieldActionExtension: ShieldActionDelegate {
         // monitor extension cannot stop them), expired at midnight, or
         // ended by the app while it could not reach the system. Each is
         // one of the 20 DeviceActivity slots, and this snooze needs one.
-        let stale = center.activities.filter { ShieldSnooze.isActivityName($0.rawValue) && !live.contains($0.rawValue) }
+        let stale = registered.filter { !live.contains($0.rawValue) }
         if !stale.isEmpty {
             center.stopMonitoring(stale)
         }
 
         // 3. Arm the meter: a usage ladder over this target alone, from now
-        // to the end of the day (a budget never carries across midnight;
-        // the interval's end is the monitor's day-end callback) — or past
-        // it when the day has less than the system's minimum interval left
-        // (`UsageMeter.meterEnd`): an end before the start means "tomorrow".
-        var events: [DeviceActivityEvent.Name: DeviceActivityEvent] = [:]
-        for seconds in UsageMeter.thresholds(budget: snooze.budgetSeconds) {
-            events[DeviceActivityEvent.Name(ShieldSnooze.stepEventName(seconds))] = target.usageEvent(
-                threshold: DateComponents(hour: seconds / 3600, minute: (seconds % 3600) / 60, second: seconds % 60)
-            )
-        }
-        let calendar = Calendar.current
-        let now = Date()
-        let schedule = DeviceActivitySchedule(
-            intervalStart: calendar.dateComponents([.hour, .minute, .second], from: now),
-            intervalEnd: calendar.dateComponents([.hour, .minute, .second], from: UsageMeter.meterEnd(now: now, calendar: calendar)),
-            repeats: false
-        )
+        // to the end of the day (`SnoozeMeter`).
         do {
-            try center.startMonitoring(DeviceActivityName(snooze.activityName), during: schedule, events: events)
+            try SnoozeMeter.arm(snooze, over: target.shieldToken, on: center)
         } catch {
             NSLog("[expo-screen-time] snooze: could not arm the meter (%@); the shield stays", error.localizedDescription)
             lock.withLock {
@@ -327,9 +302,10 @@ class ShieldActionExtension: ShieldActionDelegate {
         }
 
         // 4. The app may have ended every snooze (`blockSelection`, `relock`,
-        // `unblockAll`) between the record and the arm: its stop found no
-        // meter yet, so release this one, or it would hold a slot for a
-        // snooze that no longer exists.
+        // `unblockAll`) or replaced this one (`temporaryUnlock(…, { target })`
+        // on the same target) between the record and the arm: its stop
+        // found no meter yet, so release this one, or it would hold a slot
+        // for a snooze that no longer exists.
         let stillRecorded = lock.withLock { defaults.getSnoozes().contains { $0.id == snooze.id } }
         if !stillRecorded {
             center.stopMonitoring([DeviceActivityName(snooze.activityName)])

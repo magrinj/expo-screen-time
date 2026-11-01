@@ -216,6 +216,41 @@ enum BlockComposition {
         return sources.contains { $0.mode == .allowlist }
     }
 
+    /// Whether a targeted unlock — `temporaryUnlock(…, { target })`, the
+    /// app-side twin of the shield snooze — can lift `target` from
+    /// `sources` (the sources in force, the ones a grant in progress
+    /// suspended included: an unlock is renewable, so a suspended block
+    /// still counts as a block).
+    enum TargetVerdict: Equatable {
+        /// Some source shields it, and the snooze projection
+        /// (`storeShields`) takes it out: an app or a web domain a blocklist
+        /// lists or an allowlist shields, or a category a blocklist lists.
+        case liftable
+        /// No active source shields it — `NO_ACTIVE_BLOCK`. Tokens are
+        /// opaque, so an app shielded only through its category is not
+        /// known to be shielded: the category's own handle (the one the
+        /// shield reports for such an app) is the target to lift.
+        case notShielded
+        /// A category while an allowlist is in force — `UNSUPPORTED`: the
+        /// allowlist's store shields every app through `.all(except:)`,
+        /// which cannot except a category, so the category's apps would
+        /// stay shielded whatever a blocklist lifted, and the grant would
+        /// hold a meter that never advances until midnight (the shield
+        /// action extension closes such a press for the same reason).
+        case categoryUnderAllowlist
+    }
+
+    static func targetedUnlockVerdict<Token>(for target: Token, in sources: [BlockSource<Token>]) -> TargetVerdict {
+        let covering = sources.filter { $0.covers(anyOf: [target]) }
+        guard !covering.isEmpty else { return .notShielded }
+        // An allowlist covers every bare category, so "any allowlist in
+        // force" and "an allowlist covers it" are the same test here.
+        if target.blockTokenKind == .category, covering.contains(where: { $0.mode == .allowlist }) {
+            return .categoryUnderAllowlist
+        }
+        return .liftable
+    }
+
     /// The source whose shield configuration and actions apply to a shielded
     /// target. `targets` holds every token the shield may have matched (an app
     /// shielded through its category is matched by either token).
@@ -776,12 +811,19 @@ enum UsageMeter {
         return max(stepSeconds, requestedSeconds)
     }
 
+    /// The step (seconds of use) the ladder for `budget` moves in: the
+    /// grain, widened so the ladder has at most `maxSteps` events — 30 s up
+    /// to a 30 min budget, 120 s for 2 h. Reported to JS as the grant's
+    /// `meteringSeconds`: the remaining budget only ever moves by this much.
+    static func step(forBudget budget: Int) -> Int {
+        return max(stepSeconds, Int(ceil(Double(self.budget(for: budget)) / Double(maxSteps))))
+    }
+
     /// The thresholds (seconds of use) to register for `budget`: every
-    /// multiple of the step below it, then the budget itself. The step is
-    /// widened so there are at most `maxSteps` of them.
+    /// multiple of the step below it, then the budget itself.
     static func thresholds(budget: Int) -> [Int] {
         let budget = self.budget(for: budget)
-        let step = max(stepSeconds, Int(ceil(Double(budget) / Double(maxSteps))))
+        let step = self.step(forBudget: budget)
         var thresholds = Array(stride(from: step, to: budget, by: step))
         thresholds.append(budget)
         return thresholds

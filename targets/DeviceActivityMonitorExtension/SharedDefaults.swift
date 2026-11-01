@@ -1,4 +1,5 @@
 import Foundation
+import DeviceActivity
 import FamilyControls
 import ManagedSettings
 
@@ -925,5 +926,68 @@ class SharedDefaults {
         // The global collapse record of earlier builds drives nothing now.
         defaults.removeObject(forKey: SharedDefaultsKeys.legacyShieldInteractionLast)
         defaults.synchronize()
+    }
+}
+
+// MARK: - Usage meters (DeviceActivity)
+
+extension Set where Element == ShieldToken {
+    /// The usage event that meters exactly these tokens: it reaches
+    /// `threshold` once they have been used that long, together, within the
+    /// meter's interval. Use before the grant does not count because the
+    /// interval starts at the grant; a threshold iOS fires implausibly
+    /// early is dropped by `UsageMeter.isPlausible`. NOT
+    /// `includesPastActivity: false`: on iOS 26.6.1 a meter armed with it
+    /// never fired (device, 2026-11-01; the same ladder without it
+    /// re-shields after the budget).
+    @available(iOS 15.0, *)
+    func usageEvent(threshold: DateComponents) -> DeviceActivityEvent {
+        return DeviceActivityEvent(
+            applications: applicationTokens,
+            categories: categoryTokens,
+            webDomains: webDomainTokens,
+            threshold: threshold
+        )
+    }
+}
+
+/// The meter of a `ShieldSnooze` — a shield's snooze button or
+/// `temporaryUnlock(…, { target })`, which is the same grant made from the
+/// app: one DeviceActivity named after the snooze, a `UsageMeter` ladder of
+/// step events over the snoozed target alone, spent by the monitor
+/// extension. One arming routine for both granting processes, so the two
+/// paths cannot drift (the ladder, the floor, the interval and the
+/// `includesPastActivity` finding above are shared).
+@available(iOS 15.0, *)
+enum SnoozeMeter {
+    /// Arm `snooze`'s meter over `target`, from `now` to the end of the day
+    /// (a budget never carries across midnight; the interval's end is the
+    /// monitor's day-end callback) — or past it when the day has less than
+    /// the system's minimum interval left (`UsageMeter.meterEnd`): an end
+    /// before the start means "tomorrow" to DeviceActivity. Outside
+    /// `BlockStateLock`, after the snooze is recorded: a system call the
+    /// lock must not span, whose first callbacks must find the snooze.
+    /// Throws `DeviceActivityCenter.MonitoringError` — at the 20-activity
+    /// limit most likely — and then nothing is armed: the caller takes the
+    /// snooze back.
+    static func arm(
+        _ snooze: ShieldSnooze,
+        over target: ShieldToken,
+        on center: DeviceActivityCenter,
+        now: Date = Date(),
+        calendar: Calendar = .current
+    ) throws {
+        var events: [DeviceActivityEvent.Name: DeviceActivityEvent] = [:]
+        for seconds in UsageMeter.thresholds(budget: snooze.budgetSeconds) {
+            events[DeviceActivityEvent.Name(ShieldSnooze.stepEventName(seconds))] = Set([target]).usageEvent(
+                threshold: DateComponents(hour: seconds / 3600, minute: (seconds % 3600) / 60, second: seconds % 60)
+            )
+        }
+        let schedule = DeviceActivitySchedule(
+            intervalStart: calendar.dateComponents([.hour, .minute, .second], from: now),
+            intervalEnd: calendar.dateComponents([.hour, .minute, .second], from: UsageMeter.meterEnd(now: now, calendar: calendar)),
+            repeats: false
+        )
+        try center.startMonitoring(DeviceActivityName(snooze.activityName), during: schedule, events: events)
     }
 }

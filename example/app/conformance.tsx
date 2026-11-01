@@ -26,6 +26,7 @@ import {
   getRemainingUnlockSeconds,
   getScreenTimePermissionsAsync,
   getSelectionMetadata,
+  getTokens,
   isBlocked,
   isScreenTimeError,
   isTemporarilyUnlocked,
@@ -235,6 +236,7 @@ const scenarios: Scenario[] = [
       blockSelection(APPS);
       const grant = await temporaryUnlock(60);
       expect(grant.budgetSeconds === 60, `budgetSeconds=${grant.budgetSeconds}`);
+      expect(grant.meteringSeconds > 0 && grant.meteringSeconds <= 60, `meteringSeconds=${grant.meteringSeconds}`);
       expect(isTemporarilyUnlocked() && !isBlocked(), "unlocked and not blocked during the grant");
       expect(getRemainingUnlockSeconds() === 60, `remaining=${getRemainingUnlockSeconds()}`);
       const renewal = await temporaryUnlock(120);
@@ -243,6 +245,27 @@ const scenarios: Scenario[] = [
       expect(isBlocked() && !isTemporarilyUnlocked(), "relock restores the block");
       unblockAll();
       return "grant 60, renew 120, relock";
+    },
+  },
+  {
+    id: "C10",
+    title: "Targeted unlock lifts one target",
+    async run(caps) {
+      if (caps.blocking === "none") return "covered by C03 (UNSUPPORTED)";
+      await requireFixture(APPS, "applicationCount");
+      await reset(caps);
+      const [target] = (await getTokens(APPS)) ?? [];
+      expect(!!target, "a token handle from the apps fixture");
+      await expectCode("NO_ACTIVE_BLOCK", () => temporaryUnlock(60, { target }));
+      blockSelection(APPS);
+      await expectCode("INVALID_CONFIG", () => temporaryUnlock(60, { target: { handle: "not-a-handle", type: "application" } }));
+      const grant = await temporaryUnlock(60, { target });
+      expect(grant.budgetSeconds === 60 && grant.meteringSeconds > 0, `budget=${grant.budgetSeconds}, metering=${grant.meteringSeconds}`);
+      expect(grant.target?.handle === target.handle, "the grant names its target");
+      expect(!isTemporarilyUnlocked(), "a targeted grant is not the whole-block unlock");
+      relock();
+      unblockAll();
+      return `lifted one ${target.type}, metering ${grant.meteringSeconds}s; NO_ACTIVE_BLOCK and INVALID_CONFIG checked`;
     },
   },
   {

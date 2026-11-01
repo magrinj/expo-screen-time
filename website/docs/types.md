@@ -185,10 +185,17 @@ budget is spent by usage, not by the clock.
 
 ```typescript
 type TemporaryUnlockGrant = {
-  budgetSeconds: number; // granted budget (after the 30s floor)
-  grantedAt: number;     // Unix milliseconds
+  budgetSeconds: number;      // granted budget (after the 30s floor)
+  grantedAt: number;          // Unix milliseconds
+  meteringSeconds: number;    // the budget is spent in steps of this many seconds
+  target: TokenHandle | null; // the one target lifted, or null for a whole-block unlock
 };
 ```
+
+`meteringSeconds` is 30 for budgets up to 30 minutes, then `ceil(budget / 60)`
+(120 for a 2-hour budget): `getRemainingUnlockSeconds()` moves by that much at
+a time. `target` echoes the `{ target }` option of a
+[targeted unlock](./api/blocking.md#targeted-unlock).
 
 ## `ShieldInteraction`
 

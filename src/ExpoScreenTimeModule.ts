@@ -81,25 +81,54 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
    * is spent, and any unspent budget expires at midnight.
    *
    * Budgets below 30s are raised to 30s (iOS usage thresholds are unreliable
-   * under that). Rejects with `NO_ACTIVE_BLOCK` when nothing is blocked,
-   * and with `UNSUPPORTED` while an allowlist block is active: it shields
-   * every other app, whose use no meter can count.
-   * A new call replaces any active unlock; `blockSelection` cancels it.
+   * under that); the grant's `meteringSeconds` says how coarsely it is
+   * metered. Rejects with `NO_ACTIVE_BLOCK` when nothing is blocked, and
+   * with `UNSUPPORTED` while an allowlist block is active: it shields every
+   * other app, whose use no meter can count. A new call replaces any active
+   * unlock; `blockSelection` cancels it.
+   *
+   * With `options.target` — a `TokenHandle` from `getTokens` or a shield
+   * interaction — only that app, category or web domain is lifted, for
+   * `budgetSeconds` of **its** use, and everything else stays shielded: the
+   * shield `snooze` action, granted from the app. It is independent of the
+   * whole-block unlock (`isTemporarilyUnlocked` and
+   * `getRemainingUnlockSeconds` do not report it); a second targeted grant
+   * or a snooze on the same target replaces the first; `relock`,
+   * `blockSelection` and `unblockAll` end it. The target must be shielded
+   * by an active block — an app an allowlist shields qualifies — else
+   * `NO_ACTIVE_BLOCK`; tokens are opaque, so an app shielded only through
+   * its category is not known to be shielded: target the category (the
+   * handle a shield interaction reports for such an app). `UNSUPPORTED`
+   * for a category while an allowlist is active; `INVALID_CONFIG` for a
+   * handle that does not decode to a token (pass handles unchanged: a
+   * handle from another device or of another type is misuse the module
+   * cannot detect); `EXCESSIVE_ACTIVITIES` when no DeviceActivity slot is
+   * free for the meter.
    * @platform ios
    */
-  temporaryUnlock(budgetSeconds: number): Promise<TemporaryUnlockGrant>;
-  /** Whether an earned-time budget is currently active. @platform ios */
+  temporaryUnlock(
+    budgetSeconds: number,
+    options?: { target?: TokenHandle },
+  ): Promise<TemporaryUnlockGrant>;
+  /**
+   * Whether a whole-block earned-time budget is currently active (targeted
+   * grants and snoozes are not reported). @platform ios
+   */
   isTemporarilyUnlocked(): boolean;
   /**
-   * Seconds left on the active unlock budget, or 0.
+   * Seconds left on the active whole-block unlock budget, or 0.
    *
-   * Moves in ~30s decrements as the monitor extension reports consumption —
-   * don't render it as a smooth countdown. Reading 0 after a grant also
-   * re-applies the shield as a backstop.
+   * Moves in `meteringSeconds` decrements (30s for budgets up to 30min) as
+   * the monitor extension reports consumption — don't render it as a smooth
+   * countdown. Reading 0 after a grant also re-applies the shield as a
+   * backstop.
    * @platform ios
    */
   getRemainingUnlockSeconds(): number;
-  /** End any active unlock now and restore the shield. @platform ios */
+  /**
+   * End any active unlock — the whole-block one, every targeted grant and
+   * every shield snooze — now and restore the shield. @platform ios
+   */
   relock(): void;
 
   /**

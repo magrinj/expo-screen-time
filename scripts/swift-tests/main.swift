@@ -838,6 +838,16 @@ let longLadder = UsageMeter.thresholds(budget: 7_200)
 check(longLadder.count <= UsageMeter.maxSteps && longLadder.last == 7_200 && longLadder.first == 120,
       "a 2 h budget coarsens to 120 s steps (\(longLadder.count) events)")
 check(UsageMeter.thresholds(budget: 1_800) == Array(stride(from: 30, through: 1_800, by: 30)), "30 min: 60 steps of 30 s")
+check(UsageMeter.step(forBudget: 5) == 30 && UsageMeter.step(forBudget: 300) == 30 && UsageMeter.step(forBudget: 1_800) == 30,
+      "meteringSeconds: 30 s up to a 30 min budget (the floor included)")
+check(UsageMeter.step(forBudget: 1_801) == 31 && UsageMeter.step(forBudget: 7_200) == 120 && UsageMeter.step(forBudget: 3 * 3_600) == 180,
+      "…then ceil(budget / 60): 120 s for 2 h, 180 s for 3 h")
+check([5, 30, 100, 1_800, 1_801, 7_200, 86_399].allSatisfy { budget in
+    let step = UsageMeter.step(forBudget: budget)
+    let ladder = UsageMeter.thresholds(budget: budget)
+    return ladder.dropLast().allSatisfy { $0 % step == 0 } && ladder.count <= UsageMeter.maxSteps
+        && zip(ladder, ladder.dropFirst()).allSatisfy { $1 - $0 <= step }
+}, "the ladder moves in meteringSeconds steps (the last one at most a step)")
 check(!UsageMeter.isPlausible(step: 30, elapsedSeconds: 0.05) && UsageMeter.isPlausible(step: 30, elapsedSeconds: 26),
       "an immediate fire of the FIRST step (50 ms after the grant) is impossible; 5 s of slack for jitter")
 check(UsageMeter.isPlausible(step: 300, elapsedSeconds: 296) && !UsageMeter.isPlausible(step: 300, elapsedSeconds: 290),
@@ -855,6 +865,31 @@ check(UsageMeter.seconds(300.0) == 300 && UsageMeter.seconds(NSNumber(value: 45)
       "durations arrive as Double, NSNumber or Int")
 check(UsageMeter.seconds("300") == nil && UsageMeter.seconds(nil) == nil && UsageMeter.seconds(Double.infinity) == nil,
       "anything else is not a duration")
+
+section("BlockComposition.targetedUnlockVerdict — what temporaryUnlock(…, { target }) may lift")
+let verdictManual = Source(kind: .manual, startedAt: 0, tokens: ["app:insta", "cat:social", "web:reddit.com"])
+let verdictAllow = Source(kind: .schedule(activityName: "F"), startedAt: 1, tokens: ["app:mail"], mode: .allowlist)
+check(BlockComposition.targetedUnlockVerdict(for: "app:insta", in: [verdictManual]) == .liftable
+      && BlockComposition.targetedUnlockVerdict(for: "cat:social", in: [verdictManual]) == .liftable
+      && BlockComposition.targetedUnlockVerdict(for: "web:reddit.com", in: [verdictManual]) == .liftable,
+      "an app, a category or a web domain a blocklist lists is liftable")
+check(BlockComposition.targetedUnlockVerdict(for: "app:tiktok", in: [verdictManual]) == .notShielded
+      && BlockComposition.targetedUnlockVerdict(for: "app:insta", in: [Source]()) == .notShielded,
+      "a token no source lists is not shielded (an app inside a listed category included: tokens are opaque)")
+check(BlockComposition.targetedUnlockVerdict(for: "app:insta", in: [verdictAllow]) == .liftable
+      && BlockComposition.targetedUnlockVerdict(for: "web:reddit.com", in: [verdictAllow]) == .liftable,
+      "an app or a web domain an allowlist shields is liftable (the projection excepts it)")
+check(BlockComposition.targetedUnlockVerdict(for: "app:mail", in: [verdictAllow]) == .notShielded,
+      "an app the allowlist allows is not shielded")
+check(BlockComposition.targetedUnlockVerdict(for: "cat:social", in: [verdictAllow]) == .categoryUnderAllowlist,
+      "a category cannot be lifted while an allowlist is in force")
+check(BlockComposition.targetedUnlockVerdict(for: "cat:social", in: [verdictAllow, verdictManual]) == .categoryUnderAllowlist,
+      "…even one a blocklist lists: the allowlist's store keeps shielding its apps")
+check(BlockComposition.storeShields(of: [verdictAllow, verdictManual], snoozed: ["cat:social"])[BlockStore.activity("F")] == StoreShields(tokens: [], excepted: ["app:mail"], allowlist: true),
+      "(the projection confirms it: a snoozed category excepts nothing from `.all`)")
+check(BlockComposition.storeShields(of: [verdictAllow, verdictManual], snoozed: ["app:insta"]).values.allSatisfy { $0.excepted.contains("app:insta") }
+      && BlockComposition.storeShields(of: [verdictAllow, verdictManual], snoozed: ["app:insta"])[BlockStore.manual]?.tokens == ["cat:social", "web:reddit.com"],
+      "and the projection does lift a liftable app from every store, the allowlist's included")
 
 section("ShieldSnooze — naming and persistence")
 let insta = ShieldSnooze(id: "ID-1", tokenKind: "application", token: "QUJD", budgetSeconds: 300, grantedAt: ms(date(2026, 11, 1, 10, 0)))
