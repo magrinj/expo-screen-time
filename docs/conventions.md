@@ -43,12 +43,18 @@ API design, commits/releases, dependencies, packaging, docs. The load-bearing on
 ## Dependencies (the SDK-lock policy)
 
 `react`, `react-native`, `@types/react`, `expo`, `expo-module-scripts`,
-`@expo/plist` are **pinned to the Expo SDK** (currently SDK 56 / RN 0.85 / React
-19.2). Patches are fine; minor/major jumps happen only as part of a deliberate
+`@expo/plist` are **pinned to the Expo SDK** (currently SDK 58 / RN 0.88 / React
+19.3). Patches are fine; minor/major jumps happen only as part of a deliberate
 SDK upgrade. `dependabot.yml` encodes this with `ignore` rules — keep it in sync
 when the dep set changes. Sanity check for `@expo/*` bumps: the new version must
-still satisfy what `@expo/config-plugins@<SDK>` requires (e.g. `@expo/plist@0.8`
-breaks SDK 56's `^0.7.0`).
+still satisfy what `@expo/config-plugins@<SDK>` requires (e.g. `@expo/plist@0.11`
+would break SDK 58's `^0.10.1`).
+
+`expo-module-scripts` stopped following the SDK number: `56.0.8` is the
+SDK 58 toolchain (`jest-expo@58`, RN 0.88 Jest preset, TypeScript 6, oxlint).
+Its Jest transform needs `@swc/core` 1.15 (`@swc-contrib/mut-cjs-exports@14`
+fails to load under 1.16), hence the `overrides` pin in `package.json` — lift
+it when `expo-module-scripts` moves to a newer plugin.
 
 GitHub Actions bumps from dependabot are generally safe; PRs touching
 `.github/workflows/**` can't be merged with a gh token lacking the `workflow`

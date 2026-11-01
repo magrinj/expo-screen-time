@@ -23,7 +23,7 @@ monitoring, custom shields, usage reports.
 ```bash
 bun install            # bun is the package manager (packageManager: bun@1.3.14)
 bun run build          # module (build/) + config plugin (plugin/build/) — tsc
-bun run lint           # eslint via expo-module-scripts
+bun run lint           # oxlint (Expo shared config, oxlint.config.mjs)
 bun run test           # config-plugin jest tests (plugin/src/**/__tests__)
 cd example && bun install && bun run ios   # example app (postinstall builds + links)
 cd website && bun install && bun start     # Docusaurus docs site
@@ -60,7 +60,7 @@ The distilled conventions of this codebase, derived from how it's actually built
 
 Non-negotiables (the short list):
 
-1. **Never break plugin idempotency** — re-running prebuild without `--clean` must
+1. **Never break plugin idempotency** — re-running prebuild with `--no-clean` must
    change nothing (`bun run test` guards this; extend the test when wiring changes).
 2. **When in doubt in `plugin/src/ios/`, match expo-widgets** (`../expo-widgets`,
    Expo's first-party reference). Diverging from it requires a stated reason.

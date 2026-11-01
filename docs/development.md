@@ -49,8 +49,8 @@ grep -c 'undefined/' ios/exposcreentimeexample.xcodeproj/project.pbxproj
 # → must be 0 (group-path regression)
 ```
 
-Then the **idempotency check** — re-run prebuild *without* `--clean` and confirm
-object counts are unchanged (the jest test asserts this on a fixture; the real
+Then the **idempotency check** — re-run prebuild with `--no-clean` (since SDK 58
+a plain `expo prebuild` cleans by default) and confirm the pbxproj is unchanged (the jest test asserts this on a fixture; the real
 project is the belt-and-braces check).
 
 ### Tier 3 — packaging (before release-affecting changes)

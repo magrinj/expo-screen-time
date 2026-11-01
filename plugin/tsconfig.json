@@ -3,6 +3,10 @@
   "compilerOptions": {
     "outDir": "build",
     "rootDir": "src",
+    // The shared base turns on incremental builds with a .tsbuildinfo outside
+    // build/: after `expo-module clean` tsc then sees "up to date" and emits
+    // nothing. Full builds are fast here.
+    "incremental": false,
     "types": ["node"]
   },
   "include": ["./src"],

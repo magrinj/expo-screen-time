@@ -58,3 +58,8 @@ yarn-error.log
 
 # Tooling
 .serena/
+
+# expo-module-scripts: SWC cache of the Jest transform, and the build info
+# `expo-module build plugin` (tsc --build) writes
+.swc/
+.tsbuildinfo

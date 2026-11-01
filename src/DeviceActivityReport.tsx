@@ -1,5 +1,5 @@
 import { requireNativeView } from "expo";
-import { useEffect, useRef, type ReactElement, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react";
 import {
   Platform,
   type StyleProp,
@@ -100,7 +100,7 @@ export function DeviceActivityReport({
 }: DeviceActivityReportProps) {
   // Default "today" is captured once per mount — a fresh Date.now() every
   // render would change the native prop each render and churn the report view.
-  const mountedAt = useRef(Date.now());
+  const [mountedAt] = useState(Date.now);
   // Per-instance channel owner: identical templates on two mounted reports
   // must not release each other's claim.
   const templateOwner = useRef({}).current;
@@ -148,7 +148,7 @@ export function DeviceActivityReport({
     );
   }
 
-  const dateTimestamp = filterDate ? filterDate.getTime() : mountedAt.current;
+  const dateTimestamp = filterDate ? filterDate.getTime() : mountedAt;
 
   return (
     <NativeReportView

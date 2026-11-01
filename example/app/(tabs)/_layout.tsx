@@ -2,6 +2,10 @@ import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
 import React from "react";
 
+// expo-router 58 types the tab icon color as RN 0.88's ColorValue (which admits
+// null); @expo/vector-icons 15 accepts string | OpaqueColorValue. It is a string
+// at runtime.
+
 export default function TabLayout() {
   return (
     <Tabs
@@ -26,7 +30,7 @@ export default function TabLayout() {
         options={{
           title: "Home",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="home" size={size} color={color} />
+            <Ionicons name="home" size={size} color={color as string} />
           ),
         }}
       />
@@ -35,7 +39,7 @@ export default function TabLayout() {
         options={{
           title: "Analytics",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="bar-chart" size={size} color={color} />
+            <Ionicons name="bar-chart" size={size} color={color as string} />
           ),
         }}
       />
@@ -44,7 +48,7 @@ export default function TabLayout() {
         options={{
           title: "Blocking",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="shield" size={size} color={color} />
+            <Ionicons name="shield" size={size} color={color as string} />
           ),
         }}
       />
@@ -53,7 +57,7 @@ export default function TabLayout() {
         options={{
           title: "Schedule",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="time" size={size} color={color} />
+            <Ionicons name="time" size={size} color={color as string} />
           ),
         }}
       />
@@ -62,7 +66,7 @@ export default function TabLayout() {
         options={{
           title: "Labels",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="pricetag" size={size} color={color} />
+            <Ionicons name="pricetag" size={size} color={color as string} />
           ),
         }}
       />
@@ -71,7 +75,7 @@ export default function TabLayout() {
         options={{
           title: "Settings",
           tabBarIcon: ({ color, size }) => (
-            <Ionicons name="settings" size={size} color={color} />
+            <Ionicons name="settings" size={size} color={color as string} />
           ),
         }}
       />

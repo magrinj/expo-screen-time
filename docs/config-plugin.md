@@ -28,8 +28,9 @@ And deliberate *non*-divergences (proposals already evaluated and rejected):
 ## Rule 1 — idempotency is sacred
 
 Every PBX mutation is guarded by an existence check (target by name, phase by
-type+comment, product file by path, group by name). Re-running prebuild without
-`--clean` must change **nothing**. The jest test asserts re-apply leaves all
+type+comment, product file by path, group by name). Re-running prebuild with
+`--no-clean` must change **nothing** (since SDK 58 a plain `expo prebuild`
+cleans by default; `--no-clean` is the incremental path). The jest test asserts re-apply leaves all
 object counts unchanged — **extend the test whenever you add wiring**.
 
 ## Rule 2 — the known gotchas (each one broke a real build)
