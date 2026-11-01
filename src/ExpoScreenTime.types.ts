@@ -391,12 +391,32 @@ export type TemporaryUnlockGrant = {
 };
 
 /**
- * One blocked-app attempt the user reacted to on the shield.
- * Returned by `drainShieldInteractions`.
+ * One press of a shield button, returned by `drainShieldInteractions`.
+ * Presses on the SAME target within 2 s collapse into one (a user tapping
+ * both buttons of one shield is one blocked attempt); presses on different
+ * targets are separate interactions. Two apps shielded through the same
+ * category are one target (iOS reports the category).
+ * @platform ios
  */
 export type ShieldInteraction = {
   /** Which shield button was pressed. */
   button: "primary" | "secondary";
   /** Unix milliseconds. */
   timestamp: number;
+  /**
+   * What was shielded: the pressed app, web domain or category (an app
+   * shielded through its category reports the category). The same handle
+   * `getTokens` returns for that token, so render it with `<TokenLabel>`
+   * and a selection containing it. `null` when no handle could be derived,
+   * and for interactions recorded by versions before this field existed.
+   */
+  target: TokenHandle | null;
+  /**
+   * The monitored activity whose block shields the target (a threshold
+   * block, else the most recently started schedule covering it, as for the
+   * shield config and actions). `null` for the manual block
+   * (`blockSelection`), when no active block owns the shield any more, and
+   * for interactions recorded before this field.
+   */
+  activityName: string | null;
 };

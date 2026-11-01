@@ -122,13 +122,6 @@ class ShieldActionExtension: ShieldActionDelegate {
             return .close
         }
 
-        // Record the blocked attempt. This handler is the one callback that
-        // reliably fires per shield interaction (the configuration data
-        // source is cached by the system and not re-invoked on every open),
-        // so it doubles as the "user hit a block" counter the app drains via
-        // drainShieldInteractions().
-        defaults.appendShieldInteraction(button: button)
-
         // The actions of the source that shields this target — a threshold,
         // else the latest schedule covering it, else the manual block — then
         // the default. Several sources can be active at once; a single
@@ -154,6 +147,16 @@ class ShieldActionExtension: ShieldActionDelegate {
                 preferring: resolvedByConfiguration,
                 coveringTargets: target.requiresCoverage
             )
+
+            // Record the blocked attempt — the pressed target and the
+            // activity that owns its shield — for drainShieldInteractions().
+            // This handler is the one callback that reliably fires per
+            // shield interaction (the configuration data source is cached
+            // by the system and not re-invoked on every open), so it
+            // doubles as the "user hit a block" counter. Recorded whatever
+            // the configured action turns out to be.
+            defaults.appendShieldInteraction(button: button, target: token, activityName: owner?.kind.activityName)
+
             if let activityName = owner?.kind.activityName {
                 actionConfig = defaults.getShieldActions(activityName: activityName)
             }

@@ -48,6 +48,16 @@ enum SharedDefaultsKeys {
     /// The `ShieldSnooze`s in progress (see BlockComposition): the targets
     /// every projection leaves unshielded until their usage budget is spent.
     static let snoozes = "expo_st_snoozes"
+
+    // Shield interactions (see ShieldInteractionQueue)
+    /// JSON array of the presses not yet drained, oldest first.
+    static let shieldInteractions = "expo_st_shield_interactions"
+    /// Target key → Unix ms of the last recorded press on it (the 2 s
+    /// per-target collapse; kept across drains, pruned to the window).
+    static let shieldInteractionLastByTarget = "expo_st_shield_interaction_last_by_target"
+    /// The one global "last press" of builds with a global collapse. Removed
+    /// on the next write.
+    static let legacyShieldInteractionLast = "expo_st_shield_interaction_last"
 }
 
 extension BlockStateLock {
@@ -788,62 +798,74 @@ class SharedDefaults {
 
     // MARK: - Shield interactions
     //
-    // One entry per blocked-app open the user reacted to. Written by the
-    // ShieldAction extension (the configuration data source is cached by the
-    // system, so the action handler is the only callback that reliably fires
-    // per open) and drained by the app to power "you were blocked N times"
-    // UIs. Entries within 2s collapse into one: a user tapping both shield
-    // buttons is one blocked attempt, not two.
+    // One entry per shield button press the user made, with what was
+    // shielded and which activity shields it (`ShieldInteractionQueue`).
+    // Written by the ShieldAction extension (the configuration data source
+    // is cached by the system, so the action handler is the only callback
+    // that reliably fires per open) and drained by the app to power "you
+    // were blocked N times" UIs. Presses on the same target within 2 s
+    // collapse into one; presses on different targets do not.
 
-    /// Under `BlockStateLock`: the ShieldAction extension appends while the
-    /// app may be draining; unlocked, an append between the drain's read and
-    /// its remove is lost.
-    func appendShieldInteraction(button: String) {
-        BlockStateLock.shared.withLock { appendInteraction(button: button) }
+    /// Under `BlockStateLock` (re-entrant: the extension records inside the
+    /// critical section that resolved the owner): the ShieldAction extension
+    /// appends while the app may be draining; unlocked, an append between
+    /// the drain's read and its remove is lost.
+    ///
+    /// `target` is the pressed token; its handle is derived exactly as
+    /// `SelectionStore.getTokenHandles` derives handles, so JS can hand it
+    /// to `<TokenLabel>`. `activityName` is the logical name of the activity
+    /// whose source owns the shield, nil for the manual block.
+    func appendShieldInteraction(button: String, target: ShieldToken?, activityName: String?) {
+        BlockStateLock.shared.withLock {
+            let entry = ShieldInteractionQueue.Entry(
+                button: button,
+                timestamp: Date().timeIntervalSince1970 * 1000,
+                target: target?.encoded.map { ShieldInteractionQueue.Target(type: $0.kind, handle: $0.token) },
+                activityName: activityName
+            )
+            var state = shieldInteractionState()
+            state.record(entry)
+            setShieldInteractionState(state)
+        }
     }
 
-    private func appendInteraction(button: String) {
-        guard let defaults = defaults else { return }
-        defaults.synchronize()
-
-        let nowMs = Date().timeIntervalSince1970 * 1000
-        let lastMs = defaults.double(forKey: "expo_st_shield_interaction_last")
-        if lastMs > 0, nowMs - lastMs < 2_000 { return }
-
-        var queue: [[String: Any]] = []
-        if let json = defaults.string(forKey: "expo_st_shield_interactions"),
-           let data = json.data(using: .utf8),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            queue = parsed
-        }
-        queue.append(["button": button, "timestamp": nowMs])
-        // Bounded: the queue only grows while the app isn't draining it.
-        if queue.count > 200 {
-            queue = Array(queue.suffix(200))
-        }
-        if let data = try? JSONSerialization.data(withJSONObject: queue),
-           let json = String(data: data, encoding: .utf8) {
-            defaults.set(json, forKey: "expo_st_shield_interactions")
-        }
-        defaults.set(nowMs, forKey: "expo_st_shield_interaction_last")
-        defaults.synchronize()
-    }
-
+    /// Read-and-clear, in the `ShieldInteraction` shape (legacy entries
+    /// without a target drain with `target` and `activityName` null).
     func drainShieldInteractions() -> [[String: Any]] {
-        return BlockStateLock.shared.withLock { takeInteractions() }
+        return BlockStateLock.shared.withLock {
+            var state = shieldInteractionState()
+            let interactions = state.drain()
+            if !interactions.isEmpty {
+                setShieldInteractionState(state)
+            }
+            return interactions
+        }
     }
 
-    private func takeInteractions() -> [[String: Any]] {
-        guard let defaults = defaults else { return [] }
+    private func shieldInteractionState() -> ShieldInteractionQueue.State {
+        guard let defaults = defaults else { return ShieldInteractionQueue.State() }
         // Re-read the suite: the writes come from a separate extension process.
         defaults.synchronize()
-        guard let json = defaults.string(forKey: "expo_st_shield_interactions"),
-              let data = json.data(using: .utf8),
-              let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
-            return []
+        return ShieldInteractionQueue.State(
+            entries: ShieldInteractionQueue.entries(fromJSON: defaults.string(forKey: SharedDefaultsKeys.shieldInteractions)),
+            lastPressByTarget: defaults.dictionary(forKey: SharedDefaultsKeys.shieldInteractionLastByTarget) as? [String: Double] ?? [:]
+        )
+    }
+
+    private func setShieldInteractionState(_ state: ShieldInteractionQueue.State) {
+        guard let defaults = defaults else { return }
+        if let json = ShieldInteractionQueue.json(of: state.entries) {
+            defaults.set(json, forKey: SharedDefaultsKeys.shieldInteractions)
+        } else {
+            defaults.removeObject(forKey: SharedDefaultsKeys.shieldInteractions)
         }
-        defaults.removeObject(forKey: "expo_st_shield_interactions")
+        if state.lastPressByTarget.isEmpty {
+            defaults.removeObject(forKey: SharedDefaultsKeys.shieldInteractionLastByTarget)
+        } else {
+            defaults.set(state.lastPressByTarget, forKey: SharedDefaultsKeys.shieldInteractionLastByTarget)
+        }
+        // The global collapse record of earlier builds drives nothing now.
+        defaults.removeObject(forKey: SharedDefaultsKeys.legacyShieldInteractionLast)
         defaults.synchronize()
-        return parsed
     }
 }

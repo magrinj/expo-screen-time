@@ -3,7 +3,7 @@
 #
 # ManagedSettings tokens cannot be built outside the OS and FamilyControls
 # does not run in the simulator, so the block-composition, precedence,
-# weekday and registration rules live in Foundation-only types and are tested
+# weekday, registration and shield-interaction rules live in Foundation-only types and are tested
 # here with plain `swiftc` on macOS; the cross-process mutex (BlockStateLock)
 # is exercised by threads in-process and by two concurrent processes. Also
 # asserts that every per-target copy of those files is byte-identical to the
@@ -30,6 +30,7 @@ for target in DeviceActivityMonitorExtension ShieldActionExtension ShieldConfigu
   check_copy ios/BlockComposition.swift "targets/$target/BlockComposition.swift"
   check_copy ios/BlockStateLock.swift "targets/$target/BlockStateLock.swift"
   check_copy ios/SharedDefaults.swift "targets/$target/SharedDefaults.swift"
+  check_copy ios/ShieldInteractionQueue.swift "targets/$target/ShieldInteractionQueue.swift"
 done
 check_copy ios/DailySchedule.swift targets/DeviceActivityMonitorExtension/DailySchedule.swift
 check_copy ios/ActivityRegistration.swift targets/DeviceActivityMonitorExtension/ActivityRegistration.swift
@@ -47,6 +48,7 @@ swiftc -O \
   ios/ActivityRegistration.swift \
   ios/MonitorEventCursor.swift \
   ios/EnforcementGaps.swift \
+  ios/ShieldInteractionQueue.swift \
   scripts/swift-tests/main.swift \
   -o "$out/swift-tests"
 "$out/swift-tests" || status=1

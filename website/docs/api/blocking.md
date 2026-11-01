@@ -140,13 +140,49 @@ in progress. Safe to call when nothing is unlocked.
 
 ### `drainShieldInteractions(): ShieldInteraction[]`
 
-Read-and-clear the queue of blocked-app attempts the user reacted to on the
-shield (recorded natively by the ShieldAction extension; interactions within
-2 seconds collapse into one attempt). Call it when your app foregrounds and
-persist the results app-side to power "you were blocked N times" stats.
+Read-and-clear the queue of shield button presses, recorded natively by the
+ShieldAction extension. Call it when your app foregrounds and persist the
+results app-side to power "you were blocked N times" stats.
+
+Each [`ShieldInteraction`](../types.md#shieldinteraction) says which button
+was pressed, when, **what was shielded** (`target`, a
+[`TokenHandle`](../types.md#tokenhandle) for the app, web domain or category)
+and **which block** shielded it (`activityName`, the monitored activity whose
+schedule or threshold owns the shield, `null` for the manual block).
+
+Presses on the **same target** within 2 seconds collapse into one interaction
+(tapping both buttons of one shield is one blocked attempt); presses on
+different targets in that window are separate interactions, so two apps
+opened back to back count twice — unless both are shielded through the same
+category, which iOS reports as one target.
 
 ```typescript
 const attempts = ExpoScreenTime.drainShieldInteractions();
-// [{ button: 'primary', timestamp: 1720512000000 }, ...]
+// [{ button: 'primary', timestamp: 1720512000000,
+//    target: { handle: '…', type: 'application' }, activityName: 'work-hours' }, ...]
 blockedCount += attempts.length;
 ```
+
+`target` is the same handle [`getTokens`](./selections.md) returns for that
+token, so it renders with a [label](../components.md#token-labels) and a
+selection that contains it — the blocked selection, or the activity's:
+
+```tsx
+{attempts.map((attempt) =>
+  attempt.target ? (
+    <TokenLabel
+      key={attempt.timestamp}
+      selectionId="my-blocklist"
+      handle={attempt.target.handle}
+      tokenType={attempt.target.type}
+      displayMode="title-and-icon"
+    />
+  ) : null,
+)}
+```
+
+An app shielded through a category reports the **category** (iOS identifies
+such a shield by its category only). `target` is `null` when no handle could
+be derived; `activityName` is `null` for the manual block and when no active
+block owns the shield any more. Both are `null` for interactions recorded by
+versions before these fields existed (they still drain).

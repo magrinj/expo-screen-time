@@ -850,10 +850,83 @@ for i in 0..<(AuthorizationGapTracker.maxGaps + 5) {
     capped.observe(approved: false, at: Double(i * 10 + 5))
 }
 check(capped.gaps.count == AuthorizationGapTracker.maxGaps && capped.gaps.first?.from == 50, "past the cap the oldest gaps are dropped")
-let roundTrip = try? JSONDecoder().decode(AuthorizationGapTracker.self, from: JSONEncoder().encode(tracker))
-check(roundTrip == tracker, "the tracker survives a JSON round trip (persisted in UserDefaults)")
+let gapTrackerRoundTrip = try? JSONDecoder().decode(AuthorizationGapTracker.self, from: JSONEncoder().encode(tracker))
+check(gapTrackerRoundTrip == tracker, "the tracker survives a JSON round trip (persisted in UserDefaults)")
 let openGapPayload = EnforcementGap(from: 1, to: nil, reason: "authorizationRevoked").dictionary
 check(openGapPayload["to"] is NSNull && (openGapPayload["from"] as? Double) == 1, "an open gap reaches JS with to: null")
+// MARK: - Shield interactions (review R16) — the per-target collapse and the legacy queue
+
+section("ShieldInteractionQueue.State.record — presses on one target within 2 s are one attempt; other targets are not")
+typealias Target = ShieldInteractionQueue.Target
+typealias Press = ShieldInteractionQueue.Entry
+let instaApp = Target(type: "application", handle: "QUJD")
+let tiktokApp = Target(type: "application", handle: "REVG")
+let socialCategory = Target(type: "category", handle: "QUJD")  // same handle bytes as instaApp, another kind
+var presses = ShieldInteractionQueue.State()
+check(presses.record(Press(button: "primary", timestamp: 1_000, target: instaApp, activityName: "work")), "the first press on a target is recorded")
+check(!presses.record(Press(button: "secondary", timestamp: 2_500, target: instaApp, activityName: "work")),
+      "a second button on the same shield 1.5 s later is the same attempt")
+check(presses.record(Press(button: "primary", timestamp: 2_500, target: tiktokApp)), "a press on ANOTHER app at the same instant is its own attempt")
+check(presses.record(Press(button: "primary", timestamp: 2_600, target: socialCategory)),
+      "a category shield is another target than an app with the same handle bytes")
+check(!presses.record(Press(button: "primary", timestamp: 2_999, target: instaApp)), "1.999 s after the first press: still collapsed")
+check(presses.record(Press(button: "primary", timestamp: 3_000, target: instaApp)), "2 s after it: a new attempt (the window is open at 2 s)")
+check(presses.entries.map(\.timestamp) == [1_000, 2_500, 2_600, 3_000], "four attempts, oldest first")
+check(presses.entries.first?.activityName == "work" && presses.entries[1].activityName == nil,
+      "each entry keeps its own owner (a schedule here, the manual block there)")
+check(presses.lastPressByTarget.count == 3, "the per-target record holds the targets pressed in the last 2 s")
+check(presses.record(Press(button: "primary", timestamp: 10_000, target: tiktokApp)) && presses.lastPressByTarget.count == 1,
+      "…and is pruned to the window on every press (bounded by distinct targets, not by history)")
+check(presses.record(Press(button: "primary", timestamp: 9_000, target: tiktokApp)), "a press with an earlier clock than its record is kept, never collapsed")
+check(presses.record(Press(button: "primary", timestamp: 6_500, target: instaApp)) && presses.lastPressByTarget.count == 1,
+      "…and a record more than 2 s in the future (the clock jumped back) is dropped like a stale one")
+
+section("ShieldInteractionQueue.State.record — targets without a handle, and the cap")
+var handleless = ShieldInteractionQueue.State()
+check(handleless.record(Press(button: "primary", timestamp: 0)) && !handleless.record(Press(button: "secondary", timestamp: 500)),
+      "presses whose token has no handle collapse among themselves (today's global rule, for them only)")
+check(handleless.record(Press(button: "primary", timestamp: 500, target: instaApp)), "…and never swallow a press on a known target")
+var flood = ShieldInteractionQueue.State()
+for index in 0..<(ShieldInteractionQueue.capacity + 5) {
+    flood.record(Press(button: "primary", timestamp: Double(index) * 10, target: Target(type: "application", handle: "H\(index)")))
+}
+check(flood.entries.count == ShieldInteractionQueue.capacity && flood.entries.first?.target?.handle == "H5",
+      "the queue keeps the newest \(ShieldInteractionQueue.capacity) presses while the app is not draining")
+
+section("ShieldInteractionQueue.State.drain — the JS shape, and a collapse that spans a drain")
+var drained = ShieldInteractionQueue.State()
+drained.record(Press(button: "primary", timestamp: 1_000, target: instaApp, activityName: "work"))
+drained.record(Press(button: "secondary", timestamp: 1_100, target: tiktokApp))
+let interactions = drained.drain()
+check(interactions.count == 2 && drained.entries.isEmpty, "a drain returns every entry and empties the queue")
+check((interactions[0]["target"] as? [String: Any]).flatMap(Target.init(dictionary:)) == instaApp
+      && interactions[0]["activityName"] as? String == "work"
+      && interactions[0]["button"] as? String == "primary" && interactions[0]["timestamp"] as? Double == 1_000,
+      "an entry drains as { button, timestamp, target: TokenHandle, activityName }")
+check(interactions[1]["target"] is [String: Any] && interactions[1]["activityName"] is NSNull,
+      "a manual block drains with activityName null (JS null, not undefined)")
+check(!drained.record(Press(button: "primary", timestamp: 2_000, target: instaApp)), "a press 1 s after a drained press on the same target still collapses")
+check(drained.drain().isEmpty, "an empty queue drains to nothing")
+
+section("ShieldInteractionQueue — persistence, legacy entries, reserved names")
+let persisted = Press(button: "primary", timestamp: 1_720_512_000_000, target: instaApp, activityName: "work")
+check(Press(dictionary: persisted.dictionary) == persisted, "an entry round-trips through its property-list shape")
+let roundTrip = ShieldInteractionQueue.entries(fromJSON: ShieldInteractionQueue.json(of: [persisted, Press(button: "secondary", timestamp: 1)]))
+check(roundTrip == [persisted, Press(button: "secondary", timestamp: 1)], "…and through the JSON array the App Group stores")
+check(ShieldInteractionQueue.json(of: []) == nil, "an empty queue is not stored")
+let legacy = ShieldInteractionQueue.entries(fromJSON: #"[{"button":"primary","timestamp":1720512000000},{"button":"secondary","timestamp":1720512003000}]"#)
+check(legacy.count == 2 && legacy.allSatisfy { $0.target == nil && $0.activityName == nil }, "the queue of a build without targets still decodes")
+check(legacy[0].interaction["target"] is NSNull && legacy[0].interaction["activityName"] is NSNull && legacy[0].interaction["timestamp"] as? Double == 1_720_512_000_000,
+      "…and drains with target and activityName null")
+check(ShieldInteractionQueue.entries(fromJSON: #"[{"timestamp":1},{"button":"primary"},{"button":"primary","timestamp":2,"target":{"type":"application"}}]"#)
+      == [Press(button: "primary", timestamp: 2)],
+      "entries without a button or a timestamp are dropped; a target without a handle is no target")
+check(ShieldInteractionQueue.entries(fromJSON: nil).isEmpty && ShieldInteractionQueue.entries(fromJSON: "not json").isEmpty, "no queue, or garbage, is an empty queue")
+check(Press(button: "primary", timestamp: 1, activityName: "expo_st_snooze_X").activityName == nil
+      && Press(dictionary: ["button": "primary", "timestamp": 1, "activityName": "expo_st_temporary_unlock"])?.activityName == nil
+      && Press(button: "primary", timestamp: 1, activityName: "").activityName == nil,
+      "a reserved (expo_st_) or empty activity name is never exposed")
+check(Press(button: "primary", timestamp: 1, activityName: "work").activityName == "work", "a user's activity name is")
 
 print("\n\(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

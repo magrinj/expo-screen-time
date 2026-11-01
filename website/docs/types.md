@@ -172,15 +172,25 @@ type TemporaryUnlockGrant = {
 
 ## `ShieldInteraction`
 
-One blocked-app attempt the user reacted to on the shield. Returned by
-`drainShieldInteractions`.
+One press of a shield button. Returned by
+[`drainShieldInteractions`](./api/blocking.md#shield-interactions). Presses on
+the same `target` within 2 seconds collapse into one.
 
 ```typescript
 type ShieldInteraction = {
   button: "primary" | "secondary";
-  timestamp: number; // Unix milliseconds
+  timestamp: number;            // Unix milliseconds
+  target: TokenHandle | null;   // what was shielded — render it with <TokenLabel>
+  activityName: string | null;  // monitored activity behind the block; null for the manual block
 };
 ```
+
+`target` is the pressed app, web domain or category (an app shielded through
+its category reports the category), as the handle `getTokens` returns for it.
+`activityName` is resolved like the shield config: a threshold block, else the
+most recently started schedule covering the target, else `null` (the manual
+block, or no active block owns the shield any more). Both are `null` for
+interactions recorded before these fields existed.
 
 ## `ScreenTimeErrorCode` {#screentimeerrorcode}
 

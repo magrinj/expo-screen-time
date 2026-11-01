@@ -80,7 +80,7 @@ ExpoScreenTime.setShieldActions({
   press, a snooze ending). For an app shielded through its category, that
   category is lifted; for a web domain, that domain.
 - `'defer'` — keep the shield on screen and let it redraw. The press is still
-  recorded for [`drainShieldInteractions()`](./blocking.md).
+  recorded for [`drainShieldInteractions()`](./blocking.md#shield-interactions).
 - `{ type: 'snooze', duration }` — lift the shield on **this app only**, for
   `duration` seconds of its **use** (a usage budget, like
   [`temporaryUnlock`](./blocking.md#temporary-unlock-earned-time)), then
