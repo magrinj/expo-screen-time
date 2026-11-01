@@ -10,6 +10,9 @@ import ExpoModulesCore
 public class ExpoScreenTimeModule: Module {
     public let screenTimeManager = ScreenTimeManager()
     private let sharedDefaults = SharedDefaults.shared
+    /// The instance registered with Expo's permission service, which looks it
+    /// up by class: the request options are handed to it before each request.
+    private let permissionRequester = ScreenTimePermissionRequester()
 
     // Event listening state. The cursor and timer are only touched on the
     // main queue (the Darwin callback and the poll timer both run there).
@@ -29,7 +32,7 @@ public class ExpoScreenTimeModule: Module {
             }
 
             self.appContext?.permissions?.register([
-                ScreenTimePermissionRequester()
+                self.permissionRequester
             ])
 
             // Builds before block composition kept every shield in the unnamed
@@ -54,7 +57,9 @@ public class ExpoScreenTimeModule: Module {
 
         // MARK: - Permissions
 
-        AsyncFunction("getScreenTimePermissionsAsync") { (promise: Promise) in
+        // `options` (`ScreenTimePermissionOptions`) only matter when requesting:
+        // the authorization status is the same whichever member asked.
+        AsyncFunction("getScreenTimePermissionsAsync") { (_: [String: Any]?, promise: Promise) in
             appContext?.permissions?.getPermissionUsingRequesterClass(
                 ScreenTimePermissionRequester.self,
                 resolve: promise.legacyResolver,
@@ -62,7 +67,8 @@ public class ExpoScreenTimeModule: Module {
             )
         }
 
-        AsyncFunction("requestScreenTimePermissionsAsync") { (promise: Promise) in
+        AsyncFunction("requestScreenTimePermissionsAsync") { (options: [String: Any]?, promise: Promise) in
+            self.permissionRequester.prepareRequest(member: options?["member"] as? String)
             appContext?.permissions?.askForPermission(
                 usingRequesterClass: ScreenTimePermissionRequester.self,
                 resolve: promise.legacyResolver,

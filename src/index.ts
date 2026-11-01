@@ -10,6 +10,8 @@ import {
 import type {
   MonitorEvent,
   OnMonitorEventPayload,
+  ScreenTimePermissionOptions,
+  ScreenTimePermissionResponse,
 } from "./ExpoScreenTime.types";
 import ExpoScreenTimeModule from "./ExpoScreenTimeModule";
 import { serializeTemplate } from "./report/serializeTemplate";
@@ -19,7 +21,10 @@ import {
   IMPERATIVE_OWNER,
 } from "./report/templateChannel";
 
-export const useScreenTimePermissions = createPermissionHook({
+export const useScreenTimePermissions = createPermissionHook<
+  ScreenTimePermissionResponse,
+  ScreenTimePermissionOptions
+>({
   requestMethod: ExpoScreenTimeModule.requestScreenTimePermissionsAsync,
   getMethod: ExpoScreenTimeModule.getScreenTimePermissionsAsync,
 });

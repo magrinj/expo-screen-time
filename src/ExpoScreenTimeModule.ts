@@ -1,5 +1,4 @@
 import { NativeModule, requireNativeModule } from "expo";
-import type { PermissionResponse } from "expo-modules-core";
 
 import type {
   ExpoScreenTimeModuleEvents,
@@ -11,12 +10,18 @@ import type {
   TemporaryUnlockGrant,
   TokenHandle,
   MonitorEvent,
+  ScreenTimePermissionOptions,
+  ScreenTimePermissionResponse,
 } from "./ExpoScreenTime.types";
 
 declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEvents> {
   // Permissions
-  requestScreenTimePermissionsAsync(): Promise<PermissionResponse>;
-  getScreenTimePermissionsAsync(): Promise<PermissionResponse>;
+  requestScreenTimePermissionsAsync(
+    options?: ScreenTimePermissionOptions,
+  ): Promise<ScreenTimePermissionResponse>;
+  getScreenTimePermissionsAsync(
+    options?: ScreenTimePermissionOptions,
+  ): Promise<ScreenTimePermissionResponse>;
 
   // App Control
   denyAppRemoval(): void;

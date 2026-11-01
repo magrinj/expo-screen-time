@@ -1,4 +1,55 @@
+import type { PermissionResponse } from "expo-modules-core";
 import type { StyleProp, ViewStyle } from "react-native";
+
+// ============================================================================
+// PERMISSIONS
+// ============================================================================
+
+/** One thing the user must allow. iOS has one step: the Screen Time prompt. */
+export type PermissionStepId = "screenTime";
+
+export type PermissionStep = {
+  id: PermissionStepId;
+  /**
+   * `restricted`: the OS refuses to let this user grant it (iOS
+   * `FamilyControlsError.restricted`: Screen Time restrictions, a managed
+   * device). `unknown`: the status cannot be read back.
+   */
+  status: "granted" | "denied" | "undetermined" | "restricted" | "unknown";
+  /** `true`: needed by the module. `false`: recommended for reliability. */
+  required: boolean;
+  /** `prompt`: a system dialog. `settings`: a settings screen. `guide`: a vendor screen. */
+  kind: "prompt" | "settings" | "guide";
+  /**
+   * Why the last request failed, verbatim from the OS: on iOS the
+   * `FamilyControlsError` case name (`restricted`, `invalidAccountType`,
+   * `authorizationCanceled`, `networkError`, …) and its description. Absent
+   * when the last request succeeded or once access is granted. Kept for the
+   * app's lifetime only.
+   */
+  error?: { code: string; message: string };
+};
+
+/**
+ * Expo's `PermissionResponse` plus the steps behind it:
+ * - `granted` is `true` when every `required` step is `granted`;
+ * - a `restricted` step reports `status: "denied"` and `canAskAgain: false`.
+ */
+export type ScreenTimePermissionResponse = PermissionResponse & {
+  steps: PermissionStep[];
+};
+
+export type ScreenTimePermissionOptions = {
+  /**
+   * Who authorizes. `individual` (default): the user approves for this
+   * device. `child`: Family Sharing authorization of a child account, approved
+   * by a parent; requests `.child` on iOS, and fails with the step error
+   * `invalidAccountType` on an account that is not a child in a family.
+   * Only read when requesting.
+   * @platform ios
+   */
+  member?: "individual" | "child";
+};
 
 // ============================================================================
 // TOKEN & SELECTION TYPES
