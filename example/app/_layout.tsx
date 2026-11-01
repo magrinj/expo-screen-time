@@ -48,6 +48,7 @@ export default function RootLayout() {
     <>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="conformance" options={{ title: "Conformance" }} />
         <Stack.Screen
           name="select-apps"
           options={{

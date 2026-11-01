@@ -30,12 +30,14 @@ export default function HomeScreen() {
     useCallback(() => {
       refresh();
       // Reflect the real shield state, not just whether a selection exists.
-      setIsBlocked(ExpoScreenTime.isBlocked());
+      // Guarded by capability, not platform: where blocking is unavailable
+      // (Android today) isBlocked() throws UNSUPPORTED.
+      setIsBlocked(ExpoScreenTime.getCapabilities().blocking !== "none" && ExpoScreenTime.isBlocked());
     }, [refresh])
   );
 
   useEffect(() => {
-    ExpoScreenTime.getScreenTimePermissionsAsync().then(setPermissions);
+    ExpoScreenTime.getScreenTimePermissionsAsync().then(setPermissions, () => setPermissions(null));
   }, []);
 
   const appsCount = metadata?.applicationCount ?? 0;

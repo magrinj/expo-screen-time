@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import ExpoScreenTime from "expo-screen-time";
 import { useState } from "react";
 import { Alert, ScrollView, StyleSheet, Switch, Text, View } from "react-native";
@@ -24,7 +25,7 @@ export default function SettingsScreen() {
   const [appInstallationDenied, setAppInstallationDenied] = useState(false);
   // Start from what the module persisted, so the toggles survive relaunches.
   const [blockedDomains, setBlockedDomains] = useState<string[]>(() =>
-    ExpoScreenTime.getBlockedWebDomains(),
+    ExpoScreenTime.getCapabilities().webDomainBlocking ? ExpoScreenTime.getBlockedWebDomains() : [],
   );
 
   const handleAppRemovalToggle = (value: boolean) => {
@@ -90,6 +91,12 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* Behavioural conformance suite */}
+      <SectionHeader title="Conformance" />
+      <View style={styles.buttonRow}>
+        <ActionButton title="Conformance suite" icon="checkmark-done" onPress={() => router.push("/conformance")} />
+      </View>
+
       {/* App Store Controls */}
       <SectionHeader title="App Store Controls" />
       <Card>

@@ -1,0 +1,350 @@
+/**
+ * Behavioural conformance suite.
+ *
+ * The same scripted scenarios run on every platform through the public API.
+ * They branch on `getCapabilities()`, never on `Platform.OS`: where a capability
+ * is off, the scenario asserts the coded `UNSUPPORTED` error instead of the
+ * behaviour. Driven by `example/conformance/suite.ad` (agent-device), which
+ * taps "Run" and waits for the verdict line.
+ *
+ * Shields are drawn by the OS outside the accessibility tree, so what they
+ * cover is not asserted here: the API-observable half (state, events, errors)
+ * is. Screenshots of the shields are the other half of the evidence.
+ *
+ * Fixtures, picked once with the buttons below:
+ * - `conformance_apps`: at least one app;
+ * - `conformance_category`: at least one category.
+ */
+import {
+  blockSelection,
+  clearMonitorEvents,
+  drainShieldInteractions,
+  getCapabilities,
+  getEnforcementGaps,
+  getMonitorEvents,
+  getMonitoredActivities,
+  getRemainingUnlockSeconds,
+  getScreenTimePermissionsAsync,
+  getSelectionMetadata,
+  isBlocked,
+  isScreenTimeError,
+  isTemporarilyUnlocked,
+  openApplication,
+  relock,
+  startMonitoring,
+  stopAllMonitoring,
+  stopMonitoring,
+  temporaryUnlock,
+  unblockAll,
+  type DateComponents,
+  type ScreenTimeCapabilities,
+} from "expo-screen-time";
+import { router } from "expo-router";
+import { useState } from "react";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+
+const APPS = "conformance_apps";
+const CATEGORY = "conformance_category";
+const ACTIVITY = "conformance_schedule";
+
+type Status = "pass" | "fail";
+type Result = { id: string; title: string; status: Status; detail: string };
+type Scenario = { id: string; title: string; run: (caps: ScreenTimeCapabilities) => Promise<string> };
+
+class Failure extends Error {}
+
+function expect(condition: boolean, message: string): void {
+  if (!condition) throw new Failure(message);
+}
+
+/** Runs `call` (sync or async) and asserts it fails with `code`. */
+async function expectCode(code: string, call: () => unknown): Promise<void> {
+  try {
+    await call();
+  } catch (error) {
+    expect(isScreenTimeError(error), `expected a ScreenTimeError ${code}, got ${String(error)}`);
+    expect((error as { code: string }).code === code, `expected ${code}, got ${(error as { code: string }).code}`);
+    return;
+  }
+  throw new Failure(`expected ${code}, the call succeeded`);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Hour and minute `minutes` from now. */
+function at(minutes: number): DateComponents {
+  const date = new Date(Date.now() + minutes * 60_000);
+  return { hour: date.getHours(), minute: date.getMinutes() };
+}
+
+/** Waits up to `ms` for `predicate`, polling. */
+async function eventually(predicate: () => Promise<boolean>, ms = 4000): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await predicate()) return true;
+    await sleep(250);
+  }
+  return predicate();
+}
+
+async function reset(caps: ScreenTimeCapabilities): Promise<void> {
+  if (caps.blocking === "none") return;
+  await stopAllMonitoring();
+  unblockAll();
+  await clearMonitorEvents();
+  drainShieldInteractions();
+}
+
+async function requireFixture(selectionId: string, kind: "applicationCount" | "categoryCount"): Promise<void> {
+  const metadata = await getSelectionMetadata(selectionId);
+  expect(!!metadata && metadata[kind] > 0, `fixture "${selectionId}" needs at least one ${kind === "applicationCount" ? "app" : "category"}: pick it first`);
+}
+
+const scenarios: Scenario[] = [
+  {
+    id: "C01",
+    title: "Capabilities are complete and consistent",
+    async run(caps) {
+      expect(["enforced", "friction", "none"].includes(caps.blocking), `blocking=${caps.blocking}`);
+      expect(caps.limits.minIntervalSeconds === 900, `minIntervalSeconds=${caps.limits.minIntervalSeconds}`);
+      expect(caps.limits.maxIntervalSeconds === 604800, `maxIntervalSeconds=${caps.limits.maxIntervalSeconds}`);
+      expect(caps.limits.maxMonitoredActivities === 19, `maxMonitoredActivities=${caps.limits.maxMonitoredActivities}`);
+      if (!caps.openApplication) await expectCode("UNSUPPORTED", () => openApplication("conformance"));
+      return `blocking=${caps.blocking}, usageReports=${caps.usageReports}, shieldOpenApp=${caps.shieldOpenApp}`;
+    },
+  },
+  {
+    id: "C02",
+    title: "Permissions report their steps",
+    async run(caps) {
+      if (caps.blocking === "none") {
+        await expectCode("UNSUPPORTED", () => getScreenTimePermissionsAsync());
+        return "UNSUPPORTED (blocking off)";
+      }
+      const response = await getScreenTimePermissionsAsync();
+      const step = response.steps.find((s) => s.id === "screenTime");
+      expect(!!step && step.required, "a required screenTime step");
+      expect(response.granted && step!.status === "granted", `screen time access must be granted to run the suite (status=${response.status})`);
+      return `granted, ${response.steps.length} step(s)`;
+    },
+  },
+  {
+    id: "C03",
+    title: "Rejections carry typed codes",
+    async run(caps) {
+      if (caps.blocking === "none") {
+        await expectCode("UNSUPPORTED", () => temporaryUnlock(60));
+        return "UNSUPPORTED (blocking off)";
+      }
+      await reset(caps);
+      await expectCode("NO_ACTIVE_BLOCK", () => temporaryUnlock(60));
+      await expectCode("SELECTION_NOT_FOUND", () => blockSelection("conformance_missing"));
+      await expectCode("INVALID_CONFIG", () =>
+        startMonitoring({ activityName: "expo_st_reserved", selectionId: APPS, schedule: { intervalStart: at(0), intervalEnd: at(20), repeats: false } }),
+      );
+      await expectCode("INVALID_CONFIG", () => stopMonitoring("expo_st_temporary_unlock"));
+      return "NO_ACTIVE_BLOCK, SELECTION_NOT_FOUND, INVALID_CONFIG ×2";
+    },
+  },
+  {
+    id: "C04",
+    title: "Manual block on and off",
+    async run(caps) {
+      if (caps.blocking === "none") {
+        await expectCode("UNSUPPORTED", () => blockSelection(APPS));
+        return "UNSUPPORTED (blocking off)";
+      }
+      await requireFixture(APPS, "applicationCount");
+      await reset(caps);
+      blockSelection(APPS);
+      expect(isBlocked(), "isBlocked() after blockSelection");
+      unblockAll();
+      expect(!isBlocked(), "isBlocked() false after unblockAll");
+      return "blocked, then lifted";
+    },
+  },
+  {
+    id: "C05",
+    title: "Allowlist validates and blocks",
+    async run(caps) {
+      if (caps.blocking === "none") {
+        await expectCode("UNSUPPORTED", () => blockSelection(APPS, { mode: "allowlist" }));
+        return "UNSUPPORTED (blocking off)";
+      }
+      await requireFixture(APPS, "applicationCount");
+      await requireFixture(CATEGORY, "categoryCount");
+      await reset(caps);
+      await expectCode("INVALID_CONFIG", () => blockSelection(CATEGORY, { mode: "allowlist" }));
+      blockSelection(APPS, { mode: "allowlist" });
+      expect(isBlocked(), "isBlocked() under an allowlist");
+      await expectCode("UNSUPPORTED", () => temporaryUnlock(60));
+      unblockAll();
+      expect(!isBlocked(), "isBlocked() false after unblockAll");
+      return "category rejected, allowlist on, untargeted unlock UNSUPPORTED, lifted";
+    },
+  },
+  {
+    id: "C06",
+    title: "Schedule starting now: one start, one end, one activity",
+    async run(caps) {
+      if (caps.blocking === "none") {
+        await expectCode("UNSUPPORTED", () =>
+          startMonitoring({ activityName: ACTIVITY, selectionId: APPS, schedule: { intervalStart: at(0), intervalEnd: at(20), repeats: false } }),
+        );
+        return "UNSUPPORTED (blocking off)";
+      }
+      await requireFixture(APPS, "applicationCount");
+      await reset(caps);
+      await startMonitoring({ activityName: ACTIVITY, selectionId: APPS, schedule: { intervalStart: at(0), intervalEnd: at(20), repeats: false } });
+      const activities = await getMonitoredActivities();
+      expect(activities.length === 1 && activities[0] === ACTIVITY, `getMonitoredActivities()=${JSON.stringify(activities)}`);
+      expect(isBlocked(), "the block applies at once inside the interval");
+      const started = await eventually(async () => (await getMonitorEvents(ACTIVITY)).some((e) => e.eventType === "intervalDidStart"));
+      expect(started, "intervalDidStart recorded");
+      await stopMonitoring(ACTIVITY);
+      expect((await getMonitoredActivities()).length === 0, "no activity after stopMonitoring");
+      const ended = await eventually(async () => (await getMonitorEvents(ACTIVITY)).some((e) => e.eventType === "intervalDidEnd"));
+      expect(ended, "intervalDidEnd recorded");
+      const events = await getMonitorEvents(ACTIVITY);
+      const count = (type: string) => events.filter((e) => e.eventType === type).length;
+      expect(count("intervalDidStart") === 1 && count("intervalDidEnd") === 1, `events: ${events.map((e) => e.eventType).join(", ")}`);
+      expect(new Set(events.map((e) => e.id)).size === events.length, "event ids are unique");
+      expect(!isBlocked(), "isBlocked() false once the only source stopped");
+      return "start ×1, end ×1, unique ids, block on then off";
+    },
+  },
+  {
+    id: "C07",
+    title: "Schedule limits are enforced",
+    async run(caps) {
+      if (caps.blocking === "none") return "skipped by C06 (UNSUPPORTED)";
+      await reset(caps);
+      await expectCode("INTERVAL_TOO_SHORT", () =>
+        startMonitoring({ activityName: ACTIVITY, selectionId: APPS, schedule: { intervalStart: at(0), intervalEnd: at(5), repeats: false } }),
+      );
+      return "a 5-minute interval rejects INTERVAL_TOO_SHORT";
+    },
+  },
+  {
+    id: "C08",
+    title: "Temporary unlock, renewal and relock",
+    async run(caps) {
+      if (caps.blocking === "none") return "covered by C03 (UNSUPPORTED)";
+      await requireFixture(APPS, "applicationCount");
+      await reset(caps);
+      blockSelection(APPS);
+      const grant = await temporaryUnlock(60);
+      expect(grant.budgetSeconds === 60, `budgetSeconds=${grant.budgetSeconds}`);
+      expect(isTemporarilyUnlocked() && !isBlocked(), "unlocked and not blocked during the grant");
+      expect(getRemainingUnlockSeconds() === 60, `remaining=${getRemainingUnlockSeconds()}`);
+      const renewal = await temporaryUnlock(120);
+      expect(renewal.budgetSeconds === 120 && getRemainingUnlockSeconds() === 120, "a renewal replaces the budget");
+      relock();
+      expect(isBlocked() && !isTemporarilyUnlocked(), "relock restores the block");
+      unblockAll();
+      return "grant 60, renew 120, relock";
+    },
+  },
+  {
+    id: "C09",
+    title: "Shield interactions and enforcement gaps are well-formed",
+    async run(caps) {
+      if (caps.blocking === "none") {
+        await expectCode("UNSUPPORTED", () => drainShieldInteractions());
+        await expectCode("UNSUPPORTED", () => getEnforcementGaps());
+        return "UNSUPPORTED (blocking off)";
+      }
+      const interactions = drainShieldInteractions();
+      for (const i of interactions) {
+        expect(["primary", "secondary"].includes(i.button) && typeof i.timestamp === "number", "interaction shape");
+        expect(i.target === null || ["application", "category", "webDomain"].includes(i.target.type), "interaction target");
+      }
+      const gaps = await getEnforcementGaps();
+      for (const g of gaps) expect(typeof g.from === "number" && (g.to === null || g.to >= g.from), "gap shape");
+      const open = await getEnforcementGaps(Date.now());
+      expect(open.every((g) => g.to === null || g.to >= Date.now() - 1000), "since keeps gaps still in progress");
+      return `${interactions.length} interaction(s), ${gaps.length} gap(s)`;
+    },
+  },
+];
+
+export default function Conformance() {
+  const [results, setResults] = useState<Result[]>([]);
+  const [running, setRunning] = useState(false);
+
+  const run = async () => {
+    setRunning(true);
+    setResults([]);
+    const caps = getCapabilities();
+    const done: Result[] = [];
+    for (const scenario of scenarios) {
+      let result: Result;
+      try {
+        result = { id: scenario.id, title: scenario.title, status: "pass", detail: await scenario.run(caps) };
+      } catch (error) {
+        result = { id: scenario.id, title: scenario.title, status: "fail", detail: error instanceof Error ? error.message : String(error) };
+      }
+      done.push(result);
+      setResults([...done]);
+    }
+    try {
+      await reset(caps);
+    } catch {
+      // leave the device as clean as possible; the verdict below already reports failures
+    }
+    setRunning(false);
+  };
+
+  const failed = results.filter((r) => r.status === "fail").length;
+  const verdict =
+    running || results.length < scenarios.length
+      ? running
+        ? `RUNNING ${results.length}/${scenarios.length}`
+        : "NOT RUN"
+      : failed === 0
+        ? `CONFORMANCE PASS ${results.length}/${scenarios.length}`
+        : `CONFORMANCE FAIL ${failed}/${scenarios.length}`;
+
+  return (
+    // The root stack header is translucent: let iOS inset the content below it.
+    <ScrollView contentInsetAdjustmentBehavior="automatic" contentContainerStyle={styles.page}>
+      <View style={styles.row}>
+        <Button title="Pick apps" onPress={() => router.push({ pathname: "/select-apps", params: { id: APPS } })} />
+        <Button title="Pick a category" onPress={() => router.push({ pathname: "/select-apps", params: { id: CATEGORY } })} />
+        <Button title="Run" onPress={run} disabled={running} />
+      </View>
+      <Text testID="conformance-verdict" style={[styles.verdict, failed > 0 && styles.failText]}>
+        {verdict}
+      </Text>
+      {results.map((r) => (
+        <View key={r.id} testID={`conformance-${r.id}`} style={styles.card}>
+          <Text style={[styles.title, r.status === "fail" && styles.failText]}>
+            {r.status === "pass" ? "PASS" : "FAIL"} {r.id} {r.title}
+          </Text>
+          <Text style={styles.detail}>{r.detail}</Text>
+        </View>
+      ))}
+    </ScrollView>
+  );
+}
+
+function Button({ title, onPress, disabled }: { title: string; onPress: () => void; disabled?: boolean }) {
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} disabled={disabled} style={[styles.button, disabled && styles.disabled]}>
+      <Text style={styles.buttonText}>{title}</Text>
+    </Pressable>
+  );
+}
+
+const styles = StyleSheet.create({
+  page: { padding: 16, gap: 10 },
+  row: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  button: { backgroundColor: "#007AFF", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 },
+  disabled: { opacity: 0.5 },
+  buttonText: { color: "white", fontWeight: "600" },
+  verdict: { fontSize: 16, fontWeight: "700", color: "#1a7f37" },
+  failText: { color: "#c62828" },
+  card: { padding: 10, borderRadius: 8, backgroundColor: "#f3f4f6", gap: 2 },
+  title: { fontWeight: "600" },
+  detail: { color: "#555", fontSize: 12 },
+});

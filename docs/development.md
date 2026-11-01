@@ -88,6 +88,30 @@ plugin and symlinks the module (`ln -sfn ../.. node_modules/expo-screen-time`), 
 a fresh clone works with just `bun install && bun run ios`. When adding a feature,
 wire it into the matching tab.
 
+### Conformance suite (runtime, both platforms)
+
+Settings › **Conformance suite** (`example/app/conformance.tsx`) runs scripted
+scenarios through the public API. Each scenario branches on `getCapabilities()`,
+never on `Platform.OS`: where a capability is off (Android today), it asserts
+the coded `UNSUPPORTED` error instead. The screen ends with
+`CONFORMANCE PASS n/n` or `CONFORMANCE FAIL k/n`.
+
+1. Once per install, on that screen: **Pick apps** (at least one app) and
+   **Pick a category** (at least one category). On iOS, Screen Time access must
+   be granted.
+2. Run the flow on the device:
+
+   ```bash
+   agent-device replay example/.maestro/conformance.yaml --maestro --platform ios -e APP_ID=<bundle id>
+   ```
+
+The suite asserts what the API can observe: state, events and error codes.
+Shields are drawn by the OS outside the accessibility tree, so what they cover
+still needs screenshots. When an API changes, add or adjust a scenario.
+
+The example screens guard their calls with `getCapabilities()` too, so the app
+launches on Android, where the module answers `UNSUPPORTED`.
+
 ## Docs site
 
 ```bash

@@ -1,0 +1,27 @@
+# Behavioural conformance suite.
+# Opens the example's Conformance screen, runs every scenario, and passes only
+# when the screen reports "CONFORMANCE PASS". The same flow runs on iOS and
+# Android: the scenarios branch on getCapabilities(), not on the platform.
+#
+# Fixtures (once per install): on the Conformance screen, "Pick apps" (at least
+# one app) and "Pick a category" (at least one category). Screen Time access
+# must be granted on iOS.
+#
+#   agent-device replay example/.maestro/conformance.yaml --maestro --platform ios -e APP_ID=<bundle id>
+#   maestro test example/.maestro/conformance.yaml -e APP_ID=<bundle id>
+appId: ${APP_ID}
+name: Behavioural conformance suite
+env:
+  APP_ID: com.magrinj.exposcreentime.example
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Settings.*"
+    timeout: 60000
+- tapOn: "Settings.*"
+- tapOn: ".*Conformance suite"
+- tapOn: "Run"
+- extendedWaitUntil:
+    visible: "CONFORMANCE PASS.*"
+    timeout: 120000
+- assertNotVisible: "FAIL C.*"

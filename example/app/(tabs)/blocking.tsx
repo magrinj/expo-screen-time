@@ -27,7 +27,9 @@ export default function BlockingScreen() {
   useFocusEffect(
     useCallback(() => {
       refresh();
-      setRemainingUnlock(ExpoScreenTime.getRemainingUnlockSeconds());
+      if (ExpoScreenTime.getCapabilities().blocking !== "none") {
+        setRemainingUnlock(ExpoScreenTime.getRemainingUnlockSeconds());
+      }
     }, [refresh])
   );
 
