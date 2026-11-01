@@ -8,7 +8,7 @@ sidebar_position: 4
 
 ## Apps & Categories
 
-### `blockSelection(selectionId: string)`
+### `blockSelection(selectionId: string, options?: { mode?: BlockMode })`
 
 Shield every app, category, and web domain in a stored selection. The selection
 is created by the [`<ActivityPicker />`](../components.md#activity-picker) under
@@ -28,7 +28,63 @@ progress.
 ExpoScreenTime.blockSelection('my-blocklist');
 ```
 
-Throws if no selection exists under that ID.
+Throws `SELECTION_NOT_FOUND` if no selection exists under that ID, and
+`INVALID_CONFIG` for an allowlist whose selection holds categories or web
+domains (below).
+
+#### Allowlist mode {#allowlist}
+
+`{ mode: 'allowlist' }` turns the rule around: **every app is shielded except
+the selection's apps**. Use it for a focus mode ("only Calendar, Mail and
+Slack") or a child profile.
+
+```typescript
+// The user picked the apps to KEEP in <ActivityPicker selectionId="focus-apps" />
+ExpoScreenTime.blockSelection('focus-apps', { mode: 'allowlist' });
+```
+
+- **Applications only, at least one.** An allowlist selection may not hold
+  categories or web domains: the call throws `INVALID_CONFIG` (iOS applies
+  an allowlist with `ActivityCategoryPolicy.all(except:)`, which takes
+  application tokens only; Android enforces the same rule). An empty
+  selection throws `INVALID_CONFIG` too, a missing one `SELECTION_NOT_FOUND`.
+  Check `getSelectionMetadata` before offering the option, or pick with a
+  picker that only lists apps. The selection is read live: a selection
+  edited *after* it was applied changes the running allowlist at the next
+  re-projection — one edited to hold categories or domains keeps allowing
+  its apps only, and one emptied allows nothing (every app is shielded).
+- **Never shielded (measured on iOS 26):** your own app, Phone and Settings,
+  so the user can always come back and change the rule. `unblockAll()` from
+  your app is the recovery path. A [shield action](./shields.md#shield-actions)
+  of `'unblock'` lifts the pressed app too, provided iOS reports the shield
+  by the app (see the snooze bullet).
+- **The web is shielded whole.** The application policy does not reach
+  Safari, so an allowlist also sets a web-domain policy of "every domain":
+  Safari opens, but every page shows the shield. Other browsers are
+  ordinary apps and are shielded unless allowed. Consequently **Safari
+  cannot be allowed** by an allowlist today; allow a third-party browser
+  instead if the user needs the web.
+- **Union with other sources.** The effective block is still the union of
+  every active source — a target is shielded if *any* source shields it.
+  An app allowed by the allowlist but listed by an active schedule or
+  `blockOnThreshold` blocklist is shielded, by that source. One exception,
+  inside a single schedule: a *category* in a `blockOnThreshold` selection
+  cannot override that schedule's own allowlist — list the apps directly
+  (see [monitoring](./monitoring.md)). Two allowlists at once (a manual one
+  and a schedule) allow only the apps in both.
+- **Snoozes** are per app: a snoozed app is excepted from the allowlist
+  until its budget is spent — when iOS reports the shield by the app. When
+  it reports an allowlist shield by the app's *category* instead, `'unblock'`
+  and snooze buttons close the shield without lifting anything (there is no
+  way to single out the app); the press is still recorded. Which callback
+  iOS uses for an allowlist shield is not yet measured on a device.
+- **`temporaryUnlock` rejects `UNSUPPORTED`** while an allowlist is active:
+  the unlock is a usage budget over the shielded apps, and "every other
+  app" cannot be metered. Lift the block with `unblockAll()` and apply it
+  again, or put the allowlist on a [schedule](./monitoring.md).
+- The mode is persisted with the selection: a relaunch, a relock or the
+  monitor extension re-applying the block restore the same allowlist.
+  `isBlocked()` is `true` while an allowlist is in force.
 
 ### `unblockAll()`
 
@@ -97,7 +153,9 @@ works even if your app is killed), and unspent budget expires at midnight.
 
 Suspends every active block — the manual block, the schedules and threshold
 blocks in progress — for a usage budget metered over all of them. Rejects with
-`NO_ACTIVE_BLOCK` if nothing is blocked. Budgets below 30 seconds are raised
+`NO_ACTIVE_BLOCK` if nothing is blocked, and with `UNSUPPORTED` while an
+[allowlist](#allowlist) is active (its shield covers every other app, which
+no usage meter can count). Budgets below 30 seconds are raised
 to 30 (iOS usage thresholds are unreliable under that). Calling it again
 replaces the active unlock with a fresh budget covering everything blocked or
 suspended at that moment — a renewal never rejects `NO_ACTIVE_BLOCK` while

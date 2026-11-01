@@ -102,10 +102,11 @@ public class ExpoScreenTimeModule: Module {
 
         // MARK: - Blocking
 
-        Function("blockSelection") { (selectionId: String) throws in
+        Function("blockSelection") { (selectionId: String, options: [String: Any]?) throws in
             guard SelectionStore.shared.has(selectionId) else {
                 throw screenTimeError(.selectionNotFound, "Selection '\(selectionId)' not found")
             }
+            let mode = try Self.blockMode(of: options?["mode"], selectionId: selectionId)
             // An explicit block supersedes any in-flight temporary unlock —
             // including a grant still being committed (unlockOperations) —
             // and every shield snooze.
@@ -116,10 +117,11 @@ public class ExpoScreenTimeModule: Module {
                 self.sharedDefaults.clearUnlockState()
                 _ = self.sharedDefaults.takeSnoozes()
                 // The manual block is one source among the schedules and
-                // thresholds in progress; it is persisted so a relock — from
-                // this process or from the monitor extension when the budget
-                // runs out — restores exactly this selection.
-                self.sharedDefaults.setBlockedSelectionId(selectionId)
+                // thresholds in progress; it is persisted — with its mode —
+                // so a relock — from this process or from the monitor
+                // extension when the budget runs out — restores exactly
+                // this selection, applied the same way.
+                self.sharedDefaults.setBlockedSelectionId(selectionId, mode: mode)
                 self.screenTimeManager.applyActiveSources()
             }
             self.stopSnoozeMeters()
@@ -179,10 +181,23 @@ public class ExpoScreenTimeModule: Module {
             // start in between) it re-arms the meter for the new union.
             var metered: Set<ShieldToken>? = nil
             for _ in 0..<Self.grantAttempts {
-                let tokens = BlockStateLock.shared.withLock {
-                    BlockComposition.union(of: self.sharedDefaults.activeBlockSources(honouringSuspension: false))
+                let (tokens, allowlisted) = BlockStateLock.shared.withLock { () -> (Set<ShieldToken>, Bool) in
+                    let sources = self.sharedDefaults.activeBlockSources(honouringSuspension: false)
+                    return (BlockComposition.union(of: sources), BlockComposition.containsAllowlist(sources))
+                }
+                // An allowlist shields "every other app": no usage event can
+                // name that set, so its budget could never be spent. Refuse
+                // rather than grant an unlock that only midnight ends.
+                // Either refusal on a later attempt leaves the meter the
+                // previous attempt armed without a grant — release it, unless
+                // a grant in progress still owns a meter.
+                guard !allowlisted else {
+                    if self.sharedDefaults.getUnlockBudgetSeconds() == 0 { self.stopUnlockMeter() }
+                    promise.reject(.unsupported, "A temporary unlock cannot meter an allowlist block (it shields every other app); use unblockAll or a schedule instead")
+                    return
                 }
                 guard !tokens.isEmpty else {
+                    if self.sharedDefaults.getUnlockBudgetSeconds() == 0 { self.stopUnlockMeter() }
                     promise.reject(.noActiveBlock, "Nothing is blocked — call blockSelection or start a schedule first")
                     return
                 }
@@ -197,8 +212,9 @@ public class ExpoScreenTimeModule: Module {
                 let grantedAt = Date()
                 let committed: Bool = BlockStateLock.shared.withLock {
                     let records = self.sharedDefaults.blockRecords()
-                    let current = BlockComposition.union(of: self.sharedDefaults.activeBlockSources(honouringSuspension: false))
-                    guard current == tokens else { return false }
+                    let sources = self.sharedDefaults.activeBlockSources(honouringSuspension: false)
+                    guard !BlockComposition.containsAllowlist(sources),
+                          BlockComposition.union(of: sources) == tokens else { return false }
                     // Persist what is suspended, then project every store from
                     // the state: the suspended sources' stores come out empty,
                     // and every later projection (here or in the monitor
@@ -330,6 +346,7 @@ public class ExpoScreenTimeModule: Module {
             result["appGroup"] = self.sharedDefaults.getAppGroup()
             result["defaultConfig"] = self.sharedDefaults.getDefaultShieldConfig()
             result["blockedSelectionId"] = self.sharedDefaults.getBlockedSelectionId()
+            result["blockedSelectionMode"] = self.sharedDefaults.getBlockedSelectionMode().rawValue
             result["activeIntervals"] = self.sharedDefaults.getActiveIntervalNames()
             result["shieldStores"] = self.sharedDefaults.shieldStoreNames()
             result["suspended"] = self.sharedDefaults.getSuspendedSources()?.dictionary
@@ -428,6 +445,15 @@ public class ExpoScreenTimeModule: Module {
             }
 
             do {
+                // `mode` says how `selectionId` is applied while the interval
+                // is active; validated before anything is registered or
+                // persisted. Thresholds keep blocklist semantics.
+                if let selectionId = config["selectionId"] as? String {
+                    _ = try Self.blockMode(of: config["mode"], selectionId: selectionId)
+                } else if try Self.requestedBlockMode(config["mode"]) == .allowlist {
+                    throw screenTimeError(.invalidConfig, "mode 'allowlist' requires a selectionId (the applications to allow)")
+                }
+
                 let deviceActivityEvents = try self.buildEvents(from: config)
 
                 // One DeviceActivity per logical name. `weekdays` no longer
@@ -689,6 +715,45 @@ public class ExpoScreenTimeModule: Module {
     }
 
     // MARK: - Private Helpers
+
+    /// The `BlockMode` a JS `mode` option names; `nil` and `"blocklist"`
+    /// are the default. Anything else is `INVALID_CONFIG`.
+    private static func requestedBlockMode(_ value: Any?) throws -> BlockMode {
+        guard let value = value else { return .blocklist }
+        guard let name = value as? String, let mode = BlockMode(rawValue: name) else {
+            throw screenTimeError(.invalidConfig, "mode must be 'blocklist' or 'allowlist'")
+        }
+        return mode
+    }
+
+    /// `requestedBlockMode`, checked against the selection it applies to.
+    /// An allowlist may hold applications only — iOS
+    /// `ActivityCategoryPolicy.all(except:)` takes application tokens, and
+    /// the contract rejects categories and web domains with `INVALID_CONFIG`
+    /// on both platforms — and at least one: an empty allowlist would shield
+    /// every app, which is far more likely a picker accident than a request.
+    /// The selection must exist (`SELECTION_NOT_FOUND`): an allowlist over
+    /// nothing is not "shield nothing". The selection is read natively (the
+    /// counts are metadata; JS never sees token contents).
+    private static func blockMode(of value: Any?, selectionId: String) throws -> BlockMode {
+        let mode = try requestedBlockMode(value)
+        guard mode == .allowlist else { return mode }
+        guard let selection = SelectionStore.shared.get(selectionId) else {
+            throw screenTimeError(.selectionNotFound, "Selection '\(selectionId)' not found")
+        }
+        let categories = selection.categoryTokens.count
+        let webDomains = selection.webDomainTokens.count
+        if categories > 0 || webDomains > 0 {
+            throw screenTimeError(
+                .invalidConfig,
+                "An allowlist may hold applications only; selection '\(selectionId)' has \(categories) categories and \(webDomains) web domains"
+            )
+        }
+        if selection.applicationTokens.isEmpty {
+            throw screenTimeError(.invalidConfig, "An allowlist needs at least one application; selection '\(selectionId)' is empty")
+        }
+        return mode
+    }
 
     @available(iOS 15.0, *)
     private func buildSchedule(from dict: [String: Any]) throws -> DeviceActivitySchedule {

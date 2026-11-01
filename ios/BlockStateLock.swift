@@ -45,7 +45,7 @@ import Foundation
 ///   check decide (`ActivityRegistration.currentRegistration`). The window
 ///   this leaves is the failed-registration rollback, documented there.
 /// - No `ManagedSettingsStore` write outside the lock. The stores are a
-///   projection of the state (`BlockComposition.storeContents`), recomputed
+///   projection of the state (`BlockComposition.storeShields`), recomputed
 ///   from the whole state inside the lock — never "clear everything, then
 ///   re-apply what I remember". A store leaves the registry only when that
 ///   recompute, under the lock, says it holds nothing.

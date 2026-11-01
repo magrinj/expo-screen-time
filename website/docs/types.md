@@ -77,6 +77,24 @@ type DateComponents = {
 };
 ```
 
+## `BlockMode`
+
+```typescript
+type BlockMode =
+  /** Shield the selection (default). */
+  | "blocklist"
+  /**
+   * Shield every app EXCEPT the selection's apps, and the whole web. The
+   * selection may hold applications only (else INVALID_CONFIG).
+   */
+  | "allowlist";
+```
+
+Accepted by [`blockSelection`](./api/blocking.md#allowlist) and
+[`MonitoringConfiguration.mode`](#monitoringconfiguration). The blocking page
+lists what an allowlist never shields, how it combines with other sources,
+and why `temporaryUnlock` rejects while one is active.
+
 ## `MonitoringConfiguration`
 
 ```typescript
@@ -87,6 +105,8 @@ type MonitoringConfiguration = {
   schedule: DeviceActivitySchedule;
   /** Selection to block while the interval is active — a stored selection ID */
   selectionId?: string;
+  /** How selectionId is applied while the interval is active (default "blocklist") */
+  mode?: BlockMode;
   events?: DeviceActivityEventThreshold[];
   /** Restrict to specific weekdays (1 = Sunday … 7 = Saturday) */
   weekdays?: number[];
@@ -213,14 +233,14 @@ try {
 | Code | When |
 |---|---|
 | `UNAUTHORIZED` | Family Controls authorization is missing (`startMonitoring`). |
-| `UNSUPPORTED` | The OS version is too old for the call. |
-| `SELECTION_NOT_FOUND` | `blockSelection` with a `selectionId` that was never saved. |
+| `UNSUPPORTED` | The OS version is too old for the call, or `temporaryUnlock` while an [allowlist](./api/blocking.md#allowlist) block is active. |
+| `SELECTION_NOT_FOUND` | `blockSelection` with a `selectionId` that was never saved; `startMonitoring` with `mode: "allowlist"` over one. |
 | `NO_ACTIVE_BLOCK` | `temporaryUnlock` while nothing is blocked. |
 | `EXCESSIVE_ACTIVITIES` | `startMonitoring` past the system limit of monitored activities. |
 | `INTERVAL_TOO_SHORT` | A schedule shorter than 15 minutes. |
 | `INTERVAL_TOO_LONG` | A schedule longer than a week. |
 | `INVALID_DATE_COMPONENTS` | A schedule the system rejects as invalid dates. |
-| `INVALID_CONFIG` | A missing or malformed argument: no `activityName` or `schedule`, a reserved activity name, missing interval bounds. |
+| `INVALID_CONFIG` | A missing or malformed argument: no `activityName` or `schedule`, a reserved activity name, missing interval bounds, an unknown `mode`, or an allowlist whose selection holds categories or web domains, or no app at all. |
 | `MONITORING_ERROR` | The system refused the monitoring request for another reason; the message carries its description. |
 | `MONITORING_ROLLBACK_FAILED` | Re-registering an activity failed and its previous schedule could not be restored: the activity is no longer monitored. |
 

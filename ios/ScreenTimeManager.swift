@@ -142,10 +142,7 @@ public class ScreenTimeManager: NSObject {
             let toggledOff: Bool = lock.withLock {
                 let shielding = sharedDefaults.shieldStoreNames().filter { Self.hasShields(store(named: $0)) }
                 for name in shielding {
-                    let store = store(named: name)
-                    store.shield.applications = nil
-                    store.shield.applicationCategories = nil
-                    store.shield.webDomains = nil
+                    store(named: name).clearShields()
                 }
                 return !shielding.isEmpty
             }
@@ -182,9 +179,7 @@ public class ScreenTimeManager: NSObject {
             reconstructLegacyActiveInterval()
             applyActiveSources()
             updateWebContentFilter()
-            defaultStore.shield.applications = nil
-            defaultStore.shield.applicationCategories = nil
-            defaultStore.shield.webDomains = nil
+            defaultStore.clearShields()
             defaultStore.webContent.blockedByFilter = nil
             sharedDefaults.removeLegacyActiveActivity()
             sharedDefaults.setLegacyStoreMigrated()
@@ -273,7 +268,7 @@ public class ScreenTimeManager: NSObject {
     /// under the lock — the registry is pruned only when the projection that
     /// emptied the store ran under it.
     private func write(_ shields: StoreShields<ShieldToken>, toStoreNamed name: String) {
-        if shields.tokens.isEmpty {
+        if shields.isEmpty {
             store(named: name).setShields(StoreShields(tokens: []))
             sharedDefaults.unregisterShieldStore(name)
         } else {
@@ -283,11 +278,7 @@ public class ScreenTimeManager: NSObject {
     }
 
     private static func hasShields(_ store: ManagedSettingsStore) -> Bool {
-        return !(store.shield.applications?.isEmpty ?? true) ||
-            // `.some(.none)` is a stored policy that shields nothing; comparing
-            // the Optional with `.none` means `nil`, so it read as "blocked".
-            (store.shield.applicationCategories.map { $0 != ShieldSettings.ActivityCategoryPolicy.none } ?? false) ||
-            !(store.shield.webDomains?.isEmpty ?? true)
+        return store.hasShields
     }
 
     /// Apply the domain list to the web store and persist it. Call under the lock.

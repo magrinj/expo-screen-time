@@ -170,6 +170,17 @@ class ShieldActionExtension: ShieldActionDelegate {
                 return .respond(.close)
             }
 
+            // An allowlist shields an app through `.all(except:)`, so when
+            // the system reports the shield by its category alone there is
+            // no way to single out the pressed app: nothing could be lifted
+            // (`unblock`) and a snooze meter over the whole category would
+            // spend its budget while the shield stays. Close instead; the
+            // press is recorded above. If the system reports such a shield
+            // by its application, the branches below apply as usual.
+            if case .category = target, owner?.mode == .allowlist, action == .unblock || Self.isSnooze(action) {
+                return .respond(.close)
+            }
+
             switch action {
             case .close:
                 // Close the shield, block remains active
@@ -191,6 +202,11 @@ class ShieldActionExtension: ShieldActionDelegate {
         case .snooze(let seconds):
             return snooze(target, requestedSeconds: seconds)
         }
+    }
+
+    private static func isSnooze(_ action: ConfiguredAction) -> Bool {
+        if case .snooze = action { return true }
+        return false
     }
 
     /// The action configured for `button` ("primary" or "secondary").
@@ -330,7 +346,7 @@ class ShieldActionExtension: ShieldActionDelegate {
         let shields = BlockComposition.storeShields(of: sources, snoozed: defaults.snoozedTargets())
         for name in Set(defaults.shieldStoreNames()).union(shields.keys) {
             let store = ManagedSettingsStore(named: ManagedSettingsStore.Name(name))
-            if let shields = shields[name] {
+            if let shields = shields[name], !shields.isEmpty {
                 defaults.registerShieldStore(name)
                 store.setShields(shields)
             } else {
@@ -362,9 +378,7 @@ class ShieldActionExtension: ShieldActionDelegate {
     }
 
     private static func hasShields(_ store: ManagedSettingsStore) -> Bool {
-        return !(store.shield.applications?.isEmpty ?? true) ||
-            (store.shield.applicationCategories.map { $0 != ShieldSettings.ActivityCategoryPolicy.none } ?? false) ||
-            !(store.shield.webDomains?.isEmpty ?? true)
+        return store.hasShields
     }
 
     private func lift(_ target: ShieldedTarget, in store: ManagedSettingsStore) {
@@ -374,7 +388,8 @@ class ShieldActionExtension: ShieldActionDelegate {
                 applications.remove(token)
                 store.shield.applications = applications.isEmpty ? nil : applications
             }
-            // The app may also be covered through its category.
+            // The app may also be covered through its category — or, under
+            // an allowlist, through `.all`.
             switch store.shield.applicationCategories {
             case .specific(let categories, var except)?:
                 except.insert(token)
@@ -391,8 +406,21 @@ class ShieldActionExtension: ShieldActionDelegate {
                 webDomains.remove(token)
                 store.shield.webDomains = webDomains.isEmpty ? nil : webDomains
             }
+            // Under an allowlist the web is shielded whole; the domain is excepted.
+            switch store.shield.webDomainCategories {
+            case .specific(let categories, var except)?:
+                except.insert(token)
+                store.shield.webDomainCategories = .specific(categories, except: except)
+            case .all(var except)?:
+                except.insert(token)
+                store.shield.webDomainCategories = .all(except: except)
+            default:
+                break
+            }
 
         case .category(let token):
+            // Only a listed category can be lifted; `.all` has no "except
+            // this category" (an allowlist shield is left in place).
             if case .specific(var categories, let except)? = store.shield.applicationCategories {
                 categories.remove(token)
                 store.shield.applicationCategories = categories.isEmpty

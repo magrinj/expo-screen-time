@@ -33,6 +33,9 @@ await ExpoScreenTime.startMonitoring({
   },
   // Selection to block during the interval — a stored selection ID
   selectionId: 'work-blocklist',
+  // Optional: how selectionId is applied — 'blocklist' (default) shields it,
+  // 'allowlist' shields every app EXCEPT its apps (applications only)
+  mode: 'blocklist',
   // Optional usage thresholds within the interval
   events: [
     {
@@ -56,6 +59,21 @@ of the 20 DeviceActivity slots), its events are recorded under `workHours`, and
 occurrences on Saturday and Sunday are ignored. A `blockOnThreshold` shield
 covers the **event's** selection (`social-apps` here, not the activity's
 `work-blocklist`) and is lifted with the interval.
+
+`mode: 'allowlist'` makes the interval a focus window: every app except the
+selection's apps is shielded while it is active, with the same rules as
+[`blockSelection`'s allowlist](./blocking.md#allowlist) — applications only
+(`startMonitoring` rejects `INVALID_CONFIG` for a selection with categories or
+web domains, or for an allowlist without `selectionId`), the web shielded
+whole, your app, Phone and Settings never shielded. `blockOnThreshold` events
+of the same activity keep blocklist semantics: an app their selection **lists
+directly** is shielded even if the allowlist allows it. A *category* in a
+threshold selection cannot override the allowlist of its own activity (the
+two share one store, where "every app except…" already covers the category
+and an allowed app inside it cannot be told apart), so list the apps. The
+selection is read live: editing it changes the running allowlist at the
+next re-projection. `temporaryUnlock` rejects `UNSUPPORTED` while such an
+interval is active.
 
 Activity names are free-form, except that they must not be empty, start with
 `expo_st_` (the module's own namespace — its temporary-unlock meter and its

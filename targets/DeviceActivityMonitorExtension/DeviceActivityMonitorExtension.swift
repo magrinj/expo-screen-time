@@ -339,7 +339,7 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     /// the store ran under it.
     private func write(_ shields: StoreShields<ShieldToken>, toStoreNamed name: String) {
         let store = ManagedSettingsStore(named: ManagedSettingsStore.Name(name))
-        if shields.tokens.isEmpty {
+        if shields.isEmpty {
             store.setShields(StoreShields(tokens: []))
             defaults.unregisterShieldStore(name)
         } else {

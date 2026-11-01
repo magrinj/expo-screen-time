@@ -22,6 +22,16 @@ func section(_ title: String) {
 
 typealias Source = BlockSource<String>
 
+// The test tokens carry their kind in their prefix, like the real ones do in
+// their case (`ShieldToken.blockTokenKind`).
+extension String: BlockToken {
+    var blockTokenKind: BlockTokenKind {
+        if hasPrefix("app:") { return .application }
+        if hasPrefix("cat:") { return .category }
+        return .webDomain
+    }
+}
+
 // Fixed calendar so the date tests do not depend on the machine's zone.
 var utc = Calendar(identifier: .gregorian)
 utc.timeZone = TimeZone(identifier: "UTC")!
@@ -658,6 +668,165 @@ check(BlockComposition.storeShields(of: [Source](), snoozed: ["app:insta"]).isEm
 let unlockedView = BlockComposition.sources(from: during, suspended: grant, resolve: resolve)
 check(BlockComposition.storeShields(of: unlockedView, snoozed: ["app:games"]).isEmpty,
       "a snooze on the one app a schedule started during the unlock shields ⇒ its store is empty too")
+
+// MARK: - Allowlist mode
+
+section("BlockMode — persisted form")
+check(BlockMode.stored("allowlist") == .allowlist && BlockMode.stored("blocklist") == .blocklist, "both modes read back")
+check(BlockMode.stored(nil) == .blocklist && BlockMode.stored("whitelist") == .blocklist && BlockMode.stored(3) == .blocklist,
+      "a missing or unknown value is the default (a record from a build without modes is a blocklist)")
+check(BlockMode.allowlist.rawValue == "allowlist" && BlockMode.blocklist.rawValue == "blocklist", "raw values are the JS names")
+
+section("BlockComposition.storeShields — an allowlist store shields every app except the allowed ones")
+let allowManual = Source(kind: .manual, startedAt: 0, tokens: ["app:calendar", "app:contacts"], mode: .allowlist)
+let allowOnly = BlockComposition.storeShields(of: [allowManual], snoozed: [])
+check(allowOnly.count == 1 && allowOnly[BlockStore.manual]?.allowlist == true, "the manual store is an allowlist store")
+check(allowOnly[BlockStore.manual]?.tokens.isEmpty == true, "it lists no shielded token of its own…")
+check(allowOnly[BlockStore.manual]?.excepted == ["app:calendar", "app:contacts"], "…and excepts exactly the allowed apps")
+check(allowOnly[BlockStore.manual]?.isEmpty == false, "an allowlist store is never empty — it stays in the registry")
+check(StoreShields<String>(tokens: []).isEmpty && !StoreShields<String>(tokens: ["app:x"]).isEmpty, "a blocklist store is empty without tokens")
+check(BlockComposition.storeContents(of: [allowManual]).isEmpty, "storeContents (the blocklist view) shows nothing for it")
+let allowNothing = Source(kind: .manual, startedAt: 0, tokens: [], mode: .allowlist)
+check(BlockComposition.storeShields(of: [allowNothing], snoozed: [])[BlockStore.manual] == StoreShields(tokens: [], excepted: [], allowlist: true),
+      "an empty allowlist shields every app (\"allow nothing\") — it is not omitted like an empty blocklist")
+let leakedCategory = Source(kind: .manual, startedAt: 0, tokens: ["app:calendar", "cat:social", "web:x.com"], mode: .allowlist)
+check(BlockComposition.storeShields(of: [leakedCategory], snoozed: [])[BlockStore.manual]?.excepted == ["app:calendar"],
+      "categories and web domains in an allowlist allow nothing (fail closed)")
+
+section("BlockComposition.storeShields — union with blocklist sources: shielded if ANY source shields it")
+// A schedule allowlist with a blockOnThreshold blocklist inside the same activity (one store).
+let allowA = Source(kind: .schedule(activityName: "A"), startedAt: 1_000, tokens: ["app:calendar", "app:mail", "app:slack"], mode: .allowlist)
+let thresholdInA = Source(kind: .threshold(activityName: "A"), startedAt: 1_000, tokens: ["app:slack", "cat:games", "web:reddit.com"])
+let mixed = BlockComposition.storeShields(of: [allowA, thresholdInA], snoozed: [])[BlockStore.activity("A")]
+check(mixed?.allowlist == true, "the activity's store stays an allowlist store")
+check(mixed?.excepted == ["app:calendar", "app:mail"], "an allowed app a blocklist shields directly is NOT excepted — the blocklist wins")
+check(mixed?.tokens == ["app:slack", "web:reddit.com"], "the blocklist's app and web domain are listed; its category is dropped (`.all` covers it)")
+// Across stores (manual allowlist + a schedule blocklist) each store is projected on its own; iOS merges them.
+let scheduleBlock = Source(kind: .schedule(activityName: "B"), startedAt: 2_000, tokens: ["app:calendar", "cat:social"])
+let acrossStores = BlockComposition.storeShields(of: [allowManual, scheduleBlock], snoozed: [])
+check(acrossStores[BlockStore.manual] == StoreShields(tokens: [], excepted: ["app:calendar", "app:contacts"], allowlist: true),
+      "the manual allowlist store is unchanged by another store's blocklist")
+check(acrossStores[BlockStore.activity("B")] == StoreShields(tokens: ["app:calendar", "cat:social"], excepted: [], allowlist: false),
+      "the schedule's blocklist store shields Calendar on its own — the union is the system's merge of the two stores")
+// Two allowlists in one store intersect: an app is unshielded only if every allowlist allows it.
+let allowA2 = Source(kind: .schedule(activityName: "A"), startedAt: 1_000, tokens: ["app:mail", "app:safari"], mode: .allowlist)
+check(BlockComposition.storeShields(of: [allowA, allowA2], snoozed: [])[BlockStore.activity("A")]?.excepted == ["app:mail"],
+      "two allowlists ⇒ the intersection of the allowed sets")
+let allowAndBlockApart = BlockComposition.storeShields(of: [allowManual, scheduleA], snoozed: [])
+check(allowAndBlockApart.count == 2 && allowAndBlockApart[BlockStore.activity("A")]?.allowlist == false,
+      "an allowlist in one store does not turn another store into one")
+
+section("BlockComposition.storeShields — snoozes under an allowlist")
+let snoozedUnderAllow = BlockComposition.storeShields(of: [allowManual], snoozed: ["app:music"])[BlockStore.manual]
+check(snoozedUnderAllow?.excepted == ["app:calendar", "app:contacts", "app:music"],
+      "a snoozed app joins the except list — the only way to lift one app from `.all`")
+check(snoozedUnderAllow?.allowlist == true && snoozedUnderAllow?.tokens.isEmpty == true, "the store stays an allowlist store")
+let webSnoozedUnderAllow = BlockComposition.storeShields(of: [allowManual], snoozed: ["web:docs.example.com"])[BlockStore.manual]
+check(webSnoozedUnderAllow?.excepted == ["app:calendar", "app:contacts", "web:docs.example.com"],
+      "a snoozed web domain is excepted from the web-wide policy")
+let catSnoozedUnderAllow = BlockComposition.storeShields(of: [allowManual], snoozed: ["cat:social"])[BlockStore.manual]
+check(catSnoozedUnderAllow == allowOnly[BlockStore.manual], "a snoozed category changes nothing under `.all` (no \"except this category\")")
+let mixedSnoozed = BlockComposition.storeShields(of: [allowA, thresholdInA], snoozed: ["app:slack"])[BlockStore.activity("A")]
+check(mixedSnoozed?.tokens == ["web:reddit.com"] && mixedSnoozed?.excepted == ["app:calendar", "app:mail", "app:slack"],
+      "a snooze on an app the blocklist shields inside an allowlist store lifts it from both: out of the list, into the exceptions")
+check(BlockComposition.storeShields(of: [allowManual, scheduleBlock], snoozed: ["app:calendar"])[BlockStore.activity("B")]?.tokens == ["cat:social"],
+      "a snooze still subtracts from the blocklist stores as before")
+check(BlockComposition.storeShields(of: [snoozeManual, snoozeA, snoozeB], snoozed: ["cat:social"]).values.allSatisfy { $0.excepted.isEmpty },
+      "a snoozed category is never an exception (the except lists take apps and web domains)")
+
+section("BlockSource.covers / BlockComposition.owner — an allowlist covers what it does not allow")
+check(!allowManual.covers(anyOf: ["app:calendar"]), "an allowed app is not covered")
+check(allowManual.covers(anyOf: ["app:music"]), "any other app is")
+check(allowManual.covers(anyOf: ["app:music", "cat:music"]) && allowManual.covers(anyOf: ["cat:music"]),
+      "the configuration's (app, category) pair and the action's bare category are covered")
+check(!allowManual.covers(anyOf: ["app:calendar", "cat:social"]),
+      "an ALLOWED app shielded through a category is not covered — the app decides, not the category (review finding 1)")
+// Reproduced: an allowlist schedule allowing Calendar, a manual blocklist on Social (Calendar ∈ Social).
+// The configuration for (Calendar, Social) used to resolve the schedule, which does not shield Calendar.
+let allowSchedule = Source(kind: .schedule(activityName: "focus"), startedAt: 5_000, tokens: ["app:calendar"], mode: .allowlist)
+let manualSocial = Source(kind: .manual, startedAt: 0, tokens: ["cat:social"])
+let calendarInSocial = BlockComposition.owner(ofAnyOf: ["app:calendar", "cat:social"], in: [allowSchedule, manualSocial])
+check(calendarInSocial?.kind == .manual, "an allowed app in a category a lower-precedence blocklist shields is owned by that blocklist")
+check(BlockComposition.owner(ofAnyOf: ["app:calendar", "cat:social"], in: [allowSchedule]) == nil,
+      "…and by nothing when only the allowlist is active")
+check(BlockComposition.handoffTargets(of: calendarInSocial, primary: "app:calendar", category: "cat:social") == ["app:calendar", "cat:social"],
+      "the blocklist shielding through the category is handed off under both tokens, as before")
+check(BlockComposition.owner(ofAnyOf: ["cat:social"], in: [allowSchedule, manualSocial], preferring: .manual, coveringTargets: true)?.kind == .manual,
+      "Calendar's action in the category context then reuses the manual block, which can lift the category")
+check(BlockComposition.owner(ofAnyOf: ["app:music", "cat:social"], in: [allowSchedule, manualSocial])?.kind == .schedule(activityName: "focus"),
+      "an app the allowlist shields is still owned by the allowlist (precedence over the manual block)")
+check(allowManual.covers(anyOf: ["web:reddit.com"]), "a web domain is covered (the web is shielded whole)")
+check(!allowManual.covers(anyOf: []), "no target ⇒ not covered")
+check(!allowNothing.covers(anyOf: []) && allowNothing.covers(anyOf: ["app:any"]), "an empty allowlist covers every app")
+check(manual.covers(anyOf: ["app:insta"]) && !manual.covers(anyOf: ["app:music"]), "a blocklist covers what it lists, as before")
+check(BlockComposition.owner(ofAnyOf: ["app:music"], in: [allowManual])?.kind == .manual, "the allowlist owns the shield of an app it does not allow")
+check(BlockComposition.owner(ofAnyOf: ["app:calendar"], in: [allowManual]) == nil, "…and nothing owns an allowed app (nothing shields it)")
+check(BlockComposition.owner(ofAnyOf: ["app:calendar"], in: [allowManual, scheduleBlock])?.kind == .schedule(activityName: "B"),
+      "an app allowed by the manual allowlist but shielded by a schedule is owned by the schedule")
+check(BlockComposition.owner(ofAnyOf: ["app:music"], in: [allowManual, scheduleBlock])?.kind == .manual,
+      "an app only the allowlist shields is owned by the allowlist, whatever else is active")
+check(BlockComposition.owner(ofAnyOf: ["app:slack", "cat:chat"], in: [allowA, thresholdInA])?.kind == .threshold(activityName: "A"),
+      "threshold > allowlist schedule for an app both shield")
+check(BlockComposition.owner(ofAnyOf: ["app:music"], in: [allowManual, allowA])?.kind == .schedule(activityName: "A"),
+      "two allowlists covering an app: the schedule wins the configuration, as among blocklists")
+check(BlockComposition.owner(ofAnyOf: ["app:music"], in: [allowManual, scheduleBlock], preferring: .manual)?.kind == .manual
+      && BlockComposition.owner(ofAnyOf: ["cat:music"], in: [allowManual, scheduleBlock], preferring: .manual, coveringTargets: true)?.kind == .manual,
+      "a persisted allowlist owner is reused by the action, in the application and the category context")
+check(BlockComposition.owner(ofAnyOf: ["app:calendar"], in: [allowManual, scheduleBlock], preferring: .manual)?.kind == .manual,
+      "a persisted owner is reused without a coverage check in the application context, as before")
+check(BlockComposition.owner(ofAnyOf: ["cat:social"], in: [scheduleBlock], preferring: .manual, coveringTargets: true)?.kind == .schedule(activityName: "B"),
+      "a persisted owner that ended falls back to the action's own resolution")
+check(BlockComposition.handoffTargets(of: allowManual, primary: "app:music", category: "cat:music") == ["app:music", "cat:music"],
+      "an allowlist owner is handed off under the app AND the category (it shields through every category)")
+check(BlockComposition.handoffTargets(of: scheduleBlock, primary: "app:calendar", category: "cat:music") == ["app:calendar"],
+      "a blocklist owner that covers the app directly is still handed off under the app only")
+
+section("BlockComposition.union / containsAllowlist — what a temporary unlock may meter")
+check(BlockComposition.union(of: [allowManual, scheduleBlock]) == ["app:calendar", "cat:social"],
+      "the union holds the blocklist tokens only — an allowlist's shielded set cannot be named")
+check(BlockComposition.containsAllowlist([allowManual, scheduleBlock]) && !BlockComposition.containsAllowlist([manual, scheduleA]),
+      "containsAllowlist flags the sources an unlock must refuse")
+check(BlockComposition.union(of: [allowManual]).isEmpty && BlockComposition.containsAllowlist([allowManual]),
+      "an allowlist alone: empty union but not NO_ACTIVE_BLOCK — UNSUPPORTED")
+
+section("BlockComposition.sources — modes come from the records")
+let allowSelections: [String: Set<String>] = [
+    "apps": ["app:calendar", "app:contacts"],
+    "mixed": ["app:calendar", "cat:social", "web:x.com"],
+    "empty": [],
+]
+let resolveAllow = { (id: String) -> Set<String>? in allowSelections[id] }
+let manualAllowRecords = BlockRecords(manualSelectionId: "apps", manualMode: .allowlist)
+let manualAllowSources = BlockComposition.sources(from: manualAllowRecords, suspended: nil, resolve: resolveAllow)
+check(manualAllowSources == [Source(kind: .manual, startedAt: 0, tokens: ["app:calendar", "app:contacts"], mode: .allowlist)],
+      "the manual block is an allowlist source when its persisted mode says so")
+check(BlockComposition.sources(from: BlockRecords(manualSelectionId: "apps"), suspended: nil, resolve: resolveAllow).first?.mode == .blocklist,
+      "without a mode it is a blocklist (records from before this build)")
+check(BlockComposition.sources(from: BlockRecords(manualSelectionId: "empty", manualMode: .allowlist), suspended: nil, resolve: resolveAllow)
+      == [Source(kind: .manual, startedAt: 0, tokens: [], mode: .allowlist)],
+      "an empty allowlist selection is a source (allow nothing)…")
+check(BlockComposition.sources(from: BlockRecords(manualSelectionId: "empty"), suspended: nil, resolve: resolveAllow).isEmpty,
+      "…while an empty blocklist selection is omitted, as before")
+check(BlockComposition.sources(from: BlockRecords(manualSelectionId: "gone", manualMode: .allowlist), suspended: nil, resolve: resolveAllow).isEmpty,
+      "a deleted selection shields nothing in either mode (no source)")
+check(BlockComposition.sources(from: BlockRecords(manualSelectionId: "mixed", manualMode: .allowlist), suspended: nil, resolve: resolveAllow).first?.tokens
+      == ["app:calendar"], "a selection edited to hold a category or a domain after an allowlist block allows its apps only")
+var scheduleAllowRecords = BlockRecords()
+scheduleAllowRecords.intervals["A"] = ActiveInterval(startedAt: 1_000, lifted: false)
+scheduleAllowRecords.scheduleSelectionIds["A"] = "apps"
+scheduleAllowRecords.scheduleModes["A"] = .allowlist
+scheduleAllowRecords.thresholdSelectionIds["A"] = ["mixed"]
+let scheduleAllowSources = BlockComposition.sources(from: scheduleAllowRecords, suspended: nil, resolve: resolveAllow)
+check(scheduleAllowSources.map(\.mode) == [.allowlist, .blocklist] && scheduleAllowSources.map(\.kind) == [.schedule(activityName: "A"), .threshold(activityName: "A")],
+      "a schedule takes its mode from its config; its blockOnThreshold shields keep blocklist semantics")
+check(scheduleAllowSources.last?.tokens == ["app:calendar", "cat:social", "web:x.com"], "the threshold shields the event's whole selection")
+let allowGrant = SuspendedSources.capturing(manualAllowRecords)
+check(allowGrant.manual && BlockComposition.sources(from: manualAllowRecords, suspended: allowGrant, resolve: resolveAllow).isEmpty,
+      "a suspension captured over an allowlist suspends it like any source (the unlock itself is refused upstream)")
+var liftedAllow = scheduleAllowRecords
+liftedAllow.intervals["A"] = ActiveInterval(startedAt: 1_000, lifted: true)
+check(BlockComposition.sources(from: liftedAllow, suspended: nil, resolve: resolveAllow).map(\.kind) == [.threshold(activityName: "A")],
+      "unblockAll lifts an allowlist schedule's interval like a blocklist's")
 
 section("UsageMeter — the ladder the unlock and the snoozes share")
 check(UsageMeter.budget(for: 5) == 30 && UsageMeter.budget(for: 30) == 30 && UsageMeter.budget(for: 31) == 31,

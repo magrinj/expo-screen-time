@@ -13,6 +13,44 @@ import Foundation
 /// tokens cannot be constructed outside the OS, so these rules are unit-tested
 /// with plain values (`scripts/swift-tests`). Copied verbatim into every
 /// extension target — keep the copies byte-identical.
+
+/// What kind of thing a token names. The composition needs it for the
+/// allowlist mode, whose shield is "every APPLICATION except these": only
+/// application tokens can be allowed, categories and web domains are always
+/// shielded under it.
+enum BlockTokenKind: Equatable {
+    case application
+    case category
+    case webDomain
+}
+
+/// A token the composition can reason about: `ShieldToken` in the app and
+/// the extensions, plain strings in the tests.
+protocol BlockToken: Hashable {
+    var blockTokenKind: BlockTokenKind { get }
+}
+
+/// How a source applies its selection — the `BlockMode` of the JS API.
+enum BlockMode: String, Equatable {
+    /// Shield the selection (default).
+    case blocklist
+    /// Shield every app EXCEPT the selection's applications — iOS
+    /// `ActivityCategoryPolicy.all(except:)` — and, because that policy does
+    /// not reach Safari (spike S2), every web domain too
+    /// (`WebDomainCategoryPolicy.all(except:)`). The selection's categories
+    /// and web domains, if it has any, allow nothing: `blockSelection` and
+    /// `startMonitoring` reject such a selection with `INVALID_CONFIG`, and
+    /// one edited into that shape afterwards is projected as its
+    /// applications alone (fail closed).
+    case allowlist
+
+    /// The mode a stored string means; anything but `allowlist` (including
+    /// a missing value) is the default.
+    static func stored(_ value: Any?) -> BlockMode {
+        return (value as? String).flatMap(BlockMode.init(rawValue:)) ?? .blocklist
+    }
+}
+
 /// Which source a `BlockSource` is. Hoisted out of the generic struct so a
 /// kind can be persisted and compared without a token type (`ShieldOwnerMap`):
 /// `BlockSource<String>.Kind` and `BlockSource<ShieldToken>.Kind` are one type.
@@ -72,15 +110,47 @@ enum BlockSourceKind: Equatable {
     }
 }
 
-struct BlockSource<Token: Hashable>: Equatable {
+struct BlockSource<Token: BlockToken>: Equatable {
     typealias Kind = BlockSourceKind
 
     var kind: Kind
     /// When the source became active, in Unix milliseconds. Among schedules
     /// the latest one wins a shared target.
     var startedAt: Double
-    /// Everything the source shields: applications, categories and web domains.
+    /// Blocklist: everything the source shields — applications, categories
+    /// and web domains. Allowlist: the applications it leaves unshielded
+    /// (every other app, every category and every web domain is shielded);
+    /// empty means "allow nothing".
     var tokens: Set<Token>
+    /// How `tokens` is applied. Thresholds are always blocklists.
+    var mode: BlockMode
+
+    init(kind: Kind, startedAt: Double, tokens: Set<Token>, mode: BlockMode = .blocklist) {
+        self.kind = kind
+        self.startedAt = startedAt
+        self.tokens = tokens
+        self.mode = mode
+    }
+
+    /// Whether this source shields any of `targets` — the tokens a shield
+    /// may have matched. A blocklist covers what it lists. An allowlist
+    /// covers every application it does not list and every web domain (the
+    /// web is shielded whole). A category in `targets` only says which
+    /// category the app was shielded through: when the app (or domain) is
+    /// named, IT decides — an allowed app in a category some blocklist
+    /// shields is not covered by the allowlist, whatever the category — and
+    /// only a bare category (the action callback's view) counts as covered,
+    /// since under `.all(except:)` every category is shielded.
+    func covers(anyOf targets: Set<Token>) -> Bool {
+        switch mode {
+        case .blocklist:
+            return !tokens.isDisjoint(with: targets)
+        case .allowlist:
+            let named = targets.filter { $0.blockTokenKind != .category }
+            guard !named.isEmpty else { return !targets.isEmpty }
+            return named.contains { $0.blockTokenKind == .webDomain || !tokens.contains($0) }
+        }
+    }
 }
 
 /// Names of the `ManagedSettingsStore`s the module writes. iOS allows about
@@ -127,10 +197,23 @@ enum BlockStore {
 }
 
 enum BlockComposition {
-    /// Everything shielded right now — what a temporary unlock must suspend
-    /// and meter.
+    /// Everything the BLOCKLIST sources shield right now — what a temporary
+    /// unlock must suspend and meter. Allowlist sources contribute nothing:
+    /// what they shield is "every other app", which no usage event can
+    /// name, so an unlock is refused while one is active
+    /// (`containsAllowlist`).
     static func union<Token>(of sources: [BlockSource<Token>]) -> Set<Token> {
-        return sources.reduce(into: Set<Token>()) { $0.formUnion($1.tokens) }
+        return sources.reduce(into: Set<Token>()) { union, source in
+            if source.mode == .blocklist {
+                union.formUnion(source.tokens)
+            }
+        }
+    }
+
+    /// Whether any of `sources` is an allowlist — the shields a usage meter
+    /// cannot cover.
+    static func containsAllowlist<Token>(_ sources: [BlockSource<Token>]) -> Bool {
+        return sources.contains { $0.mode == .allowlist }
     }
 
     /// The source whose shield configuration and actions apply to a shielded
@@ -139,10 +222,11 @@ enum BlockComposition {
     ///
     /// Precedence: a threshold that covers the target, then the LATEST
     /// schedule that covers it, then the manual block; `nil` when no active
-    /// source covers it (the default configuration applies).
+    /// source covers it (the default configuration applies). An allowlist
+    /// covers every app it does not allow (`BlockSource.covers`).
     static func owner<Token>(ofAnyOf targets: Set<Token>, in sources: [BlockSource<Token>]) -> BlockSource<Token>? {
         return sources
-            .filter { !$0.tokens.isDisjoint(with: targets) }
+            .filter { $0.covers(anyOf: targets) }
             .sorted { lhs, rhs in
                 if lhs.kind.precedence != rhs.kind.precedence {
                     return lhs.kind.precedence < rhs.kind.precedence
@@ -178,7 +262,7 @@ enum BlockComposition {
     ) -> BlockSource<Token>? {
         if let resolved = resolved,
            let source = sources.first(where: { $0.kind == resolved }),
-           !coveringTargets || !source.tokens.isDisjoint(with: targets) {
+           !coveringTargets || source.covers(anyOf: targets) {
             return source
         }
         return owner(ofAnyOf: targets, in: sources)
@@ -189,16 +273,22 @@ enum BlockComposition {
     ///
     /// The primary token — the app or the web domain — always: the entry is
     /// specific to it. The category only when the owner shields THROUGH it
-    /// (its tokens contain the category): that owner is then the
+    /// (a blocklist listing the category, or an allowlist, which shields
+    /// through every category): among blocklists that owner is the
     /// highest-precedence source covering the category, the same for every
     /// app in it, so the shared entry is consistent whoever writes it. An
     /// owner that covers the app directly is never written under the
-    /// category: with X and Y in category C, X's own owner used to land under
-    /// C and be served to Y's shield (last writer won). A `nil` owner means
-    /// no source covers either token, so both entries are cleared.
+    /// category: with X and Y in category C, X's own owner used to land
+    /// under C and be served to Y's shield (last writer won). A `nil` owner
+    /// means no source covers either token, so both entries are cleared.
+    /// While an allowlist is active the category entry does depend on the
+    /// app (an allowed app in C resolves past the allowlist): the action
+    /// extension then either sees the blocklist that really shields its
+    /// app, or an allowlist in the category context, which it declines to
+    /// act on (it cannot single out the app under `.all`).
     static func handoffTargets<Token>(of owner: BlockSource<Token>?, primary: Token, category: Token?) -> [Token] {
         var targets = [primary]
-        if let category = category, owner.map({ $0.tokens.contains(category) }) ?? true {
+        if let category = category, owner.map({ $0.covers(anyOf: [category]) }) ?? true {
             targets.append(category)
         }
         return targets
@@ -207,54 +297,114 @@ enum BlockComposition {
     /// What each store must contain for `sources` to be in force: the manual
     /// block in its store, and each activity's schedule and threshold shields
     /// merged into that activity's store. Stores absent from the result must
-    /// be empty.
+    /// be empty. The blocklist view — `storeShields` is what the writers
+    /// project, allowlists and snoozes included.
     static func storeContents<Token>(of sources: [BlockSource<Token>]) -> [String: Set<Token>] {
         var contents: [String: Set<Token>] = [:]
-        for source in sources where !source.tokens.isEmpty {
-            let storeName: String
-            switch source.kind {
-            case .manual:
-                storeName = BlockStore.manual
-            case .schedule(let activityName), .threshold(let activityName):
-                storeName = BlockStore.activity(activityName)
-            }
-            contents[storeName, default: []].formUnion(source.tokens)
+        for source in sources where source.mode == .blocklist && !source.tokens.isEmpty {
+            contents[storeName(of: source.kind), default: []].formUnion(source.tokens)
         }
         return contents
     }
 
-    /// `storeContents` with the shield snoozes in progress taken out: a
-    /// snoozed token is removed from every store, and the snoozed
-    /// applications are excepted from every store's category shields (an
-    /// app shielded through its category is matched by the category token,
-    /// which stays for the category's other apps). A store the snoozes
-    /// emptied is absent, like any other empty store. The other sources are
-    /// untouched: a snooze lifts exactly what was pressed, in every source
-    /// covering it, and only until its budget is spent.
+    /// The named store a source is projected into.
+    static func storeName(of kind: BlockSourceKind) -> String {
+        switch kind {
+        case .manual:
+            return BlockStore.manual
+        case .schedule(let activityName), .threshold(let activityName):
+            return BlockStore.activity(activityName)
+        }
+    }
+
+    /// What each store must shield for `sources` to be in force, with the
+    /// shield snoozes in progress taken out. Stores absent from the result
+    /// must be empty.
+    ///
+    /// Union rule: a target is shielded if ANY source shields it. Within a
+    /// store (an activity's schedule plus its thresholds; the manual block
+    /// alone):
+    /// - the blocklist sources' tokens are shielded, minus the snoozed ones;
+    /// - an allowlist turns the store into "every app except…" (and every
+    ///   web domain): the excepted apps are the ones EVERY allowlist of the
+    ///   store allows — two allowlists intersect, since an app one of them
+    ///   shields is shielded — minus the apps a blocklist of the store
+    ///   shields directly (any source shielding it wins), plus the snoozed
+    ///   apps. The blocklist's categories are dropped: `.all` already covers
+    ///   them, and an allowed app inside one cannot be told apart (tokens
+    ///   are opaque), so it stays allowed within that store. Its web domains
+    ///   are kept alongside the web-wide policy (an `unblock` edits them).
+    /// - a snoozed token is removed from every store, and the snoozed
+    ///   applications and web domains are excepted from every store's
+    ///   category and web policies (an app shielded through its category
+    ///   is matched by the category token, which stays for the category's
+    ///   other apps; under an allowlist the exception is the only way to
+    ///   lift it). A store the snoozes emptied is absent, like any other
+    ///   empty store. The other sources are untouched: a snooze lifts
+    ///   exactly what was pressed, in every source covering it, and only
+    ///   until its budget is spent.
     static func storeShields<Token>(of sources: [BlockSource<Token>], snoozed: Set<Token>) -> [String: StoreShields<Token>] {
+        var blocked: [String: Set<Token>] = [:]
+        var allowed: [String: Set<Token>] = [:]
+        for source in sources {
+            let name = storeName(of: source.kind)
+            switch source.mode {
+            case .blocklist:
+                blocked[name, default: []].formUnion(source.tokens)
+            case .allowlist:
+                let applications = Set(source.tokens.filter { $0.blockTokenKind == .application })
+                if let existing = allowed[name] {
+                    allowed[name] = existing.intersection(applications)
+                } else {
+                    allowed[name] = applications
+                }
+            }
+        }
+
         var shields: [String: StoreShields<Token>] = [:]
-        for (storeName, tokens) in storeContents(of: sources) {
-            let remaining = tokens.subtracting(snoozed)
-            if !remaining.isEmpty {
-                shields[storeName] = StoreShields(tokens: remaining, excepted: snoozed)
+        for name in Set(blocked.keys).union(allowed.keys) {
+            let listed = blocked[name] ?? []
+            var remaining = listed.subtracting(snoozed)
+            var excepted = Set(snoozed.filter { $0.blockTokenKind != .category })
+            let allowlist = allowed[name] != nil
+            if let allowedApplications = allowed[name] {
+                let shieldedDirectly = Set(listed.filter { $0.blockTokenKind == .application })
+                excepted.formUnion(allowedApplications.subtracting(shieldedDirectly))
+                remaining = Set(remaining.filter { $0.blockTokenKind != .category })
+            }
+            if allowlist || !remaining.isEmpty {
+                shields[name] = StoreShields(tokens: remaining, excepted: excepted, allowlist: allowlist)
             }
         }
         return shields
     }
 }
 
-/// What one named store must shield: `tokens` (applications, categories and
-/// web domains), with the applications among `excepted` left out of the
-/// category shields — the targets a shield snooze lifted. The writer passes
-/// `excepted`'s application tokens as the `except:` of the store's category
-/// policy; without categories it is not used.
-struct StoreShields<Token: Hashable>: Equatable {
+/// What one named store must shield. Blocklist (`allowlist` false): `tokens`
+/// — applications, categories and web domains — with the applications among
+/// `excepted` left out of the category shields (the targets a shield snooze
+/// lifted). Allowlist (`allowlist` true): every application except the
+/// applications in `excepted` (`ActivityCategoryPolicy.all(except:)`), every
+/// web domain except the web domains in `excepted`
+/// (`WebDomainCategoryPolicy.all(except:)`), plus the applications and web
+/// domains in `tokens`, which a blocklist of the same store shields
+/// directly. `tokens` never holds a category when `allowlist` is set.
+struct StoreShields<Token: BlockToken>: Equatable {
     var tokens: Set<Token>
     var excepted: Set<Token>
+    var allowlist: Bool
 
-    init(tokens: Set<Token>, excepted: Set<Token> = []) {
+    init(tokens: Set<Token>, excepted: Set<Token> = [], allowlist: Bool = false) {
         self.tokens = tokens
         self.excepted = excepted
+        self.allowlist = allowlist
+    }
+
+    /// Whether the store shields nothing at all — the condition under which
+    /// it leaves the registry. An allowlist shields something even when it
+    /// lists no token.
+    var isEmpty: Bool {
+        return tokens.isEmpty && !allowlist
     }
 }
 
@@ -273,23 +423,33 @@ struct ActiveInterval: Equatable {
 struct BlockRecords: Equatable {
     /// `blockSelection`'s selection, if any.
     var manualSelectionId: String?
+    /// How `blockSelection` applies it — persisted with the id, so a relock
+    /// or a relaunch restores the same shield.
+    var manualMode: BlockMode = .blocklist
     /// Activity → its interval in progress.
     var intervals: [String: ActiveInterval] = [:]
     /// Activity → the selection its schedule shields.
     var scheduleSelectionIds: [String: String] = [:]
+    /// Activity → how its schedule applies the selection (`mode` of its
+    /// stored configuration); absent means blocklist.
+    var scheduleModes: [String: BlockMode] = [:]
     /// Activity → the selections shielded by `blockOnThreshold` events that
-    /// fired inside the interval in progress.
+    /// fired inside the interval in progress. Always blocklists.
     var thresholdSelectionIds: [String: [String]] = [:]
 
     init(
         manualSelectionId: String? = nil,
+        manualMode: BlockMode = .blocklist,
         intervals: [String: ActiveInterval] = [:],
         scheduleSelectionIds: [String: String] = [:],
+        scheduleModes: [String: BlockMode] = [:],
         thresholdSelectionIds: [String: [String]] = [:]
     ) {
         self.manualSelectionId = manualSelectionId
+        self.manualMode = manualMode
         self.intervals = intervals
         self.scheduleSelectionIds = scheduleSelectionIds
+        self.scheduleModes = scheduleModes
         self.thresholdSelectionIds = thresholdSelectionIds
     }
 }
@@ -511,10 +671,15 @@ struct ShieldOwnerMap: Equatable {
 
 extension BlockComposition {
     /// The sources in force given the records and the suspension, resolving
-    /// selection ids into tokens with `resolve` (nil or empty = shields
-    /// nothing, and the source is omitted). Threshold shields need their
-    /// interval: a threshold list left behind by a late callback after the
-    /// interval was cleared shields nothing.
+    /// selection ids into tokens with `resolve` (nil = no such selection,
+    /// and the source is omitted). A blocklist resolving to an empty
+    /// selection shields nothing and is omitted too; an allowlist keeps its
+    /// applications only — a selection edited to hold categories or web
+    /// domains after it was applied allows nothing more — and an empty one
+    /// is kept: it shields every app ("allow nothing"), which is what was
+    /// asked. Threshold shields need their interval: a threshold list left
+    /// behind by a late callback after the interval was cleared shields
+    /// nothing.
     static func sources<Token>(
         from records: BlockRecords,
         suspended: SuspendedSources?,
@@ -524,20 +689,21 @@ extension BlockComposition {
 
         if let selectionId = records.manualSelectionId,
            !(suspended?.manual ?? false),
-           let tokens = resolve(selectionId), !tokens.isEmpty {
-            sources.append(BlockSource(kind: .manual, startedAt: 0, tokens: tokens))
+           let source = source(kind: .manual, startedAt: 0, mode: records.manualMode, tokens: resolve(selectionId)) {
+            sources.append(source)
         }
 
         for (activityName, interval) in records.intervals.sorted(by: { $0.key < $1.key }) {
             if !interval.lifted,
                !(suspended?.suspends(scheduleOf: activityName, startedAt: interval.startedAt) ?? false),
                let selectionId = records.scheduleSelectionIds[activityName],
-               let tokens = resolve(selectionId), !tokens.isEmpty {
-                sources.append(BlockSource(
-                    kind: .schedule(activityName: activityName),
-                    startedAt: interval.startedAt,
-                    tokens: tokens
-                ))
+               let source = source(
+                   kind: .schedule(activityName: activityName),
+                   startedAt: interval.startedAt,
+                   mode: records.scheduleModes[activityName] ?? .blocklist,
+                   tokens: resolve(selectionId)
+               ) {
+                sources.append(source)
             }
 
             var thresholdTokens = Set<Token>()
@@ -555,6 +721,25 @@ extension BlockComposition {
         }
 
         return sources
+    }
+
+    /// A manual or schedule source over a resolved selection, or `nil` when
+    /// it shields nothing (see `sources(from:suspended:resolve:)`).
+    private static func source<Token>(
+        kind: BlockSourceKind,
+        startedAt: Double,
+        mode: BlockMode,
+        tokens: Set<Token>?
+    ) -> BlockSource<Token>? {
+        guard let tokens = tokens else { return nil }
+        switch mode {
+        case .blocklist:
+            guard !tokens.isEmpty else { return nil }
+            return BlockSource(kind: kind, startedAt: startedAt, tokens: tokens, mode: .blocklist)
+        case .allowlist:
+            let applications = Set(tokens.filter { $0.blockTokenKind == .application })
+            return BlockSource(kind: kind, startedAt: startedAt, tokens: applications, mode: .allowlist)
+        }
     }
 }
 

@@ -58,6 +58,10 @@ enum SharedDefaultsKeys {
     /// The one global "last press" of builds with a global collapse. Removed
     /// on the next write.
     static let legacyShieldInteractionLast = "expo_st_shield_interaction_last"
+    /// The selection of the manual block (`blockSelection`) and how it is
+    /// applied (`BlockMode`, absent = blocklist). Written together.
+    static let blockedSelectionId = "expo_st_blocked_selection_id"
+    static let blockedSelectionMode = "expo_st_blocked_selection_mode"
 }
 
 extension BlockStateLock {
@@ -68,10 +72,18 @@ extension BlockStateLock {
 
 /// A token of any kind, so a selection's applications, categories and web
 /// domains can be handled as one set (`BlockSource.tokens`).
-enum ShieldToken: Hashable {
+enum ShieldToken: Hashable, BlockToken {
     case application(ApplicationToken)
     case category(ActivityCategoryToken)
     case webDomain(WebDomainToken)
+
+    var blockTokenKind: BlockTokenKind {
+        switch self {
+        case .application: return .application
+        case .category: return .category
+        case .webDomain: return .webDomain
+        }
+    }
 }
 
 extension ShieldToken {
@@ -127,17 +139,45 @@ extension ManagedSettingsStore {
     /// Put exactly `shields` in this store: its applications, its
     /// categories — with the snoozed applications excepted, so an app
     /// shielded through its category is lifted by its snooze too — and its
-    /// web domains; empty sets clear the setting. The one writer of shield
-    /// settings for the app and the extensions. Call under `BlockStateLock`.
+    /// web domains; empty sets clear the setting. An allowlist store shields
+    /// every app except the excepted applications (the allowed and the
+    /// snoozed ones) and every web domain except the excepted ones: Safari
+    /// is not reached by the application policy (spike S2), so the web is
+    /// shielded whole. The one writer of shield settings for the app and the
+    /// extensions. Call under `BlockStateLock`.
     func setShields(_ shields: StoreShields<ShieldToken>) {
         let applications = shields.tokens.applicationTokens
         let categories = shields.tokens.categoryTokens
         let webDomains = shields.tokens.webDomainTokens
         shield.applications = applications.isEmpty ? nil : applications
-        shield.applicationCategories = categories.isEmpty
-            ? nil
-            : .specific(categories, except: shields.excepted.applicationTokens)
+        if shields.allowlist {
+            shield.applicationCategories = .all(except: shields.excepted.applicationTokens)
+            shield.webDomainCategories = .all(except: shields.excepted.webDomainTokens)
+        } else {
+            shield.applicationCategories = categories.isEmpty
+                ? nil
+                : .specific(categories, except: shields.excepted.applicationTokens)
+            shield.webDomainCategories = nil
+        }
         shield.webDomains = webDomains.isEmpty ? nil : webDomains
+    }
+
+    /// Whether this store shields anything — apps, categories (a stored
+    /// `.none` policy shields nothing; comparing the Optional with `.none`
+    /// means `nil`, which read as "blocked"), web domains or web categories.
+    var hasShields: Bool {
+        return !(shield.applications?.isEmpty ?? true) ||
+            (shield.applicationCategories.map { $0 != ShieldSettings.ActivityCategoryPolicy.none } ?? false) ||
+            !(shield.webDomains?.isEmpty ?? true) ||
+            (shield.webDomainCategories.map { $0 != ShieldSettings.ActivityCategoryPolicy<WebDomain>.none } ?? false)
+    }
+
+    /// Remove every shield setting from this store. Call under `BlockStateLock`.
+    func clearShields() {
+        shield.applications = nil
+        shield.applicationCategories = nil
+        shield.webDomains = nil
+        shield.webDomainCategories = nil
     }
 }
 
@@ -510,13 +550,17 @@ class SharedDefaults {
 
     /// The records every process composes the block sources from.
     func blockRecords() -> BlockRecords {
-        var records = BlockRecords(manualSelectionId: getBlockedSelectionId())
+        var records = BlockRecords(manualSelectionId: getBlockedSelectionId(), manualMode: getBlockedSelectionMode())
         for activityName in getActiveIntervalNames() {
             if let interval = getActiveInterval(activityName: activityName) {
                 records.intervals[activityName] = interval
             }
             if let selectionId = getSelectionId(activityName: activityName) {
                 records.scheduleSelectionIds[activityName] = selectionId
+                let mode = BlockMode.stored(getMonitoringConfig(activityName: activityName)?["mode"])
+                if mode != .blocklist {
+                    records.scheduleModes[activityName] = mode
+                }
             }
         }
         for activityName in names(withPrefix: SharedDefaultsKeys.thresholdSelectionsPrefix) {
@@ -687,18 +731,32 @@ class SharedDefaults {
     // extension records consumption and re-applies the shield when the budget
     // is spent. All state lives here so both processes see the same numbers.
 
-    /// The selection of the manual block (`blockSelection`) — one block source.
-    func setBlockedSelectionId(_ selectionId: String?) {
+    /// The selection of the manual block (`blockSelection`) — one block
+    /// source — and how it is applied. The mode is persisted with the id so
+    /// a relock (from this process or the monitor extension) and a relaunch
+    /// restore the same shield; `nil` clears both.
+    func setBlockedSelectionId(_ selectionId: String?, mode: BlockMode = .blocklist) {
         if let selectionId = selectionId {
-            defaults?.set(selectionId, forKey: "expo_st_blocked_selection_id")
+            defaults?.set(selectionId, forKey: SharedDefaultsKeys.blockedSelectionId)
+            if mode == .blocklist {
+                defaults?.removeObject(forKey: SharedDefaultsKeys.blockedSelectionMode)
+            } else {
+                defaults?.set(mode.rawValue, forKey: SharedDefaultsKeys.blockedSelectionMode)
+            }
         } else {
-            defaults?.removeObject(forKey: "expo_st_blocked_selection_id")
+            defaults?.removeObject(forKey: SharedDefaultsKeys.blockedSelectionId)
+            defaults?.removeObject(forKey: SharedDefaultsKeys.blockedSelectionMode)
         }
         defaults?.synchronize()
     }
 
     func getBlockedSelectionId() -> String? {
-        return defaults?.string(forKey: "expo_st_blocked_selection_id")
+        return defaults?.string(forKey: SharedDefaultsKeys.blockedSelectionId)
+    }
+
+    /// How the manual block applies its selection; blocklist when none is set.
+    func getBlockedSelectionMode() -> BlockMode {
+        return BlockMode.stored(defaults?.string(forKey: SharedDefaultsKeys.blockedSelectionMode))
     }
 
     /// Grant `budgetSeconds` from `grantedAt`, suspending `suspended` — the

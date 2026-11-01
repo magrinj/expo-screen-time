@@ -3,6 +3,7 @@ import { router, useFocusEffect } from "expo-router";
 import ExpoScreenTime, {
   ApplicationLabel,
   CategoryLabel,
+  isScreenTimeError,
   WebDomainLabel,
 } from "expo-screen-time";
 import { useCallback, useEffect, useState } from "react";
@@ -76,6 +77,25 @@ export default function BlockingScreen() {
       Alert.alert("Success", `${totalSelected} items are now blocked`);
     } catch (error) {
       Alert.alert("Error", "Failed to block selection");
+    }
+  };
+
+  // Allowlist: shield every app EXCEPT the selected ones. Applications
+  // only — the native side rejects categories/domains with INVALID_CONFIG;
+  // the button is disabled in that case so the rule is visible up front.
+  const handleAllowOnly = async () => {
+    if (appsCount === 0) return;
+
+    try {
+      ExpoScreenTime.blockSelection(SELECTION_ID, { mode: "allowlist" });
+      await refresh();
+      Alert.alert(
+        "Allowlist applied",
+        `Every app except these ${appsCount} is now shielded (your app, Phone and Settings stay open; the web is shielded).`
+      );
+    } catch (error) {
+      const code = isScreenTimeError(error) ? error.code : "unknown";
+      Alert.alert("Error", `Failed to apply the allowlist (${code})`);
     }
   };
 
@@ -199,6 +219,19 @@ export default function BlockingScreen() {
             icon="shield"
             color={colors.primary}
             onPress={handleBlock}
+          />
+
+          {/* Allowlist Action — apps only */}
+          <ActionButton
+            title={
+              categoriesCount + domainsCount > 0
+                ? "Allow Only These (apps only)"
+                : "Allow Only These Apps"
+            }
+            icon="shield-checkmark"
+            color={colors.success}
+            disabled={appsCount === 0 || categoriesCount + domainsCount > 0}
+            onPress={handleAllowOnly}
           />
 
           {/* Unblock Action */}

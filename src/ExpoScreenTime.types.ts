@@ -257,6 +257,23 @@ export type DeviceActivityEventThreshold = {
   blockOnThreshold?: boolean;
 };
 
+/**
+ * How a block applies its selection — `blockSelection`'s `mode` option and
+ * `MonitoringConfiguration.mode`.
+ *
+ * - `"blocklist"` (default): shield the selection's apps, categories and
+ *   web domains.
+ * - `"allowlist"`: shield every app EXCEPT the selection's apps, and the
+ *   whole web. The selection may hold **applications only, at least one**:
+ *   one with categories or web domains, or an empty one, is rejected with
+ *   `INVALID_CONFIG` on both platforms (iOS `ActivityCategoryPolicy.all(except:)`
+ *   takes application tokens only). The host app, Phone and Settings are never shielded; the
+ *   web is shielded whole because the application policy does not reach
+ *   Safari, so Safari cannot be allowed. An allowlist cannot be metered by
+ *   `temporaryUnlock` (it rejects `UNSUPPORTED` while one is active).
+ */
+export type BlockMode = "blocklist" | "allowlist";
+
 export type MonitoringConfiguration = {
   /**
    * Stable identity of the activity: events, `getMonitoredActivities`,
@@ -277,6 +294,13 @@ export type MonitoringConfiguration = {
   events?: DeviceActivityEventThreshold[];
   /** Selection to block while the interval is active — references SelectionStore by ID */
   selectionId?: string;
+  /**
+   * How `selectionId` is applied while the interval is active. Default
+   * `"blocklist"`. `"allowlist"` shields every app except the selection's
+   * apps (applications only, else `INVALID_CONFIG`; it also requires
+   * `selectionId`); `blockOnThreshold` events keep blocklist semantics.
+   */
+  mode?: BlockMode;
   /**
    * Restrict the schedule to these weekdays (1 = Sunday … 7 = Saturday). The
    * activity is still registered once; occurrences on other days are ignored

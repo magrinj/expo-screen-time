@@ -1,6 +1,7 @@
 import { NativeModule, requireNativeModule } from "expo";
 
 import type {
+  BlockMode,
   EnforcementGap,
   ExpoScreenTimeModuleEvents,
   ScreenTimeCapabilities,
@@ -52,7 +53,15 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   allowAppInstallation(): void;
 
   // Blocking
-  blockSelection(selectionId: string): void;
+  /**
+   * Shield a stored selection — the manual block, one source among the
+   * schedules and thresholds in progress; it replaces the previous manual
+   * block. `mode: "allowlist"` shields every app except the selection's
+   * apps instead (applications only). Throws `SELECTION_NOT_FOUND`, or
+   * `INVALID_CONFIG` for an allowlist holding categories or web domains,
+   * or nothing at all.
+   */
+  blockSelection(selectionId: string, options?: { mode?: BlockMode }): void;
   unblockAll(): void;
   /** Whether anything is currently shielded (reflects the real ManagedSettings state). */
   isBlocked(): boolean;
@@ -72,7 +81,9 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
    * is spent, and any unspent budget expires at midnight.
    *
    * Budgets below 30s are raised to 30s (iOS usage thresholds are unreliable
-   * under that). Rejects with `NO_ACTIVE_BLOCK` when nothing is blocked.
+   * under that). Rejects with `NO_ACTIVE_BLOCK` when nothing is blocked,
+   * and with `UNSUPPORTED` while an allowlist block is active: it shields
+   * every other app, whose use no meter can count.
    * A new call replaces any active unlock; `blockSelection` cancels it.
    * @platform ios
    */
