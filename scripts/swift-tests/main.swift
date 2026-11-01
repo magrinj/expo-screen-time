@@ -624,6 +624,147 @@ let weeklyLegacy = ActivityRegistration.legacyActiveInterval(pointer: "M", confi
 check(weeklyLegacy?.logical == "M" && weeklyLegacy?.startedAt == ms(date(2026, 10, 31, 23, 0)),
       "a schedule that cannot be computed is reconstructed from now")
 
+// MARK: - Shield snooze (fix 1, spike S1)
+
+section("BlockComposition.storeShields — a snooze lifts the pressed target in every store, nothing else")
+// Instagram is in the manual selection and in schedule B; the Social category is shielded by A.
+let snoozeManual = Source(kind: .manual, startedAt: 0, tokens: ["app:insta", "app:tiktok"])
+let snoozeA = Source(kind: .schedule(activityName: "A"), startedAt: 2_000, tokens: ["cat:social", "web:reddit.com"])
+let snoozeB = Source(kind: .schedule(activityName: "B"), startedAt: 3_000, tokens: ["app:insta"])
+let snoozeSources = [snoozeManual, snoozeA, snoozeB]
+let noSnooze = BlockComposition.storeShields(of: snoozeSources, snoozed: [])
+check(noSnooze.mapValues(\.tokens) == BlockComposition.storeContents(of: snoozeSources) && noSnooze.values.allSatisfy { $0.excepted.isEmpty },
+      "no snooze ⇒ the plain store contents, nothing excepted")
+let instaSnoozed = BlockComposition.storeShields(of: snoozeSources, snoozed: ["app:insta"])
+check(instaSnoozed[BlockStore.manual]?.tokens == ["app:tiktok"], "the app is taken out of the manual store; the other app stays")
+check(instaSnoozed[BlockStore.activity("B")] == nil, "a store the snooze emptied is absent (B shielded only the app)")
+check(instaSnoozed[BlockStore.activity("A")]?.tokens == ["cat:social", "web:reddit.com"], "a store that does not cover the app is unchanged…")
+check(instaSnoozed[BlockStore.activity("A")]?.excepted == ["app:insta"],
+      "…but excepts the snoozed app from its categories (the app may be in Social)")
+check(instaSnoozed.values.allSatisfy { $0.excepted == ["app:insta"] }, "every remaining store carries the exception")
+let categorySnoozed = BlockComposition.storeShields(of: snoozeSources, snoozed: ["cat:social"])
+check(categorySnoozed[BlockStore.activity("A")]?.tokens == ["web:reddit.com"], "a category snooze lifts the category shield")
+check(categorySnoozed[BlockStore.manual]?.tokens == ["app:insta", "app:tiktok"] && categorySnoozed[BlockStore.activity("B")]?.tokens == ["app:insta"],
+      "an app shielded directly stays shielded under a category snooze")
+let webSnoozed = BlockComposition.storeShields(of: snoozeSources, snoozed: ["web:reddit.com"])
+check(webSnoozed[BlockStore.activity("A")]?.tokens == ["cat:social"], "a web-domain snooze lifts the domain")
+let twoSnoozed = BlockComposition.storeShields(of: snoozeSources, snoozed: ["app:insta", "app:tiktok"])
+check(twoSnoozed[BlockStore.manual] == nil && twoSnoozed[BlockStore.activity("B")] == nil && twoSnoozed.count == 1,
+      "two concurrent snoozes subtract both; the stores they empty are absent")
+check(BlockComposition.storeShields(of: snoozeSources, snoozed: ["app:unknown"]).mapValues(\.tokens) == noSnooze.mapValues(\.tokens),
+      "a snoozed target nothing shields changes no store")
+check(BlockComposition.storeShields(of: [Source](), snoozed: ["app:insta"]).isEmpty, "no sources ⇒ nothing, snoozes or not")
+// Composition with the unlock suspension: the snooze is applied to whatever the suspension leaves.
+let unlockedView = BlockComposition.sources(from: during, suspended: grant, resolve: resolve)
+check(BlockComposition.storeShields(of: unlockedView, snoozed: ["app:games"]).isEmpty,
+      "a snooze on the one app a schedule started during the unlock shields ⇒ its store is empty too")
+
+section("UsageMeter — the ladder the unlock and the snoozes share")
+check(UsageMeter.budget(for: 5) == 30 && UsageMeter.budget(for: 30) == 30 && UsageMeter.budget(for: 31) == 31,
+      "budgets are floored at one step (30 s)")
+check(UsageMeter.thresholds(budget: 30) == [30], "a 30 s budget is one step")
+check(UsageMeter.thresholds(budget: 100) == [30, 60, 90, 100], "steps every 30 s, then the budget")
+check(UsageMeter.thresholds(budget: 5) == [30], "a budget below the floor meters the floor")
+let longLadder = UsageMeter.thresholds(budget: 7_200)
+check(longLadder.count <= UsageMeter.maxSteps && longLadder.last == 7_200 && longLadder.first == 120,
+      "a 2 h budget coarsens to 120 s steps (\(longLadder.count) events)")
+check(UsageMeter.thresholds(budget: 1_800) == Array(stride(from: 30, through: 1_800, by: 30)), "30 min: 60 steps of 30 s")
+check(!UsageMeter.isPlausible(step: 30, elapsedSeconds: 0.05) && UsageMeter.isPlausible(step: 30, elapsedSeconds: 26),
+      "an immediate fire of the FIRST step (50 ms after the grant) is impossible; 5 s of slack for jitter")
+check(UsageMeter.isPlausible(step: 300, elapsedSeconds: 296) && !UsageMeter.isPlausible(step: 300, elapsedSeconds: 290),
+      "the slack is 5 s, well under a step")
+check(UsageMeter.slackSeconds < UsageMeter.stepSeconds, "the slack can never let a whole step through")
+check(UsageMeter.meterEnd(now: date(2026, 11, 1, 10, 0), calendar: utc) == date(2026, 11, 1, 23, 59, 59),
+      "a meter armed during the day ends at 23:59:59")
+check(UsageMeter.meterEnd(now: date(2026, 11, 1, 23, 43, 59), calendar: utc) == date(2026, 11, 1, 23, 59, 59),
+      "…down to 16 minutes before midnight")
+check(UsageMeter.meterEnd(now: date(2026, 11, 1, 23, 50), calendar: utc) == date(2026, 11, 2, 0, 6),
+      "armed later, it runs the system's 15-minute minimum (plus a minute) into the next day instead of being refused")
+check(UsageMeter.meterEnd(now: date(2026, 11, 1, 23, 50, 0, paris), calendar: paris) == date(2026, 11, 2, 0, 6, 0, paris),
+      "in the device's calendar")
+check(UsageMeter.seconds(300.0) == 300 && UsageMeter.seconds(NSNumber(value: 45)) == 45 && UsageMeter.seconds(12) == 12,
+      "durations arrive as Double, NSNumber or Int")
+check(UsageMeter.seconds("300") == nil && UsageMeter.seconds(nil) == nil && UsageMeter.seconds(Double.infinity) == nil,
+      "anything else is not a duration")
+
+section("ShieldSnooze — naming and persistence")
+let insta = ShieldSnooze(id: "ID-1", tokenKind: "application", token: "QUJD", budgetSeconds: 300, grantedAt: ms(date(2026, 11, 1, 10, 0)))
+check(insta.activityName == "expo_st_snooze_ID-1" && ShieldSnooze.isActivityName(insta.activityName),
+      "the meter is a reserved activity: \(insta.activityName)")
+check(ActivityRegistration.isInternalName(insta.activityName) && !ActivityRegistration.isValidLogicalName(insta.activityName),
+      "…hidden from getMonitoredActivities and unreachable through stopMonitoring")
+check(!ShieldSnooze.isActivityName("expo_st_temporary_unlock") && !ShieldSnooze.isActivityName("snooze"), "other names are not snooze meters")
+check(ShieldSnooze.stepEventName(90) == "expo_st_snooze_step_90" && ShieldSnooze.stepSeconds(ofEvent: "expo_st_snooze_step_90") == 90,
+      "step events carry their threshold")
+check(ShieldSnooze.stepSeconds(ofEvent: "expo_st_snooze_step_0") == nil && ShieldSnooze.stepSeconds(ofEvent: "expo_st_unlock_step_30") == nil
+      && ShieldSnooze.stepSeconds(ofEvent: "expo_st_snooze_step_x") == nil, "a zero, foreign or malformed step is not a step")
+check(insta.remainingSeconds == 300, "nothing consumed yet")
+var instaPlist = insta.dictionary
+check(ShieldSnooze(dictionary: instaPlist) == insta, "dictionary round trip")
+instaPlist["budgetSeconds"] = NSNumber(value: 300)
+instaPlist["grantedAt"] = NSNumber(value: insta.grantedAt)
+instaPlist["consumedSeconds"] = NSNumber(value: 60)
+check(ShieldSnooze(dictionary: instaPlist)?.consumedSeconds == 60 && ShieldSnooze(dictionary: instaPlist)?.grantedAt == insta.grantedAt,
+      "NSNumber fields are read back")
+check(ShieldSnooze(dictionary: ["id": "x"]) == nil && ShieldSnooze(dictionary: ["id": "", "tokenKind": "application", "token": "QUJD", "budgetSeconds": 30, "grantedAt": 1.0]) == nil
+      && ShieldSnooze(dictionary: ["id": "x", "tokenKind": "application", "token": "QUJD", "budgetSeconds": 0, "grantedAt": 1.0]) == nil,
+      "malformed records are dropped")
+let tiktok = ShieldSnooze(id: "ID-2", tokenKind: "application", token: "VElL", budgetSeconds: 60, grantedAt: ms(date(2026, 11, 1, 10, 5)))
+check(insta.covers(sameTargetAs: ShieldSnooze(id: "ID-9", tokenKind: "application", token: "QUJD", budgetSeconds: 1, grantedAt: 0))
+      && !insta.covers(sameTargetAs: tiktok)
+      && !insta.covers(sameTargetAs: ShieldSnooze(id: "ID-9", tokenKind: "category", token: "QUJD", budgetSeconds: 1, grantedAt: 0)),
+      "the same target is the same kind and token, whatever the id")
+
+section("ShieldSnoozes — today only")
+let yesterday = ShieldSnooze(id: "ID-0", tokenKind: "webDomain", token: "UkVE", budgetSeconds: 600, grantedAt: ms(date(2026, 10, 31, 23, 50)))
+check(ShieldSnoozes.current([yesterday, insta, tiktok], now: date(2026, 11, 1, 12, 0), calendar: utc) == [insta, tiktok],
+      "a snooze granted on another calendar day is void, even if its meter never reported the day's end")
+check(ShieldSnoozes.current([yesterday], now: date(2026, 10, 31, 23, 59), calendar: utc) == [yesterday], "…and in force on its own day")
+check(ShieldSnoozes.current([insta], now: date(2026, 11, 1, 23, 30, 0, paris), calendar: paris) == [insta],
+      "the day is the device's calendar day")
+
+section("ShieldSnoozes.granting — concurrent snoozes; the same target restarts")
+let one = ShieldSnoozes.granting(insta, in: [])
+check(one.snoozes == [insta] && one.replaced.isEmpty, "the first snooze")
+let two = ShieldSnoozes.granting(tiktok, in: one.snoozes)
+check(two.snoozes == [insta, tiktok] && two.replaced.isEmpty, "a snooze on another target runs alongside: the first keeps its budget")
+let instaAgain = ShieldSnooze(id: "ID-3", tokenKind: "application", token: "QUJD", budgetSeconds: 120, grantedAt: ms(date(2026, 11, 1, 10, 9)))
+let again = ShieldSnoozes.granting(instaAgain, in: two.snoozes)
+check(again.snoozes == [tiktok, instaAgain] && again.replaced == [insta],
+      "the same target snoozed again gets a fresh budget and id; the old snooze is returned for its meter to be released")
+
+section("ShieldSnoozes.recording — the meter's steps")
+let t0 = date(2026, 11, 1, 10, 0)
+let list = [insta, tiktok]
+let staleStep = ShieldSnoozes.recording(event: "expo_st_snooze_step_30", ofActivity: "expo_st_snooze_GONE", in: list, now: t0.addingTimeInterval(40))
+check(staleStep.outcome == .stale && staleStep.snoozes == list, "a step of a meter without a snooze (spent, replaced, ended) is ignored")
+let early = ShieldSnoozes.recording(event: "expo_st_snooze_step_300", ofActivity: insta.activityName, in: list, now: t0.addingTimeInterval(5))
+check(early.outcome == .implausible && early.snoozes == list,
+      "an immediate fire of the final step (5 s after the grant) is ignored — the budget is not spent instantly")
+let immediate = ShieldSnoozes.recording(event: "expo_st_snooze_step_30", ofActivity: insta.activityName, in: list, now: t0.addingTimeInterval(0.05))
+check(immediate.outcome == .implausible && immediate.snoozes == list,
+      "an immediate fire of the first step (the app was in use just before the press) is ignored — a 30 s snooze is not spent at once")
+let step30 = ShieldSnoozes.recording(event: "expo_st_snooze_step_30", ofActivity: insta.activityName, in: list, now: t0.addingTimeInterval(45))
+check(step30.outcome == .consumed && step30.snoozes[0].consumedSeconds == 30 && step30.snoozes[1] == tiktok,
+      "a plausible step is consumed; the other snooze is untouched")
+let step90 = ShieldSnoozes.recording(event: "expo_st_snooze_step_90", ofActivity: insta.activityName, in: step30.snoozes, now: t0.addingTimeInterval(100))
+let step60Late = ShieldSnoozes.recording(event: "expo_st_snooze_step_60", ofActivity: insta.activityName, in: step90.snoozes, now: t0.addingTimeInterval(101))
+check(step90.snoozes[0].consumedSeconds == 90 && step60Late.outcome == .consumed && step60Late.snoozes[0].consumedSeconds == 90,
+      "steps out of order never move consumption backwards")
+check(step60Late.snoozes[0].remainingSeconds == 210, "remaining = budget − consumed")
+let spent = ShieldSnoozes.recording(event: "expo_st_snooze_step_300", ofActivity: insta.activityName, in: step90.snoozes, now: t0.addingTimeInterval(400))
+check(spent.outcome == .spent && spent.snoozes == [tiktok], "the final step spends the snooze: it is gone, the other stays")
+let overshoot = ShieldSnoozes.recording(event: "expo_st_snooze_step_120", ofActivity: tiktok.activityName, in: spent.snoozes, now: t0.addingTimeInterval(900))
+check(overshoot.outcome == .spent && overshoot.snoozes.isEmpty, "a step past the budget spends it too")
+let malformed = ShieldSnoozes.recording(event: "expo_st_unlock_step_30", ofActivity: insta.activityName, in: list, now: t0.addingTimeInterval(40))
+check(malformed.outcome == .malformed && malformed.snoozes == [tiktok], "an event that is not a step on a live snooze ends it — fail closed")
+
+section("ShieldSnoozes.ending — the day's end, or a stop")
+let dayEnd = ShieldSnoozes.ending(activityName: insta.activityName, in: list)
+check(dayEnd.ended && dayEnd.snoozes == [tiktok], "the meter's interval end forgets that snooze only")
+let alreadyGone = ShieldSnoozes.ending(activityName: insta.activityName, in: [tiktok])
+check(!alreadyGone.ended && alreadyGone.snoozes == [tiktok], "the end of a meter the app already stopped (snooze taken first) does nothing")
+
 // MARK: - Cross-process mutex (pass 3)
 
 section("BlockStateLock — holders of the same file serialize; nesting; release on throw")

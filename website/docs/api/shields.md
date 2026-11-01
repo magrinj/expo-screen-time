@@ -75,18 +75,66 @@ ExpoScreenTime.setShieldActions({
 - `'close'` — close the blocked app; the block stays.
 - `'unblock'` — lift the shield on this app in every source that shields it
   (the manual block and each schedule in progress), until a block is applied
-  again (the next `blockSelection()`, `relock()`, or the next start of a
-  monitored interval). For an app shielded through its category, that category
-  is lifted; for a web domain, that domain.
+  again (the next `blockSelection()`, `relock()`, the next start of a
+  monitored interval, or any full re-projection of the shields — a snooze
+  press, a snooze ending). For an app shielded through its category, that
+  category is lifted; for a web domain, that domain.
 - `'defer'` — keep the shield on screen and let it redraw. The press is still
   recorded for [`drainShieldInteractions()`](./blocking.md).
-- `{ type: 'snooze', duration }` — **not functional yet**: it behaves like
-  `'close'`. The press is recorded, the app closes and the block stays. A
-  usage-based snooze (`duration` seconds of actual use, like
-  `temporaryUnlock`) is planned.
+- `{ type: 'snooze', duration }` — lift the shield on **this app only**, for
+  `duration` seconds of its **use** (a usage budget, like
+  [`temporaryUnlock`](./blocking.md#temporary-unlock-earned-time)), then
+  shield it again. See [Snooze](#snooze) below.
 
 Up to 0.1.1, a native key mismatch made every configured action behave like
-`'close'`.
+`'close'`, and `snooze` behaved like `'close'` until it was implemented.
+
+### Snooze
+
+Pressing a snooze button lifts the shield on what was pressed — the app, the
+web domain, or, for an app shielded through its category, that category (iOS
+identifies such a shield by its category only) — and nothing else: every
+other shielded app stays shielded, and the sources covering the snoozed
+target stay active (a schedule in progress keeps its interval, its events and
+its shield configuration). The shield disappears and the user stays in the
+app they asked for; it does **not** close the app.
+
+`duration` is a budget of **seconds of use of that target**, not wall-clock
+time: it is spent only while the snoozed app is in the foreground, pauses when
+the user leaves, and the target is shielded again — by whatever sources still
+cover it — once the budget is spent, enforced by the DeviceActivityMonitor
+extension even if your app never runs. Budgets below 30 seconds are raised to
+30 (iOS usage thresholds are unreliable under that); consumption is reported
+in ~30-second steps. Unspent budget expires at midnight. Use of the target
+before the press does not count.
+
+Snoozes are independent of one another and of `temporaryUnlock`:
+
+- Pressing snooze on a **second app** starts a second snooze with its own
+  budget; the first keeps running. Pressing it again on the same target (for
+  instance after its category was snoozed while the app is also shielded
+  directly) restarts that target's budget.
+- A `temporaryUnlock` granted while a snooze runs meters the snoozed app too;
+  when the unlock's budget is spent, the snooze still in progress keeps its
+  target lifted, and the other way round.
+- `blockSelection()`, `unblockAll()` and `relock()` end every snooze.
+  `stopMonitoring()` / `stopAllMonitoring()` and a schedule ending do not: a
+  snooze outlives the source that was shielding its target, and still applies
+  if another source shields it later that day.
+
+Each snooze in progress occupies one of the 20 DeviceActivity slots iOS gives
+an app (an internal activity, never listed by `getMonitoredActivities`) until
+it is spent or the day ends. When no slot is free — 19 activities of yours
+plus an unlock in progress, say — the press cannot arm a meter: the shield
+stays and the app closes, like `'close'`. Keep headroom if you rely on
+snoozes.
+
+```typescript
+ExpoScreenTime.setShieldActions({
+  primaryAction: 'close',
+  secondaryAction: { type: 'snooze', duration: 5 * 60 }, // 5 minutes of use
+});
+```
 
 ### `setShieldActionsForActivity(activityName: string, config: ShieldActionConfig)`
 

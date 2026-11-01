@@ -13,7 +13,8 @@ import FamilyControls
 /// it. Every source has its own named store, written by projecting the App
 /// Group state, so ending one source never touches another's shields. Before
 /// this, the app and both extensions shared the one unnamed store and any
-/// `intervalDidEnd` cleared every shield on the device.
+/// `intervalDidEnd` cleared every shield on the device. The shield snoozes in
+/// progress (`ShieldSnooze`) are subtracted by the same projection.
 ///
 /// The unnamed store now only carries the app-control settings.
 public class ScreenTimeManager: NSObject {
@@ -75,9 +76,9 @@ public class ScreenTimeManager: NSObject {
     public func applyActiveSources() {
         lock.withLock {
             let sources = sharedDefaults.activeBlockSources()
-            let contents = BlockComposition.storeContents(of: sources)
-            for name in Set(sharedDefaults.shieldStoreNames()).union(contents.keys) {
-                write(contents[name] ?? [], toStoreNamed: name)
+            let shields = BlockComposition.storeShields(of: sources, snoozed: sharedDefaults.snoozedTargets())
+            for name in Set(sharedDefaults.shieldStoreNames()).union(shields.keys) {
+                write(shields[name] ?? StoreShields(tokens: []), toStoreNamed: name)
             }
             sharedDefaults.pruneShieldOwners(keeping: sources.map(\.kind))
         }
@@ -88,15 +89,18 @@ public class ScreenTimeManager: NSObject {
     /// token from them until the next projection that covers them).
     public func applyStore(forActivity activityName: String) {
         lock.withLock {
-            let contents = BlockComposition.storeContents(of: sharedDefaults.activeBlockSources())
+            let shields = BlockComposition.storeShields(
+                of: sharedDefaults.activeBlockSources(),
+                snoozed: sharedDefaults.snoozedTargets()
+            )
             let name = BlockStore.activity(activityName)
-            write(contents[name] ?? [], toStoreNamed: name)
+            write(shields[name] ?? StoreShields(tokens: []), toStoreNamed: name)
         }
     }
 
     public func clearStore(named name: String) {
         lock.withLock {
-            write([], toStoreNamed: name)
+            write(StoreShields(tokens: []), toStoreNamed: name)
         }
     }
 
@@ -268,24 +272,14 @@ public class ScreenTimeManager: NSObject {
     /// step: registered before shields go in, unregistered once emptied. Call
     /// under the lock — the registry is pruned only when the projection that
     /// emptied the store ran under it.
-    private func write(_ tokens: Set<ShieldToken>, toStoreNamed name: String) {
-        if tokens.isEmpty {
-            write([], to: store(named: name))
+    private func write(_ shields: StoreShields<ShieldToken>, toStoreNamed name: String) {
+        if shields.tokens.isEmpty {
+            store(named: name).setShields(StoreShields(tokens: []))
             sharedDefaults.unregisterShieldStore(name)
         } else {
             sharedDefaults.registerShieldStore(name)
-            write(tokens, to: store(named: name))
+            store(named: name).setShields(shields)
         }
-    }
-
-    /// Call under the lock.
-    private func write(_ tokens: Set<ShieldToken>, to store: ManagedSettingsStore) {
-        let applications = tokens.applicationTokens
-        let categories = tokens.categoryTokens
-        let webDomains = tokens.webDomainTokens
-        store.shield.applications = applications.isEmpty ? nil : applications
-        store.shield.applicationCategories = categories.isEmpty ? nil : .specific(categories)
-        store.shield.webDomains = webDomains.isEmpty ? nil : webDomains
     }
 
     private static func hasShields(_ store: ManagedSettingsStore) -> Bool {

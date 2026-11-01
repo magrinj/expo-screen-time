@@ -58,10 +58,17 @@ covers the **event's** selection (`social-apps` here, not the activity's
 `work-blocklist`) and is lifted with the interval.
 
 Activity names are free-form, except that they must not be empty, start with
-`expo_st_` (the module's own namespace — its temporary-unlock meter lives
-there) or contain `__expo_st_gen_`, which the module appends to the name it
-registers with the system. `startMonitoring` and `stopMonitoring` both reject
-such a name with `INVALID_CONFIG`.
+`expo_st_` (the module's own namespace — its temporary-unlock meter and its
+shield-snooze meters live there) or contain `__expo_st_gen_`, which the
+module appends to the name it registers with the system. `startMonitoring`
+and `stopMonitoring` both reject such a name with `INVALID_CONFIG`.
+
+iOS allows 20 DeviceActivities per app. The temporary-unlock meter takes one
+while an unlock is in progress, and each shield
+[snooze](./shields.md#snooze) in progress takes one, so **keep your own
+activities to 19 or fewer**, less if you rely on snoozes: at the limit,
+`startMonitoring` rejects with `EXCESSIVE_ACTIVITIES` and a snooze press
+cannot arm its meter (the shield stays).
 
 Calling `startMonitoring` again with the same `activityName` **updates the
 activity in place**: the new schedule, selection and events replace the old
@@ -96,16 +103,17 @@ await ExpoScreenTime.stopMonitoring('workHours');
 ```
 
 Stops the activity and lifts its shields (its `intervalDidEnd` is recorded if
-an interval was in progress). Other activities, a manual block and the
-temporary-unlock meter are untouched; a reserved name rejects with
-`INVALID_CONFIG`.
+an interval was in progress). Other activities, a manual block, the
+temporary-unlock meter and the shield snoozes are untouched; a reserved name
+rejects with `INVALID_CONFIG`.
 
 ## `stopAllMonitoring()`
 
 Stops every activity started with `startMonitoring` and lifts their shields.
 A manual block (`blockSelection`) and web-domain filters stay in force. A
 temporary unlock in progress (`temporaryUnlock`) is not affected: it keeps
-metering and re-applies the remaining sources when its budget is spent.
+metering and re-applies the remaining sources when its budget is spent; nor
+are shield snoozes.
 
 ```typescript
 await ExpoScreenTime.stopAllMonitoring();
@@ -114,7 +122,7 @@ await ExpoScreenTime.stopAllMonitoring();
 ## `getMonitoredActivities(): Promise<string[]>`
 
 The activities you started. Activities the module runs for itself (the
-temporary-unlock meter) are never listed.
+temporary-unlock meter, the shield-snooze meters) are never listed.
 
 ```typescript
 const activities = await ExpoScreenTime.getMonitoredActivities();

@@ -37,6 +37,19 @@ public class ExpoScreenTimeModule: Module {
             self.screenTimeManager.migrateLegacyStore()
             // Builds before the bounded owner map left one key per token.
             self.sharedDefaults.removeLegacyShieldOwnerKeys()
+            // Shield snoozes whose meter is gone, and meters whose snooze is
+            // — at launch and at every return to the foreground (the backstop
+            // for a snooze left without a meter, or expired at midnight,
+            // while the app stays alive). The module lives as long as the
+            // app context, so the observer is never removed.
+            self.reconcileSnoozes()
+            NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: nil
+            ) { _ in
+                DispatchQueue.global(qos: .utility).async { self.reconcileSnoozes() }
+            }
         }
 
         // MARK: - Permissions
@@ -82,12 +95,14 @@ public class ExpoScreenTimeModule: Module {
                 throw screenTimeError(.selectionNotFound, "Selection '\(selectionId)' not found")
             }
             // An explicit block supersedes any in-flight temporary unlock —
-            // including a grant still being committed (unlockOperations).
+            // including a grant still being committed (unlockOperations) —
+            // and every shield snooze.
             self.unlockOperations.lock()
             defer { self.unlockOperations.unlock() }
             self.stopUnlockMeter()
             BlockStateLock.shared.withLock {
                 self.sharedDefaults.clearUnlockState()
+                _ = self.sharedDefaults.takeSnoozes()
                 // The manual block is one source among the schedules and
                 // thresholds in progress; it is persisted so a relock — from
                 // this process or from the monitor extension when the budget
@@ -95,6 +110,7 @@ public class ExpoScreenTimeModule: Module {
                 self.sharedDefaults.setBlockedSelectionId(selectionId)
                 self.screenTimeManager.applyActiveSources()
             }
+            self.stopSnoozeMeters()
             // Force iOS to invoke ShieldConfigurationExtension for custom shield UI
             screenTimeManager.refreshShields()
         }
@@ -109,11 +125,13 @@ public class ExpoScreenTimeModule: Module {
             self.stopUnlockMeter()
             BlockStateLock.shared.withLock {
                 self.sharedDefaults.clearUnlockState()
+                _ = self.sharedDefaults.takeSnoozes()
                 self.sharedDefaults.setBlockedSelectionId(nil)
                 self.sharedDefaults.liftActiveIntervals()
                 self.screenTimeManager.unblockAll()
                 self.sharedDefaults.clearShieldOwners()
             }
+            self.stopSnoozeMeters()
         }
 
         Function("isBlocked") { () -> Bool in
@@ -134,7 +152,7 @@ public class ExpoScreenTimeModule: Module {
 
             // Apple's usage thresholds are unreliable below ~30s; a smaller
             // budget couldn't be metered.
-            let budget = max(Self.unlockStepSeconds, budgetSeconds)
+            let budget = UsageMeter.budget(for: budgetSeconds)
 
             // Everything blocked right now — the manual block plus every
             // schedule and threshold in progress — is suspended and metered.
@@ -1125,29 +1143,19 @@ public class ExpoScreenTimeModule: Module {
 
     /// Event names carry their threshold: `expo_st_unlock_step_<seconds>`.
     static let unlockStepPrefix = "expo_st_unlock_step_"
-    /// Metering grain. Below ~30s Apple's usage thresholds fire late or not
-    /// at all, so this is the finest step worth registering.
-    static let unlockStepSeconds = 30
-    /// Ceiling on registered events — DeviceActivity degrades with large
-    /// event sets, so the step auto-coarsens for big budgets.
-    static let maxUnlockSteps = 60
 
     /// Register the usage-threshold ladder for `budget` seconds over every
-    /// token the active sources shield. Each step lets the monitor extension
-    /// persist how much of the budget is spent; the final step (== budget)
-    /// re-blocks.
+    /// token the active sources shield (`UsageMeter`, the ladder the shield
+    /// snoozes use too). Each step lets the monitor extension persist how
+    /// much of the budget is spent; the final step (== budget) re-blocks.
     @available(iOS 15.0, *)
     private func armUnlockMonitoring(budget: Int, tokens: Set<ShieldToken>) throws {
         let center = DeviceActivityCenter()
         // Replace any previous unlock metering (a fresh grant restarts the count).
         center.stopMonitoring([DeviceActivityName(Self.unlockActivityName)])
 
-        let step = max(Self.unlockStepSeconds, Int(ceil(Double(budget) / Double(Self.maxUnlockSteps))))
-        var thresholds: [Int] = Array(stride(from: step, to: budget, by: step))
-        thresholds.append(budget)
-
         var events: [DeviceActivityEvent.Name: DeviceActivityEvent] = [:]
-        for seconds in thresholds {
+        for seconds in UsageMeter.thresholds(budget: budget) {
             events[DeviceActivityEvent.Name("\(Self.unlockStepPrefix)\(seconds)")] = DeviceActivityEvent(
                 applications: tokens.applicationTokens,
                 categories: tokens.categoryTokens,
@@ -1189,17 +1197,73 @@ public class ExpoScreenTimeModule: Module {
         }
     }
 
-    /// End any active unlock and restore exactly the sources still active:
-    /// the manual block, and every interval (plus its thresholds) still in
-    /// progress.
+    /// End any active unlock — and every shield snooze: "put the shields
+    /// back" means all of them — and restore exactly the sources still
+    /// active: the manual block, and every interval (plus its thresholds)
+    /// still in progress.
     private func relock() {
         unlockOperations.lock()
         defer { unlockOperations.unlock() }
         stopUnlockMeter()
         BlockStateLock.shared.withLock {
             sharedDefaults.clearUnlockState()
+            _ = sharedDefaults.takeSnoozes()
             screenTimeManager.applyActiveSources()
         }
+        stopSnoozeMeters()
+    }
+
+    // MARK: - Shield snooze helpers
+    //
+    // A shield snooze (`ShieldSnooze`) is granted by the shield action
+    // extension, which also arms its meter; the monitor extension spends it.
+    // The app only ends snoozes (`blockSelection`, `unblockAll`, `relock`)
+    // and tidies up: the records go first, under the lock, so that the
+    // `intervalDidEnd` a stop triggers finds no snooze; then the meters are
+    // stopped, outside the lock. A meter is one of the 20 DeviceActivity
+    // slots, so none may be left running without its snooze.
+
+    /// Stop every snooze meter the system still runs except `live` —
+    /// those of snoozes that were spent, replaced, expired or ended. Outside
+    /// the lock (a system call).
+    private func stopSnoozeMeters(keeping live: Set<String> = []) {
+        guard #available(iOS 15.0, *) else { return }
+        let center = DeviceActivityCenter()
+        let stale = center.activities.filter { ShieldSnooze.isActivityName($0.rawValue) && !live.contains($0.rawValue) }
+        Self.stop(stale, on: center)
+    }
+
+    /// At launch and on foreground: a snooze whose meter the system does
+    /// not run cannot be spent (the extension was killed between recording
+    /// it and arming the meter, or the meter ended) — drop it, so its target
+    /// is shielded again; a snooze from a previous day is dropped too (its
+    /// projection may have outlived midnight); and a meter without its
+    /// snooze — spent ones, which the monitor extension cannot stop — is
+    /// released, whether or not any snooze is recorded. Snoozes granted in
+    /// the last few seconds are left alone: the extension may be arming the
+    /// meter right now.
+    private func reconcileSnoozes() {
+        guard #available(iOS 16.0, *),
+              AuthorizationCenter.shared.authorizationStatus == .approved else {
+            return
+        }
+        let registered = Set(DeviceActivityCenter().activities.map(\.rawValue))
+        guard !sharedDefaults.getSnoozes().isEmpty || registered.contains(where: ShieldSnooze.isActivityName) else {
+            return
+        }
+        let live: Set<String> = BlockStateLock.shared.withLock {
+            let now = Date()
+            let current = sharedDefaults.currentSnoozes()
+            let kept = current.filter {
+                registered.contains($0.activityName) || now.timeIntervalSince1970 - $0.grantedAt / 1000 < 10
+            }
+            if kept != sharedDefaults.getSnoozes() {
+                sharedDefaults.setSnoozes(kept)
+                screenTimeManager.applyActiveSources()
+            }
+            return Set(kept.map(\.activityName))
+        }
+        stopSnoozeMeters(keeping: live)
     }
 
     /// The backstop behind `getRemainingUnlockSeconds`: relock only if the

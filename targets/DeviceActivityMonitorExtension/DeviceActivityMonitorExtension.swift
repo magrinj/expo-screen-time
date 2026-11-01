@@ -5,7 +5,7 @@ import Foundation
 
 /// Device Activity Monitor Extension
 /// Applies and removes blocks on schedule, records events, and meters the
-/// temporary unlock.
+/// temporary unlock and the shield snoozes.
 ///
 /// Every block source has its own named store (BlockComposition): an interval
 /// writes its activity's store when it starts and empties only that store
@@ -70,9 +70,9 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
 
     /// Called when a scheduled interval starts (first device use after start time)
     override func intervalDidStart(for activity: DeviceActivityName) {
-        // The unlock's metering schedule is module-internal: no monitoring
-        // config, no JS event, no block source.
-        guard activity.rawValue != unlockActivityName else { return }
+        // The unlock's and the snoozes' metering schedules are
+        // module-internal: no monitoring config, no JS event, no block source.
+        guard !Self.isMeter(activity) else { return }
 
         lock.withLock {
             guard let registration = registration(for: activity) else { return }
@@ -112,6 +112,10 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             handleUnlockIntervalEnd()
             return
         }
+        guard !ShieldSnooze.isActivityName(activity.rawValue) else {
+            handleSnoozeIntervalEnd(activityName: activity.rawValue)
+            return
+        }
 
         lock.withLock {
             guard let registration = registration(for: activity) else { return }
@@ -127,7 +131,7 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             // empty THIS activity's store only — every other source keeps its
             // shields. Its shield owners are gone with it.
             defaults.clearActiveInterval(activityName: activityName)
-            write([], toStoreNamed: BlockStore.activity(activityName))
+            write(StoreShields(tokens: []), toStoreNamed: BlockStore.activity(activityName))
             defaults.pruneShieldOwners(ofActivity: activityName)
         }
     }
@@ -140,6 +144,10 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
 
         guard activity.rawValue != unlockActivityName else {
             handleUnlockStep(eventName: eventName)
+            return
+        }
+        guard !ShieldSnooze.isActivityName(activity.rawValue) else {
+            handleSnoozeStep(activityName: activity.rawValue, eventName: eventName)
             return
         }
 
@@ -174,7 +182,7 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
 
     /// Called before interval ends (if warningTime is set)
     override func intervalWillEndWarning(for activity: DeviceActivityName) {
-        guard activity.rawValue != unlockActivityName else { return }
+        guard !Self.isMeter(activity) else { return }
         lock.withLock {
             guard let registration = registration(for: activity),
                   isSelectedOccurrence(registration.config) else {
@@ -189,7 +197,7 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         _ event: DeviceActivityEvent.Name,
         activity: DeviceActivityName
     ) {
-        guard activity.rawValue != unlockActivityName else { return }
+        guard !Self.isMeter(activity) else { return }
         lock.withLock {
             guard let registration = registration(for: activity),
                   isSelectedOccurrence(registration.config) else {
@@ -221,9 +229,9 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
             // registration (observed on iOS 26 betas) — such a fire claims more
             // usage than physically possible and must be ignored, or a fresh
             // grant would be consumed instantly.
-            if let grantedAt = defaults.getUnlockGrantedAt() {
-                let elapsed = Date().timeIntervalSince(grantedAt)
-                if Double(stepSeconds) > elapsed + 30 { return }
+            if let grantedAt = defaults.getUnlockGrantedAt(),
+               !UsageMeter.isPlausible(step: stepSeconds, elapsedSeconds: Date().timeIntervalSince(grantedAt)) {
+                return
             }
 
             // Steps can arrive out of order — consumption only moves forward.
@@ -252,53 +260,92 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
         }
     }
 
+    // MARK: - Shield Snooze Handling
+
+    /// Whether `activity` is one of the module's meters (the unlock's or a
+    /// snooze's), which never record events or shield anything.
+    private static func isMeter(_ activity: DeviceActivityName) -> Bool {
+        return ActivityRegistration.isInternalName(activity.rawValue)
+    }
+
+    /// A snooze meter's step fired: `<seconds>` of the snoozed target have
+    /// been used since the grant. Record it; once the budget is spent,
+    /// forget the snooze and put the target's shields back (every store is
+    /// re-projected: the other snoozes and the unlock still subtract).
+    private func handleSnoozeStep(activityName: String, eventName: String) {
+        lock.withLock {
+            let (snoozes, outcome) = ShieldSnoozes.recording(
+                event: eventName,
+                ofActivity: activityName,
+                in: defaults.getSnoozes(),
+                now: Date()
+            )
+            switch outcome {
+            case .stale, .implausible:
+                return
+            case .consumed:
+                defaults.setSnoozes(snoozes)
+            case .spent, .malformed:
+                defaults.setSnoozes(snoozes)
+                restoreActiveSources()
+            }
+        }
+        // The spent meter runs until its day ends; the next snooze or the
+        // app's next launch releases its DeviceActivity slot (this extension
+        // is not known to be allowed to stop activities).
+    }
+
+    /// A snooze meter's interval ended. Its interval runs to 23:59:59, so
+    /// this is the day's end — unspent budget expires at midnight — unless
+    /// the app stopped the meter, in which case it has already forgotten
+    /// the snooze and there is nothing to do.
+    private func handleSnoozeIntervalEnd(activityName: String) {
+        lock.withLock {
+            let (snoozes, ended) = ShieldSnoozes.ending(activityName: activityName, in: defaults.getSnoozes())
+            guard ended else { return }
+            defaults.setSnoozes(snoozes)
+            restoreActiveSources()
+        }
+    }
+
     // MARK: - Stores
 
     /// Project EVERY store from the state — the manual block and every
-    /// interval (plus its thresholds) still in progress — and empty every
-    /// other store in the registry. Called once the unlock state is cleared,
-    /// so nothing is suspended any more. Call under the lock.
+    /// interval (plus its thresholds) still in progress, minus the snoozed
+    /// targets — and empty every other store in the registry. Called once
+    /// the unlock state is cleared, or a snooze ended. Call under the lock.
     private func restoreActiveSources() {
         let sources = defaults.activeBlockSources()
-        let contents = BlockComposition.storeContents(of: sources)
-        let names = Set(defaults.shieldStoreNames()).union(contents.keys)
+        let shields = BlockComposition.storeShields(of: sources, snoozed: defaults.snoozedTargets())
+        let names = Set(defaults.shieldStoreNames()).union(shields.keys)
         for name in names {
-            write(contents[name] ?? [], toStoreNamed: name)
+            write(shields[name] ?? StoreShields(tokens: []), toStoreNamed: name)
         }
         defaults.pruneShieldOwners(keeping: sources.map(\.kind))
     }
 
     /// Project one activity's store from the state (its schedule selection
     /// plus any threshold selections, minus what a temporary unlock in
-    /// progress suspended). Call under the lock.
+    /// progress suspended and the snoozed targets). Call under the lock.
     private func applyStore(forActivity activityName: String) {
-        let contents = BlockComposition.storeContents(of: defaults.activeBlockSources())
+        let shields = BlockComposition.storeShields(of: defaults.activeBlockSources(), snoozed: defaults.snoozedTargets())
         let name = BlockStore.activity(activityName)
-        write(contents[name] ?? [], toStoreNamed: name)
+        write(shields[name] ?? StoreShields(tokens: []), toStoreNamed: name)
     }
 
-    /// Write `tokens` into the store called `name`, keeping the shared
+    /// Write `shields` into the store called `name`, keeping the shared
     /// registry in step so the app enumerates this store too. Call under the
     /// lock: the registry entry goes only when the projection that emptied
     /// the store ran under it.
-    private func write(_ tokens: Set<ShieldToken>, toStoreNamed name: String) {
+    private func write(_ shields: StoreShields<ShieldToken>, toStoreNamed name: String) {
         let store = ManagedSettingsStore(named: ManagedSettingsStore.Name(name))
-        if tokens.isEmpty {
-            write([], to: store)
+        if shields.tokens.isEmpty {
+            store.setShields(StoreShields(tokens: []))
             defaults.unregisterShieldStore(name)
         } else {
             defaults.registerShieldStore(name)
-            write(tokens, to: store)
+            store.setShields(shields)
         }
-    }
-
-    private func write(_ tokens: Set<ShieldToken>, to store: ManagedSettingsStore) {
-        let applications = tokens.applicationTokens
-        let categories = tokens.categoryTokens
-        let webDomains = tokens.webDomainTokens
-        store.shield.applications = applications.isEmpty ? nil : applications
-        store.shield.applicationCategories = categories.isEmpty ? nil : .specific(categories)
-        store.shield.webDomains = webDomains.isEmpty ? nil : webDomains
     }
 
     // MARK: - Schedules

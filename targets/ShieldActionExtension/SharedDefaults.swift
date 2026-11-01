@@ -45,6 +45,9 @@ enum SharedDefaultsKeys {
     static let shieldOwners = "expo_st_shield_owners"
     /// Pre-map layout, one key per token, unbounded. Removed at launch.
     static let legacyShieldOwnerPrefix = "expo_st_shield_owner_"
+    /// The `ShieldSnooze`s in progress (see BlockComposition): the targets
+    /// every projection leaves unshielded until their usage budget is spent.
+    static let snoozes = "expo_st_snoozes"
 }
 
 extension BlockStateLock {
@@ -62,17 +65,67 @@ enum ShieldToken: Hashable {
 }
 
 extension ShieldToken {
-    /// A key for this token that is stable across processes and launches:
-    /// the hash of its encoded form. Tokens are opaque, but their encoding
-    /// is stable (it is what `SelectionStore` persists).
-    var persistentKey: String? {
+    /// The token's kind and encoded form (base64), stable across processes
+    /// and launches — what a `ShieldSnooze` persists. Tokens are opaque, but
+    /// their encoding is stable (it is what `SelectionStore` persists).
+    var encoded: (kind: String, token: String)? {
         let data: Data?
+        let kind: String
         switch self {
-        case .application(let token): data = try? JSONEncoder().encode(token)
-        case .category(let token): data = try? JSONEncoder().encode(token)
-        case .webDomain(let token): data = try? JSONEncoder().encode(token)
+        case .application(let token):
+            data = try? JSONEncoder().encode(token)
+            kind = "application"
+        case .category(let token):
+            data = try? JSONEncoder().encode(token)
+            kind = "category"
+        case .webDomain(let token):
+            data = try? JSONEncoder().encode(token)
+            kind = "webDomain"
         }
-        return data.map { BlockStore.fnv1a($0.base64EncodedString()) }
+        return data.map { (kind, $0.base64EncodedString()) }
+    }
+
+    /// The token persisted as `encoded`; `nil` for a kind or an encoding
+    /// this build cannot read (the snooze is then void — fail closed).
+    init?(kind: String, encoded token: String) {
+        guard let data = Data(base64Encoded: token) else { return nil }
+        switch kind {
+        case "application":
+            guard let token = try? JSONDecoder().decode(ApplicationToken.self, from: data) else { return nil }
+            self = .application(token)
+        case "category":
+            guard let token = try? JSONDecoder().decode(ActivityCategoryToken.self, from: data) else { return nil }
+            self = .category(token)
+        case "webDomain":
+            guard let token = try? JSONDecoder().decode(WebDomainToken.self, from: data) else { return nil }
+            self = .webDomain(token)
+        default:
+            return nil
+        }
+    }
+
+    /// A key for this token that is stable across processes and launches:
+    /// the hash of its encoded form.
+    var persistentKey: String? {
+        return encoded.map { BlockStore.fnv1a($0.token) }
+    }
+}
+
+extension ManagedSettingsStore {
+    /// Put exactly `shields` in this store: its applications, its
+    /// categories — with the snoozed applications excepted, so an app
+    /// shielded through its category is lifted by its snooze too — and its
+    /// web domains; empty sets clear the setting. The one writer of shield
+    /// settings for the app and the extensions. Call under `BlockStateLock`.
+    func setShields(_ shields: StoreShields<ShieldToken>) {
+        let applications = shields.tokens.applicationTokens
+        let categories = shields.tokens.categoryTokens
+        let webDomains = shields.tokens.webDomainTokens
+        shield.applications = applications.isEmpty ? nil : applications
+        shield.applicationCategories = categories.isEmpty
+            ? nil
+            : .specific(categories, except: shields.excepted.applicationTokens)
+        shield.webDomains = webDomains.isEmpty ? nil : webDomains
     }
 }
 
@@ -684,6 +737,51 @@ class SharedDefaults {
         defaults?.removeObject(forKey: "expo_st_unlock_granted_at")
         defaults?.removeObject(forKey: SharedDefaultsKeys.unlockSuspended)
         defaults?.synchronize()
+    }
+
+    // MARK: - Shield snoozes
+    //
+    // The `ShieldSnooze`s in progress, one per target the user pressed a
+    // snooze button for. Written by the shield action extension (grant), the
+    // monitor extension (consumption, spent, day end) and the app (ended by
+    // `blockSelection`, `unblockAll`, `relock`, or reconciled at launch);
+    // read by every projection. Only under `BlockStateLock`.
+
+    /// Every persisted snooze, expired ones included (`currentSnoozes` is
+    /// what the projection uses).
+    func getSnoozes() -> [ShieldSnooze] {
+        let dictionaries = defaults?.array(forKey: SharedDefaultsKeys.snoozes) as? [[String: Any]] ?? []
+        return dictionaries.compactMap(ShieldSnooze.init(dictionary:))
+    }
+
+    func setSnoozes(_ snoozes: [ShieldSnooze]) {
+        if snoozes.isEmpty {
+            defaults?.removeObject(forKey: SharedDefaultsKeys.snoozes)
+        } else {
+            defaults?.set(snoozes.map(\.dictionary), forKey: SharedDefaultsKeys.snoozes)
+        }
+        defaults?.synchronize()
+    }
+
+    /// The snoozes in force right now — granted today and not spent.
+    func currentSnoozes() -> [ShieldSnooze] {
+        return ShieldSnoozes.current(getSnoozes(), now: Date(), calendar: Calendar.current)
+    }
+
+    /// The tokens the snoozes in force lift — what every projection
+    /// subtracts (`BlockComposition.storeShields`). A snooze whose token
+    /// this build cannot rebuild lifts nothing.
+    func snoozedTargets() -> Set<ShieldToken> {
+        return Set(currentSnoozes().compactMap { ShieldToken(kind: $0.tokenKind, encoded: $0.token) })
+    }
+
+    /// Forget every snooze and return the meters to stop — AFTER this, by
+    /// the caller, outside the lock: the stop's `intervalDidEnd` then finds
+    /// no snooze and does nothing.
+    func takeSnoozes() -> [String] {
+        let names = getSnoozes().map(\.activityName)
+        setSnoozes([])
+        return names
     }
 
     // MARK: - Shield interactions

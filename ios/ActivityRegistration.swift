@@ -39,9 +39,10 @@ enum ActivityRegistration {
     static let legacyWeekdayInfix = "_weekday_"
 
     /// Names starting with this are the module's own (the temporary-unlock
-    /// meter, `expo_st_temporary_unlock`) and never a user activity: a user
-    /// could otherwise register one that `getMonitoredActivities` hides, or
-    /// stop the meter through `stopMonitoring`.
+    /// meter, `expo_st_temporary_unlock`, and the shield-snooze meters,
+    /// `expo_st_snooze_<id>`) and never a user activity: a user could
+    /// otherwise register one that `getMonitoredActivities` hides, or stop
+    /// a meter through `stopMonitoring`.
     static let reservedPrefix = "expo_st_"
 
     /// Whether `name` can be a logical activity name: not empty, not
@@ -51,8 +52,8 @@ enum ActivityRegistration {
         return !name.isEmpty && !name.hasPrefix(reservedPrefix) && !name.contains(generationSeparator)
     }
 
-    /// Whether `name` belongs to the module (the unlock meter): never listed
-    /// by, nor stopped through, the monitoring API.
+    /// Whether `name` belongs to the module (the unlock and snooze meters):
+    /// never listed by, nor stopped through, the monitoring API.
     static func isInternalName(_ name: String) -> Bool {
         return name.hasPrefix(reservedPrefix)
     }

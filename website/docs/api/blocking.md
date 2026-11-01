@@ -18,7 +18,9 @@ The manual block is one **block source**. Schedules started with
 [`startMonitoring`](./monitoring.md) and their `blockOnThreshold` events are
 separate sources, and the effective block is the union of every active source:
 calling `blockSelection` again replaces only the manual selection, and a
-schedule ending never lifts the manual block.
+schedule ending never lifts the manual block. An explicit block supersedes
+any temporary unlock and every shield [snooze](./shields.md#snooze) in
+progress.
 
 ```typescript
 // 1. The user picked apps in <ActivityPicker selectionId="my-blocklist" />
@@ -31,8 +33,9 @@ Throws if no selection exists under that ID.
 ### `unblockAll()`
 
 Lift every active block now — the manual block, every schedule and threshold
-block in progress — and clear the web-domain filters. Monitoring keeps running:
-a schedule re-applies its block at its next interval start.
+block in progress — and clear the web-domain filters; a temporary unlock and
+every shield [snooze](./shields.md#snooze) in progress end. Monitoring keeps
+running: a schedule re-applies its block at its next interval start.
 
 ```typescript
 ExpoScreenTime.unblockAll();
@@ -42,7 +45,7 @@ ExpoScreenTime.unblockAll();
 
 Whether any source currently shields something — reflects the real
 ManagedSettings state, not what you last asked for. `false` during a temporary
-unlock.
+unlock. `true` while a snooze lifts one app and others stay shielded.
 
 ```typescript
 const blocked = ExpoScreenTime.isBlocked();
@@ -128,9 +131,10 @@ Whether an earned-time budget is currently active.
 
 ### `relock(): void`
 
-Ends any active unlock immediately and restores exactly the sources that are
-still active: the manual block, and every schedule (plus its threshold blocks)
-whose interval is still in progress. Safe to call when nothing is unlocked.
+Ends any active unlock — and every shield [snooze](./shields.md#snooze) —
+immediately and restores exactly the sources that are still active: the manual
+block, and every schedule (plus its threshold blocks) whose interval is still
+in progress. Safe to call when nothing is unlocked.
 
 ## Shield interactions
 

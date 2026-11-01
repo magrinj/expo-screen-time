@@ -119,8 +119,9 @@ type ShieldActionConfig = {
 type ShieldActionType = "close" | "unblock" | "defer";
 ```
 
-Snooze is expressed as an object with its duration in seconds. It is not
-functional yet — see [`setShieldActions`](./api/shields.md).
+Snooze is expressed as an object with its duration in seconds **of use** of
+the pressed target (at least 30) — see
+[Snooze](./api/shields.md#snooze).
 
 ## `MonitorEvent`
 
