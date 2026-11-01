@@ -250,6 +250,8 @@ export type MonitorEventType =
   | "eventWillReachThresholdWarning";
 
 export type MonitorEvent = {
+  /** Unique: every event is delivered exactly once, oldest first. */
+  id: string;
   activityName: string;
   eventType: MonitorEventType;
   eventName?: string;

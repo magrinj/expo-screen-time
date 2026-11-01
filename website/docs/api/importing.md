@@ -22,19 +22,22 @@ import ExpoScreenTime, {
   Report,
   setReportTemplate,
   clearReportTemplate,
-  // Selection utilities (also available on the default export)
+  // Functions (also available on the default export)
+  blockSelection,
+  startMonitoring,
+  temporaryUnlock,
   listSelections,
   getTokens,
-  deleteSelection,
   // Errors
   isScreenTimeError,
   SCREEN_TIME_ERROR_CODES,
 } from 'expo-screen-time';
 ```
 
-The default export (`ExpoScreenTime`) holds all the imperative functions
-documented in this section. Hooks, components, and the selection utilities are
-named exports. Errors carry a [`ScreenTimeErrorCode`](../types.md#screentimeerrorcode).
+Every function documented in this section is both a named export and a method
+of the default export (`ExpoScreenTime`): `blockSelection("work")` and
+`ExpoScreenTime.blockSelection("work")` are the same call. Hooks and components
+are named exports only. Errors carry a [`ScreenTimeErrorCode`](../types.md#screentimeerrorcode).
 
 ## The `selectionId` model
 

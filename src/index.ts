@@ -111,6 +111,9 @@ export type {
   FilterSegment,
 } from "./DeviceActivityReport";
 
+// Functions (also on the default export)
+export * from "./functions";
+
 // Utilities
 export {
   listSelections,
