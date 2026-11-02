@@ -22,7 +22,7 @@ const shortest = limits.minIntervalSeconds; // 900 on iOS
 
 | Field | iOS |
 |---|---|
-| `blocking` | `"enforced"`: the OS draws the shield. |
+| `blocking` | `"enforced"`: the OS draws the shield. Android: `"none"` today; it becomes `"friction"` when the Android blocking engine is enabled (the user can stop the engine from the Task Manager or Settings, which `getEnforcementGaps` will record: [platform support](../platform-support.md)). |
 | `selectableKinds` | Applications, categories and web domains. Android: applications only (`categories` and `webDomains` are `false`: [selections](./selections.md#android)). |
 | `webDomainBlocking` | `true` |
 | `appRemovalProtection`, `appInstallationBlocking` | `"friction"` after an `individual` authorization (the user can revoke Screen Time access in Settings, which lifts them); `"enforced"` after a `child` one (a parent holds it). |

@@ -17,6 +17,8 @@ internal class ViewPalette(val dark: Boolean) {
   val secondary = if (dark) 0xFFCAC4D0.toInt() else 0xFF49454F.toInt()
   val field = if (dark) 0xFF2B2930.toInt() else 0xFFECE6F0.toInt()
   val divider = if (dark) 0x33FFFFFF else 0x1F000000
+  /** The shield's default button colour (Material blue 600 / 200). */
+  val accent = if (dark) 0xFF8AB4F8.toInt() else 0xFF1A73E8.toInt()
 
   companion object {
     fun of(context: Context): ViewPalette {

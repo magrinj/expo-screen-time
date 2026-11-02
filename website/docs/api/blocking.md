@@ -6,6 +6,11 @@ sidebar_position: 4
 
 # Blocking
 
+The functions below are iOS today. Their Android implementation exists behind
+an internal switch and is described in the [Android notes](#android) at the
+end of this page; until it is enabled, `getCapabilities().blocking` is
+`"none"` there and every call fails with `UNSUPPORTED`.
+
 ## Apps & Categories
 
 ### `blockSelection(selectionId: string, options?: { mode?: BlockMode })`
@@ -294,3 +299,63 @@ such a shield by its category only). `target` is `null` when no handle could
 be derived; `activityName` is `null` for the manual block and when no active
 block owns the shield any more. Both are `null` for interactions recorded by
 versions before these fields existed (they still drain).
+
+## Android {#android}
+
+**Preview, not yet enabled:** everything in this section is implemented and
+exercised by the behavioural suite, but ships behind an internal build switch
+with `getCapabilities().blocking` still `"none"`, because the suite's blocking
+flows key on that capability and it can only flip once monitoring and unlocks
+exist too (see [platform support](../platform-support.md)). It documents what
+an app written against the capability will get.
+
+- **`blockSelection`, `unblockAll`, `isBlocked`** keep the iOS contract: the
+  same validation order and codes (`SELECTION_NOT_FOUND` before the mode is
+  looked at, `INVALID_CONFIG` for a bad mode and for an allowlist that holds
+  categories or web domains or no app at all), one manual block that a second
+  call replaces, `isBlocked()` true while that block shields something (a
+  blocklist over an empty selection shields nothing; an allowlist always
+  shields). The selection's apps are captured when the block is applied, as
+  iOS projects them into its store: editing the selection afterwards changes
+  nothing until the next `blockSelection`. Web domains are not blocked on
+  Android (`webDomainBlocking` is `false`).
+- **How it is enforced** (`"friction"`, not `"enforced"`): a foreground
+  service in its own process reads the apps on screen from UsageStats every
+  100 ms while the screen is on and a block is in force, and starts a
+  blocking Activity, the [shield](./shields.md#android), over the blocked app.
+  Measured on a Pixel 8a: the shield is up about 120 ms after the app comes
+  forward (p95 176 ms), and the user sees the app's splash, never its content.
+  Nothing is polled with the screen off or without a block. The user can
+  still stop the engine (Task Manager, force stop, revoking usage access or
+  the overlay permission); such periods will be reported by
+  `getEnforcementGaps`, which is why the capability is `"friction"`.
+- **Allowlist = launchable apps.** `{ mode: 'allowlist' }` shields every
+  app with a launcher entry except the selection's apps. Apps without a
+  launcher entry (permission dialogs, the share sheet, the document picker)
+  are reached from an allowed app and are never shielded.
+- **Never shielded, in either mode:** your own app, every home launcher,
+  the system UI, the default dialer and the emergency app, the current
+  keyboard, and Settings. Settings stays open for the same reason it does on
+  iOS: the user must always be able to re-grant a permission or change the
+  device, and a focus tool must not hold the phone hostage. Revoking the
+  engine's permissions from there is the documented friction, not a hole
+  the shield papers over.
+- **Picture-in-picture** does not bypass the block on Android 10+: when the
+  blocked app's pinned window is found floating over the shield, whether it
+  was opened before or after the block, the engine evicts it (one pinned
+  window exists per screen, and the library briefly takes it). Android 7–9
+  report no "stopped" event, so a PiP window cannot be told from an app that
+  left, and is not evicted there. **Screen pinning** (a Settings toggle)
+  keeps every other task from starting, the shield included; the engine
+  records it as a gap. In
+  **split-screen**, the shield covers the whole screen: Android gives a
+  background-started task no way into one pane. The split pair survives
+  underneath, so the other app is not closed; it comes back with the pair
+  from Recents (and the blocked app with it, shielded again). On a layout
+  the shield cannot take over (a tablet or desktop pane beside it), the
+  engine sends the user Home instead.
+- **Permissions:** blocking needs the `usageAccess` and `overlay`
+  [steps](./permissions.md#android). Without the overlay permission the
+  engine cannot start the shield from the background: it logs the gap and
+  stops polling rather than burn battery.
+

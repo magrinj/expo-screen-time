@@ -30,8 +30,11 @@ import kotlin.io.encoding.Base64
  *
  * Step 1 stores the engine's desired state and failures, and the permission
  * requests already made; step 2 adds the install secret and, through
- * [SelectionStore], the selections and the handle map; blocks and schedules
- * join later, in the same document, each under its own key.
+ * [SelectionStore], the selections and the handle map; step 3 adds the
+ * manual block (`blocks.manual`, read by the engine process on every
+ * change) and the shield configurations (`shield.default`,
+ * `shield.activities.<name>`); schedules join later, in the same document,
+ * each under its own key.
  */
 internal class StateStore(private val directory: File) {
   constructor(context: Context) : this(File(context.noBackupFilesDir, "expo_screen_time"))
@@ -72,6 +75,17 @@ internal class StateStore(private val directory: File) {
     set(value) = update { engine(it).put(DESIRED, value) }
 
   /**
+   * Whether the service is running, written by the service itself (true
+   * once it runs, false in `onDestroy`). A release sends its "look again"
+   * intent only when this is true, so a release never starts the service
+   * to stop it (the boot and update receivers, and every app launch, used
+   * to). A crash leaves a stale true: one harmless extra intent.
+   */
+  var engineRunning: Boolean
+    get() = read { it.optJSONObject(ENGINE)?.optBoolean(RUNNING, false) ?: false }
+    set(value) = update { engine(it).put(RUNNING, value) }
+
+  /**
    * Records why the engine could not start or stay in the foreground (the
    * system refusing `startForeground`, a `startForegroundService` from the
    * background). Kept for `getEnforcementGaps`; capped.
@@ -85,6 +99,54 @@ internal class StateStore(private val directory: File) {
   fun engineFailures(): List<JSONObject> = read { document ->
     val failures = document.optJSONObject(ENGINE)?.optJSONArray(FAILURES) ?: return@read emptyList()
     List(failures.length()) { failures.getJSONObject(it) }
+  }
+
+  // MARK: - Blocks
+
+  /**
+   * The manual block in force, or null. Written by `blockSelection` and
+   * `unblockAll` in the module process together with [engineDesired], in
+   * one `update`, so the engine process never reads a block without the
+   * desire to run, or the reverse.
+   */
+  var manualBlock: ManualBlock?
+    get() = read { ManualBlock.fromJson(it.optJSONObject(BLOCKS)?.optJSONObject(MANUAL)) }
+    set(value) = update { document ->
+      val blocks = document.optJSONObject(BLOCKS) ?: JSONObject().also { document.put(BLOCKS, it) }
+      if (value == null) blocks.remove(MANUAL) else blocks.put(MANUAL, value.toJson())
+    }
+
+  // MARK: - Shield configuration
+
+  /** `setShieldConfig`: the default shield, used by the manual block and as the fallback. */
+  fun setDefaultShieldConfig(config: JSONObject): Unit = update { document ->
+    shield(document).put(DEFAULT, config)
+    Unit
+  }
+
+  /** `setShieldConfigForActivity`. */
+  fun setShieldConfig(activityName: String, config: JSONObject): Unit = update { document ->
+    val activities = shield(document).optJSONObject(ACTIVITIES) ?: JSONObject().also { shield(document).put(ACTIVITIES, it) }
+    activities.put(activityName, config)
+    Unit
+  }
+
+  /** `clearShieldConfig`: the default and every per-activity config. */
+  fun clearShieldConfigs() = update { document ->
+    document.remove(SHIELD)
+    Unit
+  }
+
+  /**
+   * The config the shield draws, with the iOS precedence (fix 8, review R5):
+   * the config of the source that owns the shield ([owner], an activity
+   * name; null for the manual block), else the default, else null (the
+   * built-in shield). Step 3 has one source, the manual block, so the owner
+   * is always null; the lookup is in place for the schedules of step 4.
+   */
+  fun shieldConfig(owner: String?): JSONObject? = read { document ->
+    val shield = document.optJSONObject(SHIELD) ?: return@read null
+    owner?.let { shield.optJSONObject(ACTIVITIES)?.optJSONObject(it) } ?: shield.optJSONObject(DEFAULT)
   }
 
   // MARK: - Install secret
@@ -192,10 +254,12 @@ internal class StateStore(private val directory: File) {
 
   private fun engine(document: JSONObject) = document.optJSONObject(ENGINE) ?: JSONObject().also { document.put(ENGINE, it) }
   private fun permissions(document: JSONObject) = document.optJSONObject(PERMISSIONS) ?: JSONObject().also { document.put(PERMISSIONS, it) }
+  private fun shield(document: JSONObject) = document.optJSONObject(SHIELD) ?: JSONObject().also { document.put(SHIELD, it) }
 
   companion object {
     private const val ENGINE = "engine"
     private const val DESIRED = "desired"
+    private const val RUNNING = "running"
     private const val FAILURES = "failures"
     private const val INSTALL = "install"
     private const val SECRET = "secret"
@@ -203,6 +267,11 @@ internal class StateStore(private val directory: File) {
     private const val PERMISSIONS = "permissions"
     private const val REQUESTED = "requested"
     private const val ERRORS = "errors"
+    private const val BLOCKS = "blocks"
+    private const val MANUAL = "manual"
+    private const val SHIELD = "shield"
+    private const val DEFAULT = "default"
+    private const val ACTIVITIES = "activities"
     private const val MAX_FAILURES = 20
 
     private val slots = HashMap<String, Slot>()

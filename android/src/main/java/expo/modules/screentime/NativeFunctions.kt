@@ -93,7 +93,35 @@ internal val NATIVE_FUNCTIONS: List<NativeFunction> = listOf(
   async("clearMonitorEvents", 1)
 )
 
-/** Functions with a real Android definition in [ExpoScreenTimeModule]. */
+/** The step-3 surface, behind the preview switch until step 5 flips `blocking`. */
+internal val BLOCKING_PREVIEW_FUNCTIONS: Set<String> = setOf(
+  // Blocking
+  "blockSelection",
+  "unblockAll",
+  "isBlocked",
+  // Shield configuration
+  "setShieldConfig",
+  "setShieldConfigForActivity",
+  "clearShieldConfig",
+  // Honest empties until monitoring and unlocks / interactions
+  // exist: the conformance suite's reset() calls the first three
+  // on every platform where blocking is on, and an app that sees
+  // `blocking !== "none"` reads the unlock state (the example's Blocking
+  // tab does, at render). Nothing can be monitored, recorded or unlocked
+  // yet, so no-op, no-op, [], false and 0 are the true answers.
+  "stopAllMonitoring",
+  "clearMonitorEvents",
+  "drainShieldInteractions",
+  "isTemporarilyUnlocked",
+  "getRemainingUnlockSeconds",
+)
+
+/**
+ * Functions with a real Android definition in [ExpoScreenTimeModule]. The
+ * blocking functions join only under the internal preview switch
+ * (`BuildConfig.BLOCKING_PREVIEW`, `android/build.gradle`): the default build
+ * registers exactly the set it registered before the step.
+ */
 internal val IMPLEMENTED: Set<String> = setOf(
   "getCapabilities",
   "getScreenTimePermissionsAsync",
@@ -110,4 +138,4 @@ internal val IMPLEMENTED: Set<String> = setOf(
   "subtractSelection",
   "exportSelection",
   "importSelection",
-)
+) + if (BuildConfig.BLOCKING_PREVIEW) BLOCKING_PREVIEW_FUNCTIONS else emptySet()

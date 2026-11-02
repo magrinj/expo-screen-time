@@ -11,12 +11,18 @@ import expo.modules.kotlin.modules.ModuleDefinitionBuilder
  * Stage 3 of the Android port. Step 1: the
  * permission steps are real, the engine service and its state store exist.
  * Step 2: the selection store, the handles, the picker and the token label.
- * Every function not yet implemented fails with a coded `UNSUPPORTED`
- * error. Nothing is enforced on the device yet.
+ * Step 3: the manual block, the shield and its configuration, behind the
+ * internal preview switch (`BuildConfig.BLOCKING_PREVIEW`): off, the build
+ * behaves exactly as before the step. Every function not yet implemented
+ * fails with a coded `UNSUPPORTED` error.
  */
 class ExpoScreenTimeModule : Module() {
   private val permissionRequester by lazy { AndroidPermissionRequester(appContext) }
-  private val selections by lazy { SelectionStore(StateStore(requireNotNull(appContext.reactContext) { "React context is not available" })) }
+  private val context: android.content.Context
+    get() = requireNotNull(appContext.reactContext) { "React context is not available" }
+  private val store by lazy { StateStore(context) }
+  private val selections by lazy { SelectionStore(store) }
+  private val blocks by lazy { BlockController(context, store, selections) }
 
   override fun definition() = ModuleDefinition {
     Name("ExpoScreenTime")
@@ -87,12 +93,15 @@ class ExpoScreenTimeModule : Module() {
     // flips its value ("Android steps"): step 2
     // turned `selectableKinds.applications` on (the picker lists apps, the
     // store holds them); categories and web domains stay off in v1 (review
-    // R10: `ApplicationInfo.category` is mostly unset; no web blocking), and
-    // blocking stays "none" until step 3. The limits are the cross-platform
-    // ones (the contract enforces the iOS values on both platforms).
+    // R10: `ApplicationInfo.category` is mostly unset; no web blocking).
+    // `blocking` is "friction" (review R2: a user can stop the engine) only
+    // under the preview switch; it flips for real in step 5, once every
+    // scenario that keys on it (C03–C10) has its behaviour. The limits are
+    // the cross-platform ones (the contract enforces the iOS values on both
+    // platforms).
     Function("getCapabilities") {
       mapOf(
-        "blocking" to "none",
+        "blocking" to if (BuildConfig.BLOCKING_PREVIEW) "friction" else "none",
         "selectableKinds" to mapOf("applications" to true, "categories" to false, "webDomains" to false),
         "webDomainBlocking" to false,
         "appRemovalProtection" to "none",
@@ -106,6 +115,45 @@ class ExpoScreenTimeModule : Module() {
           "maxIntervalSeconds" to 7 * 24 * 60 * 60,
         ),
       )
+    }
+
+    // MARK: - Blocking
+
+    if (BuildConfig.BLOCKING_PREVIEW) {
+      // Same validation order, codes and semantics as the Swift `blockSelection`
+      // (BlockValidation): one manual block that a second call replaces; the
+      // engine process is told to look again.
+      Function("blockSelection") { selectionId: String, options: Map<String, Any?>? -> blocks.blockSelection(selectionId, options) }
+
+      Function("unblockAll") { blocks.unblockAll() }
+
+      Function("isBlocked") { blocks.isBlocked() }
+
+      // MARK: - Shield Configuration
+
+      Function("setShieldConfig") { config: Map<String, Any?> -> blocks.setShieldConfig(config) }
+
+      Function("setShieldConfigForActivity") { activityName: String, config: Map<String, Any?> -> blocks.setShieldConfigForActivity(activityName, config) }
+
+      Function("clearShieldConfig") { blocks.clearShieldConfig() }
+
+      // Honest empties: nothing can be monitored yet, no shield
+      // interaction is recorded and no unlock can be granted yet,
+      // so stopping, clearing and draining have nothing to do, nothing is
+      // unlocked and no budget remains. The suite's reset() calls the first
+      // three; a screen that sees `blocking !== "none"` reads the last two
+      // (the example's Blocking tab crashed on UNSUPPORTED there).
+      // `temporaryUnlock` and `relock` keep rejecting UNSUPPORTED: granting
+      // or restoring is not something that can be honestly no-op'd.
+      AsyncFunction("stopAllMonitoring") { promise: Promise -> promise.resolve(null) }
+
+      AsyncFunction("clearMonitorEvents") { _: Any?, promise: Promise -> promise.resolve(null) }
+
+      Function("drainShieldInteractions") { emptyList<Map<String, Any?>>() }
+
+      Function("isTemporarilyUnlocked") { false }
+
+      Function("getRemainingUnlockSeconds") { 0 }
     }
 
     // MARK: - Selection Store

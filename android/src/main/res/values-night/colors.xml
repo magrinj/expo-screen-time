@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- ViewPalette.background, dark. -->
+  <color name="expo_st_shield_background">#FF1C1B1F</color>
+</resources>

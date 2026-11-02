@@ -1,5 +1,6 @@
 package expo.modules.screentime
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -47,6 +48,29 @@ class StateStoreTest {
 
     other.setPermissionError("backgroundAutostart", null, null)
     assertNull(store().permissionError("backgroundAutostart"))
+  }
+
+  @Test
+  fun `the manual block and the shield configs round-trip between instances, with the iOS precedence`() {
+    assertNull(store().manualBlock)
+    store().manualBlock = ManualBlock("focus", BlockMode.allowlist, setOf("com.a"))
+    assertEquals(ManualBlock("focus", BlockMode.allowlist, setOf("com.a")), store().manualBlock)
+    assertFalse(store().engineRunning)
+    store().engineRunning = true
+    assertTrue(store().engineRunning)
+    store().manualBlock = null
+    assertNull(store().manualBlock)
+
+    assertNull(store().shieldConfig(null))
+    store().setDefaultShieldConfig(JSONObject().put("title", JSONObject().put("text", "Default")))
+    store().setShieldConfig("bedtime", JSONObject().put("title", JSONObject().put("text", "Bed")))
+    // The owner's config when it has one, else the default (fix 8).
+    assertEquals("Bed", store().shieldConfig("bedtime")!!.getJSONObject("title").getString("text"))
+    assertEquals("Default", store().shieldConfig("work")!!.getJSONObject("title").getString("text"))
+    assertEquals("Default", store().shieldConfig(null)!!.getJSONObject("title").getString("text"))
+    store().clearShieldConfigs()
+    assertNull(store().shieldConfig("bedtime"))
+    assertNull(store().shieldConfig(null))
   }
 
   @Test

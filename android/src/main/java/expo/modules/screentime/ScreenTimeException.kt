@@ -10,5 +10,6 @@ import expo.modules.kotlin.exception.CodedException
 class ScreenTimeException(code: String, message: String) : CodedException(code, message, null) {
   companion object {
     const val INVALID_CONFIG = "INVALID_CONFIG"
+    const val SELECTION_NOT_FOUND = "SELECTION_NOT_FOUND"
   }
 }

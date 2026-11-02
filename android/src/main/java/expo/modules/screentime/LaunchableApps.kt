@@ -42,6 +42,19 @@ internal object LaunchableApps {
       .toList()
   }
 
+  /** The package names of [query], without loading a label (the engine's allowlist universe, refreshed on package changes). */
+  fun packages(context: Context): Set<String> {
+    val pm = context.packageManager
+    val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+    val activities = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+      pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(0L))
+    } else {
+      @Suppress("DEPRECATION")
+      pm.queryIntentActivities(intent, 0)
+    }
+    return activities.mapTo(HashSet()) { it.activityInfo.packageName }.also { it.remove(context.packageName) }
+  }
+
   /** The app's label, or null when the package is not installed (or not visible). */
   fun label(context: Context, packageName: String): String? = try {
     val pm = context.packageManager

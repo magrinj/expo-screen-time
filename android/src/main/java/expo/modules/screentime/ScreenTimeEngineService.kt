@@ -13,10 +13,10 @@ import android.util.Log
 
 /**
  * The enforcement engine's foreground service, in the `:screentime` process
- * (`android/src/main/AndroidManifest.xml`). Step 1 is the skeleton: it
- * promotes itself to the foreground with the persistent notice when the
- * state store says the engine is wanted, and leaves otherwise. Detection and
- * the shield arrive in step 3.
+ * (`android/src/main/AndroidManifest.xml`). It promotes itself to the
+ * foreground with the persistent notice when the state store says the
+ * engine is wanted, and leaves otherwise; while it runs, [EngineLoop]
+ * detects the foreground app and launches the [ShieldActivity].
  *
  * Two lessons from the survival run are built in:
  * - `startForeground` can throw `ForegroundServiceStartNotAllowedException`
@@ -28,31 +28,54 @@ import android.util.Log
  *   engine running.
  */
 class ScreenTimeEngineService : Service() {
+  private var loop: EngineLoop? = null
+
   override fun onBind(intent: Intent?): IBinder? = null
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val store = StateStore(this)
     when (intent?.action) {
-      // The internal entry points (also reachable from `adb shell am
-      // start-foreground-service` on a debuggable build, for tests).
+      // Debug entry points, reachable from `adb shell am
+      // start-foreground-service` on a debuggable build; nothing in the app
+      // sends them. The app sends SYNC (EngineController), which carries no
+      // state: the store decides.
       ACTION_START -> store.engineDesired = true
       ACTION_STOP -> store.engineDesired = false
     }
+    // Promote FIRST, whatever the store says: a `startForegroundService`
+    // must be answered by `startForeground`, or the system kills the process
+    // with ForegroundServiceDidNotStartInTimeException and shows a crash
+    // dialog, which is exactly what happened when `unblockAll` followed
+    // `blockSelection` within a millisecond (the stop arrived before the
+    // start was honoured). A refused promotion is recorded by `promote`.
+    val promoted = promote()
     // stopSelf(startId): a start queued behind this one (released, then
     // wanted again at once) keeps the service alive instead of being dropped.
-    if (!store.engineDesired) {
-      Log.i(EngineController.TAG, "engine not wanted; stopping (intent=${intent?.action ?: "redelivered"})")
+    if (!store.engineDesired || !promoted) {
+      if (!store.engineDesired) Log.i(EngineController.TAG, "engine not wanted; stopping (intent=${intent?.action ?: "redelivered"})")
+      if (promoted) stopForeground(STOP_FOREGROUND_REMOVE)
       stopSelf(startId)
       return START_NOT_STICKY
     }
-    if (!promote()) {
-      stopSelf(startId)
-      return START_NOT_STICKY
-    }
-    Log.i(EngineController.TAG, "engine running in ${processName()} (reason=${intent?.getStringExtra(EXTRA_REASON) ?: intent?.action ?: "redelivered"})")
+    val reason = intent?.getStringExtra(EXTRA_REASON) ?: intent?.action ?: "redelivered"
+    Log.i(EngineController.TAG, "engine running in ${processName()} (reason=$reason)")
+    store.engineRunning = true
+    // Every start intent is also the "look again" signal from the module
+    // process: the block (and the sets it needs) is re-read from the store.
+    // The loop exists only under the preview switch: a default build has
+    // no way to write a block, and must not enforce one a preview build
+    // left behind.
+    if (BuildConfig.BLOCKING_PREVIEW) (loop ?: EngineLoop(this).also { loop = it }).refresh(reason)
     // Sticky: the system may restart a killed engine; if it then refuses the
     // promotion, `promote` records it and the service leaves.
     return START_STICKY
+  }
+
+  override fun onDestroy() {
+    loop?.stop()
+    loop = null
+    StateStore(this).engineRunning = false
+    super.onDestroy()
   }
 
   /** `startForeground` with the notice; false (recorded) when the system refuses. */
@@ -103,6 +126,7 @@ class ScreenTimeEngineService : Service() {
   companion object {
     const val ACTION_START = "expo.modules.screentime.action.START"
     const val ACTION_STOP = "expo.modules.screentime.action.STOP"
+    const val ACTION_SYNC = "expo.modules.screentime.action.SYNC"
     const val EXTRA_REASON = "reason"
     private const val CHANNEL_ID = "expo_st_engine"
     private const val NOTICE_ID = 0x5354 // "ST"

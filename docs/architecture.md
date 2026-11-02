@@ -117,7 +117,7 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   `FileChannel` lock on a sidecar file (exclusive for `update`, shared for
   `read`, re-entrant in-process), replaced by atomic rename. Engine desired
   state and failures, permission requests, the install secret, the
-  selections; blocks and schedules join later.
+  selections, the manual block and the shield configs; schedules join later.
 - `SelectionStore.kt` — the twin of `ios/SelectionStore.swift` over the
   state store: `selections.<id>` holds package-name sets (`Selection.kt`,
   pure: the set algebra and the document codec; categories and web domains
@@ -145,7 +145,50 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   `startForeground` is recorded, never thrown. `EngineController.kt` starts
   and stops it from any process; `ScreenTimeRestartReceiver.kt` (boot,
   update) and the module's `OnCreate` are the recovery paths, so the engine
-  never depends on the system's sticky restart.
+  never depends on the system's sticky restart. Every start intent is also
+  the "look again" signal: the module process writes the block to the store
+  and sends one (`ACTION_SYNC`, never a STOP that would carry state, and
+  never `stopService`, which kills a still-spawning foreground service), the
+  service re-reads the store; a release sends it only while the service's
+  own `engine.running` flag is set.
+- **Blocking.**
+  `BlockController.kt` is the module-process half (the twin of the Swift
+  `blockSelection` / `unblockAll` / `isBlocked` and the shield-config
+  functions): `BlockState.kt` (pure) validates in the iOS order and codes
+  and persists `blocks.manual` (selection id, mode and the apps captured at
+  block time, the iOS projection model: an edited selection changes
+  nothing until the next `blockSelection`) together with `engine.desired`
+  in one `update`. `EngineLoop.kt` is the engine-process
+  half: a `HandlerThread` polling `queryEvents` every 100 ms **only while
+  the screen is interactive and a block is in force** (screen receivers
+  stop and resume it; no block, no poll), with the 2 s overlap, the
+  de-duplication, the clamped window and the per-poll try/catch the device
+  runs showed were needed. `ForegroundTracker.kt` (pure) turns the activity
+  events into the resumed and the still-visible sets; `ShieldPolicy.kt`
+  (pure) decides what to shield: blocklist = the selection, allowlist =
+  every launchable app but the selection, exemptions win (host, launchers,
+  SystemUI, dialer, emergency, IME, Settings; the OS reads are in
+  `SystemExemptions.kt`). The selection is resolved live from the store on
+  every block change, as iOS re-projects the stored selection.
+- `ShieldActivity.kt` — the shield, in the `:screentime` process (already
+  alive, so no React Native start on the hot path): `excludeFromRecents`,
+  own task affinity, `singleTask`, `windowDisablePreview` (the first frame
+  is the shield in its final colour, no system splash) and no animation;
+  launched with `NEW_TASK` through the overlay permission's
+  background-activity-launch exemption (a refusal is logged and recorded,
+  never thrown). Appearance from `ShieldAppearance.kt` (pure: the nested
+  and legacy `ShieldConfig` formats, hex colours, the SF Symbol → Material
+  Symbol table) over `StateStore.shieldConfig(owner)` (the iOS precedence:
+  the owning activity's config, else the default). Every button and Back do
+  the iOS default `close`: Home first, then finish, so the blocked app never
+  resumes underneath. After the shield has drawn, the loop looks once more
+  (`followUp`): a target paused but not stopped is a picture-in-picture
+  window over the shield, and `PipEvictorActivity.kt` enters PiP itself to
+  evict it (one pinned task per display); a target still resumed is a
+  multi-window layout the shield could not take over, logged and left
+  alone. Split-screen: a background-started task cannot be placed into a
+  pane (measured), so the shield covers the screen; `LAUNCH_ADJACENT`
+  keeps the split pair alive underneath instead of dismissing it.
 - `ScreenTimeDeviceAdminReceiver.kt` — a no-policy device admin (force-stop
   and uninstall friction).
 - `AndroidManifest.xml` — the static declarations every consumer needs

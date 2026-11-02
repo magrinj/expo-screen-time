@@ -4,8 +4,8 @@
 # Android: the scenarios branch on getCapabilities(), not on the platform.
 #
 # Fixtures (once per install): on the Conformance screen, "Pick apps" (at least
-# one app) and "Pick a category" (at least one category). Screen Time access
-# must be granted on iOS.
+# one app) and, where categories are selectable, "Pick a category" (at least
+# one category). Screen Time access must be granted on iOS.
 #
 #   agent-device replay example/.maestro/conformance.yaml --maestro --platform ios -e APP_ID=<bundle id>
 #   maestro test example/.maestro/conformance.yaml -e APP_ID=<bundle id>

@@ -29,17 +29,40 @@ internal object EngineController {
     sync(context, if (desired) "desired" else "released")
   }
 
-  /** Brings the service in line with the desired state. */
+  /**
+   * Brings the service in line with the desired state.
+   *
+   * Never `stopService`: a stop that lands while a just-started foreground
+   * service is still spawning makes the system kill its process with
+   * `ForegroundServiceDidNotStartInTimeException` and show a crash dialog,
+   * whatever the service then does (seen on Android 17 when `unblockAll`
+   * followed `blockSelection` within a millisecond). A release is therefore
+   * a start-intent too: the service answers with `startForeground`, as the
+   * system requires, re-reads the store and stops itself. It is only sent
+   * when the engine process is alive, so a release never spawns the process
+   * to stop it; a process still spawning reads the released state from the
+   * store and stops on its own. "Alive" is the service's own flag in the
+   * store ([StateStore.engineRunning]), not the process: the boot and
+   * update receivers run in the engine process, and a launch often finds
+   * it cached, which made every boot start the service just to stop it.
+   *
+   * Always SYNC, never START or STOP: the intent carries no state. Intents
+   * from here are delivered later than the store writes they follow, so a
+   * STOP that wrote "released" into the store would clobber a block set a
+   * millisecond after it (seen in the conformance suite's block / unblock /
+   * block sequence). The handler reads the store as it is when the intent
+   * arrives, and the last intent always sees the latest state.
+   */
   fun sync(context: Context, reason: String) {
     val app = context.applicationContext
+    val desired = StateStore(app).engineDesired
+    if (!desired && !StateStore(app).engineRunning) return
     val intent = Intent(app, ScreenTimeEngineService::class.java)
-    if (!StateStore(app).engineDesired) {
-      app.stopService(intent)
-      return
-    }
+      .setAction(ScreenTimeEngineService.ACTION_SYNC)
+      .putExtra(ScreenTimeEngineService.EXTRA_REASON, reason)
     try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        app.startForegroundService(intent.putExtra(ScreenTimeEngineService.EXTRA_REASON, reason))
+        app.startForegroundService(intent)
       } else {
         app.startService(intent)
       }

@@ -54,6 +54,43 @@
     </service>
 
     <!--
+      The shield: drawn by the library over the blocked app, in
+      the engine's process (already alive, so the first frame is cheap and
+      the React Native process is never started for it). Not in Recents, its
+      own task, no starting window (theme), resizeable so it can take a
+      split-screen pane. The task affinity is per app so two consumers never
+      share a task.
+    -->
+    <activity
+      android:name="expo.modules.screentime.ShieldActivity"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:launchMode="singleTask"
+      android:taskAffinity="${applicationId}.expo_st_shield"
+      android:process=":screentime"
+      android:resizeableActivity="true"
+      android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|density"
+      android:theme="@style/ExpoScreenTime.Shield" />
+
+    <!--
+      The picture-in-picture counter-measure: enters PiP to evict the blocked
+      app's pinned window (one per display), then finishes. Its own task, so
+      only it is pinned, never the shield.
+    -->
+    <activity
+      android:name="expo.modules.screentime.PipEvictorActivity"
+      android:exported="false"
+      android:excludeFromRecents="true"
+      android:noHistory="true"
+      android:launchMode="singleInstance"
+      android:taskAffinity="${applicationId}.expo_st_pip"
+      android:process=":screentime"
+      android:resizeableActivity="true"
+      android:supportsPictureInPicture="true"
+      android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+      android:theme="@style/ExpoScreenTime.PipEvictor" />
+
+    <!--
       Brings the engine back after a reboot or an update when the state store
       says it should run. Not exported: system broadcasts still reach it
       (WorkManager's RescheduleReceiver uses the same shape).

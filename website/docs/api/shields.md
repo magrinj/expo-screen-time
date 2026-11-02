@@ -6,6 +6,9 @@ sidebar_position: 7
 
 # Shields
 
+The configuration below is drawn by iOS; on Android the library draws the
+shield itself from the same `ShieldConfig` ([Android notes](#android)).
+
 ## Shield Configuration
 
 :::info Requires the `ShieldConfigurationExtension` target
@@ -214,3 +217,36 @@ ExpoScreenTime.setShieldActionsForActivity('workHours', {
 ```typescript
 ExpoScreenTime.clearShieldActions();
 ```
+
+## Android {#android}
+
+**Preview, not yet enabled** (see [blocking](./blocking.md#android)). On
+Android there is no system shield: the library draws a full-screen Activity
+over the blocked app and maps the stored `ShieldConfig` onto it with the same
+precedence as iOS (the configuration of the source that owns the shield, else
+the default). Today the manual block is the only source, so `setShieldConfig`
+decides and `setShieldConfigForActivity` is stored for the schedules to come.
+
+- **Fields.** `title`, `subtitle`, `primaryButton` (text, colour, background
+  colour) and `secondaryButton` map one to one; `backgroundColor` fills the
+  screen. Colours are `#RRGGBB` or `#RRGGBBAA`. What the config leaves out
+  follows the system light or dark setting, and the title defaults to the
+  blocked app's name with its icon, as the default iOS shield does.
+- **`icon`** is an SF Symbol name on both platforms; Android maps this set to
+  the equivalent Material Symbol and falls back to the blocked app's icon for
+  any other name: `hand.raised.fill`, `lock.fill`, `nosign`, `clock.fill`,
+  `hourglass`, `moon.fill` / `moon.zzz.fill`, `exclamationmark.triangle.fill`
+  (and the unfilled `hand.raised`, `lock`, `clock`). The symbol is tinted with
+  the title colour.
+- **`backgroundBlurStyle`** is accepted and ignored: the shield is opaque,
+  there is nothing behind it to blur.
+- **Buttons and Back** currently all do the iOS default, `close`: the user is
+  sent to the Home screen and the blocked app does not come back on its own.
+  `setShieldActions` (unblock, defer, snooze, openApp) and
+  `drainShieldInteractions` arrive with the unlock slice; `openApp` will be a
+  direct launch (`shieldOpenApp: "direct"`), no notification needed.
+- **Behaviour.** The shield is not in Recents, appears without animation and
+  without a system splash (its first frame is already in the configured
+  colour). In split-screen it covers the whole screen and keeps the split
+  pair alive underneath (see [blocking](./blocking.md#android)).
+

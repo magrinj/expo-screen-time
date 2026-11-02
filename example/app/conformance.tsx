@@ -15,7 +15,8 @@
  *
  * Fixtures, picked once with the buttons below:
  * - `conformance_apps`: at least one app;
- * - `conformance_category`: at least one category.
+ * - `conformance_category`: at least one category, where
+ *   `selectableKinds.categories` is on (C05 skips its category half otherwise).
  */
 import {
   blockSelection,
@@ -305,15 +306,22 @@ const scenarios: Scenario[] = [
         return "UNSUPPORTED (blocking off)";
       }
       await requireFixture(APPS, "applicationCount");
-      await requireFixture(CATEGORY, "categoryCount");
       await reset(caps);
-      await expectCode("INVALID_CONFIG", () => blockSelection(CATEGORY, { mode: "allowlist" }));
+      // An allowlist holds applications only (review R3). The category half
+      // needs a category to pick: where the platform offers none
+      // (selectableKinds.categories off), there is nothing to reject.
+      let categoryPart = "no category kind";
+      if (caps.selectableKinds.categories) {
+        await requireFixture(CATEGORY, "categoryCount");
+        await expectCode("INVALID_CONFIG", () => blockSelection(CATEGORY, { mode: "allowlist" }));
+        categoryPart = "category rejected";
+      }
       blockSelection(APPS, { mode: "allowlist" });
       expect(isBlocked(), "isBlocked() under an allowlist");
       await expectCode("UNSUPPORTED", () => temporaryUnlock(60));
       unblockAll();
       expect(!isBlocked(), "isBlocked() false after unblockAll");
-      return "category rejected, allowlist on, untargeted unlock UNSUPPORTED, lifted";
+      return `${categoryPart}, allowlist on, untargeted unlock UNSUPPORTED, lifted`;
     },
   },
   {

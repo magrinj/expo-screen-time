@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!--
+    The shield's theme. No starting window (`windowDisablePreview`): the first
+    frame is the shield itself, in the configured colour, instead of a system
+    splash in a colour fixed here before the ShieldConfig was known. No
+    window animation either (the engine also passes FLAG_ACTIVITY_NO_ANIMATION).
+    The background colour here only backs the window until onCreate paints the
+    configured one; it follows the system light/dark setting (values-night).
+  -->
+  <style name="ExpoScreenTime.Shield" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+    <item name="android:windowBackground">@color/expo_st_shield_background</item>
+    <item name="android:windowDisablePreview">true</item>
+    <item name="android:windowAnimationStyle">@style/ExpoScreenTime.NoAnimation</item>
+    <item name="android:windowIsTranslucent">false</item>
+    <item name="android:windowNoTitle">true</item>
+    <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+    <item name="android:statusBarColor">@android:color/transparent</item>
+    <item name="android:navigationBarColor">@android:color/transparent</item>
+  </style>
+
+  <!-- The PiP evictor: invisible, no animation, no starting window. -->
+  <style name="ExpoScreenTime.PipEvictor" parent="@android:style/Theme.DeviceDefault.NoActionBar">
+    <item name="android:windowBackground">@android:color/transparent</item>
+    <item name="android:windowIsTranslucent">true</item>
+    <item name="android:windowDisablePreview">true</item>
+    <item name="android:windowAnimationStyle">@style/ExpoScreenTime.NoAnimation</item>
+    <item name="android:windowNoTitle">true</item>
+  </style>
+
+  <style name="ExpoScreenTime.NoAnimation" parent="@android:style/Animation.Activity">
+    <item name="android:activityOpenEnterAnimation">@null</item>
+    <item name="android:activityOpenExitAnimation">@null</item>
+    <item name="android:activityCloseEnterAnimation">@null</item>
+    <item name="android:activityCloseExitAnimation">@null</item>
+    <item name="android:taskOpenEnterAnimation">@null</item>
+    <item name="android:taskOpenExitAnimation">@null</item>
+    <item name="android:taskToFrontEnterAnimation">@null</item>
+    <item name="android:taskToFrontExitAnimation">@null</item>
+    <item name="android:taskToBackEnterAnimation">@null</item>
+    <item name="android:taskToBackExitAnimation">@null</item>
+    <item name="android:windowEnterAnimation">@null</item>
+    <item name="android:windowExitAnimation">@null</item>
+  </style>
+</resources>

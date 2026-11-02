@@ -10,4 +10,8 @@
   <string name="expo_st_picker_empty">No apps to show</string>
   <string name="expo_st_picker_no_match">No apps match your search</string>
   <string name="expo_st_label_unavailable">Unavailable app</string>
+  <!-- The shield's built-in texts, used where the ShieldConfig sets none. -->
+  <string name="expo_st_shield_title">Blocked</string>
+  <string name="expo_st_shield_subtitle">This app is blocked right now.</string>
+  <string name="expo_st_shield_close">OK</string>
 </resources>
