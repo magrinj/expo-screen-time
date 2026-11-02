@@ -25,6 +25,17 @@ public class ScreenTimeManager: NSObject {
     /// thread; the store writes themselves take `lock`.
     private let refreshQueue = DispatchQueue(label: "expo.screentime.refresh", qos: .userInitiated)
 
+    /// The stores `refreshShields` has emptied and not re-projected yet.
+    /// The toggle only makes iOS redraw the shields; the block itself has
+    /// not changed, so `isBlocked` still counts these stores. Without this,
+    /// `isBlocked()` read `false` for about 100 ms after every
+    /// `blockSelection`. Every write to a store drops it from the set,
+    /// because the write projects that store from the state. Only this
+    /// process toggles. A projection from an extension inside the window
+    /// can leave `isBlocked` true for at most the rest of the window.
+    /// Guarded by `lock`.
+    private var refreshingStores: Set<String> = []
+
     /// The unnamed store: deny-removal / deny-installation. Builds before block
     /// composition also kept every shield here — see `migrateLegacyStore`.
     private lazy var defaultStore = ManagedSettingsStore()
@@ -77,7 +88,7 @@ public class ScreenTimeManager: NSObject {
         lock.withLock {
             let sources = sharedDefaults.activeBlockSources()
             let shields = BlockComposition.storeShields(of: sources, snoozed: sharedDefaults.snoozedTargets())
-            for name in Set(sharedDefaults.shieldStoreNames()).union(shields.keys) {
+            for name in Set(sharedDefaults.shieldStoreNames()).union(shields.keys).union(refreshingStores) {
                 write(shields[name] ?? StoreShields(tokens: []), toStoreNamed: name)
             }
             sharedDefaults.pruneShieldOwners(keeping: sources.map(\.kind))
@@ -117,12 +128,15 @@ public class ScreenTimeManager: NSObject {
 
     /// Whether any source shields something right now (apps, categories, or
     /// web domains). Reflects the real ManagedSettings state, not the stored
-    /// selections; `false` during a temporary unlock.
+    /// selections; `false` during a temporary unlock. The shield-UI refresh
+    /// that follows a block (`refreshShields`) does not count as a lift.
     public func isBlocked() -> Bool {
         guard #available(iOS 16.0, *) else { return false }
         // Under the lock, so a half-applied projection is never observed.
         return lock.withLock {
-            sharedDefaults.shieldStoreNames().contains { Self.hasShields(store(named: $0)) }
+            sharedDefaults.shieldStoreNames().contains {
+                refreshingStores.contains($0) || Self.hasShields(store(named: $0))
+            }
         }
     }
 
@@ -144,6 +158,7 @@ public class ScreenTimeManager: NSObject {
                 for name in shielding {
                     store(named: name).clearShields()
                 }
+                refreshingStores.formUnion(shielding)
                 return !shielding.isEmpty
             }
             guard toggledOff else { return }
@@ -268,6 +283,7 @@ public class ScreenTimeManager: NSObject {
     /// under the lock — the registry is pruned only when the projection that
     /// emptied the store ran under it.
     private func write(_ shields: StoreShields<ShieldToken>, toStoreNamed name: String) {
+        refreshingStores.remove(name)
         if shields.isEmpty {
             store(named: name).setShields(StoreShields(tokens: []))
             sharedDefaults.unregisterShieldStore(name)
