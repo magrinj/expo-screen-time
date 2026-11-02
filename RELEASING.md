@@ -62,6 +62,22 @@ npm publish --access public
 
 Prefer the automated flow; this is only a fallback.
 
+## The npm publish failed after the release was created
+
+The tag and the GitHub Release exist, but npm does not have the version (for
+example `E404` on `PUT`, which means the Trusted Publisher is missing or does
+not name `release.yml`). Re-running the failed job does **not** publish:
+release-please already labelled the Release PR `autorelease: tagged`, so it
+reports no new release and the publish steps are skipped. Fix the cause, then
+publish the existing tag by hand:
+
+```bash
+gh workflow run release.yml -f tag=v0.2.0
+```
+
+The run checks out the tag, checks that it matches `package.json`, and
+publishes through the same OIDC trusted publisher.
+
 ## Notes
 
 - **Burned versions:** `0.1.0` was published+unpublished in 2024 and can never be
