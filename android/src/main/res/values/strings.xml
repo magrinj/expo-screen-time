@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!-- The engine's persistent notice. Consumers can override these in their own res/values. -->
+  <string name="expo_st_notice_channel">Screen Time protection</string>
+  <string name="expo_st_notice_title">Screen Time protection is active</string>
+  <string name="expo_st_notice_text">Restrictions you set are being enforced.</string>
+  <string name="expo_st_device_admin_explanation">Keeps the protection from being force-stopped or removed without turning it off here first.</string>
+</resources>

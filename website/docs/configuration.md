@@ -67,6 +67,39 @@ To include only specific targets, use `expo.extra.expoScreenTime.targets`:
 - **Omit** `targets` → all 4 targets are generated (default).
 - **Empty array** `[]` → no extension targets (basic app/category blocking only).
 
+## Android {#android}
+
+The plugin needs nothing on Android: the permissions the engine uses
+(`PACKAGE_USAGE_STATS`, `SYSTEM_ALERT_WINDOW`, the foreground service and its
+`specialUse` type, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`), the
+launcher `<queries>` intent (never `QUERY_ALL_PACKAGES`), the enforcement
+service in its own `:screentime` process, the boot and update receivers and
+the device-admin receiver come from the library's own manifest, merged into
+yours by Gradle.
+
+One option, under `expo.extra.expoScreenTime.android`:
+
+```json
+{
+  "expo": {
+    "extra": {
+      "expoScreenTime": {
+        "android": { "parentalControl": true }
+      }
+    },
+    "plugins": ["expo-screen-time"]
+  }
+}
+```
+
+| Option | Default | |
+|---|---|---|
+| `parentalControl` | `false` | The app is a parental-control app: adds Google Play's mandatory `IsMonitoringTool` manifest flag with the value `child_monitoring` ([Play Console help](https://support.google.com/googleplay/android-developer/answer/12955211)). Play requires it in every version code of such an app; Google Play Protect then tells the user a monitoring app is installed. Turning the option off removes the entry again. |
+
+The engine's persistent notice (channel, title, text) is localized through
+string resources you can override in your own `res/values/strings.xml`:
+`expo_st_notice_channel`, `expo_st_notice_title`, `expo_st_notice_text`.
+
 ## Using with Other Apple Targets
 
 `expo-screen-time` adds its extension targets to the Xcode project directly via Expo's config-plugin system, so it's self-contained and coexists with other plugins that edit the project (including `@bacons/apple-targets` if you use it for widgets or other extensions). No extra wiring is required.

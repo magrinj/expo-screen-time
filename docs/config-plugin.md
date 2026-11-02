@@ -75,6 +75,28 @@ no `path`. New wiring ⇒ new assertion.
 5. Run the full verification loop (see [`development.md`](./development.md)),
    including the clean-prebuild count (now N targets) and idempotency re-run.
 
+## Android — `plugin/src/android/`
+
+- **Static entries live in the library manifest**
+  (`android/src/main/AndroidManifest.xml`): permissions, the launcher
+  `<queries>` intent, the engine service, the receivers. Gradle's manifest
+  merger adds them once, so they are idempotent by construction and do not
+  depend on the plugin running. The plugin writes **only optional, app-level
+  entries** (today `IsMonitoringTool` for `android.parentalControl`), each
+  looked up by name before it is added and removed when its option is off
+  (no stale entry on `--no-clean`). Same split as expo-widgets (its receiver
+  is in its library manifest; `POST_NOTIFICATIONS` is a plugin option).
+- The mutation is the exported pure function
+  `applyScreenTimeAndroidManifest(manifest, options)`;
+  `plugin/src/android/__tests__/withScreenTimeAndroid.test.ts` asserts
+  idempotent re-apply, removal on option off, and the **shape of the library
+  manifest** (the exact permission set, never `QUERY_ALL_PACKAGES`, the
+  `specialUse` service in `:screentime` with its subtype property, the
+  receivers). New wiring ⇒ new assertion, in whichever of the two files it
+  lands.
+- The Android mod runs **before** the `ios.bundleIdentifier` guard in
+  `plugin/src/index.ts`: an Android-only app config must still get it.
+
 ## Consumer-facing invariants (don't break)
 
 - No `ios.bundleIdentifier` ⇒ warn + skip (never generate `group.undefined`).

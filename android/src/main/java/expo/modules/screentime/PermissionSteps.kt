@@ -1,0 +1,160 @@
+package expo.modules.screentime
+
+/**
+ * The permission model behind `getScreenTimePermissionsAsync` and
+ * `requestScreenTimePermissionsAsync` on Android, without the OS: which
+ * steps the requested features need, in onboarding order, and how their
+ * statuses fold into Expo's `PermissionResponse`. The Kotlin twin of
+ * `ios/PermissionSteps.swift`; the derivation rules are the contract's
+ * (`src/ExpoScreenTime.types.ts`, PERMISSIONS).
+ *
+ * Steps, for the usageStats engine ("Permissions"):
+ * - `overlay` (required; requested first: once held, the app may start
+ *   activities from the background, which lets it bring the user back from
+ *   every later settings screen);
+ * - `usageAccess` (required; also for `usageReports` alone);
+ * - `notifications` (Android 13+; recommended, required for a `child`:
+ *   Google Play's parental-control rules demand the persistent notice);
+ * - `deviceAdmin` (recommended for blocking: an active admin cannot be
+ *   force-stopped; required for `appRemovalProtection` and for a `child`);
+ * - `batteryOptimization` (recommended; the system list, no permission);
+ * - `backgroundAutostart` (recommended, vendor screen, only where one exists).
+ *
+ * Pure Kotlin on purpose, unit-tested in `android/src/test`.
+ */
+internal object PermissionSteps {
+  enum class Feature { blocking, monitoring, usageReports, shieldOpenApp, appRemovalProtection, webDomainBlocking }
+
+  /** `ScreenTimePermissionOptions.features` when absent. */
+  val defaultFeatures = listOf(Feature.blocking, Feature.monitoring)
+
+  /** Every id of the contract's `PermissionStepId`. */
+  enum class StepId { screenTime, usageAccess, overlay, accessibility, notifications, batteryOptimization, backgroundAutostart, deviceAdmin }
+
+  /** The ids Android has a step for (the usageStats engine). */
+  val androidStepIds: Set<StepId> = setOf(
+    StepId.overlay, StepId.usageAccess, StepId.notifications, StepId.deviceAdmin, StepId.batteryOptimization, StepId.backgroundAutostart
+  )
+
+  enum class Status { granted, denied, undetermined, restricted, unknown }
+  enum class Kind { prompt, settings, guide }
+
+  data class StepError(val code: String, val message: String)
+
+  /** What decides which steps exist on this device. */
+  data class Device(val sdkInt: Int, val hasVendorAutostartScreen: Boolean)
+
+  /** A step the features need, before its status is read. */
+  data class Plan(val id: StepId, val required: Boolean, val kind: Kind)
+
+  /** One step as reported to JS (`PermissionStep`), plus what the derivation needs. */
+  data class Step(
+    val id: StepId,
+    val status: Status,
+    val required: Boolean,
+    val kind: Kind,
+    val error: StepError? = null,
+    /**
+     * Whether requesting this step again can show its prompt or screen.
+     * Settings screens always can; the notification prompt cannot once the
+     * user blocked it (Android then only offers Settings).
+     */
+    val canPrompt: Boolean = true,
+  ) {
+    fun toMap(): Map<String, Any> {
+      val map = mutableMapOf<String, Any>(
+        "id" to id.name,
+        "status" to status.name,
+        "required" to required,
+        "kind" to kind.name,
+      )
+      error?.let { map["error"] = mapOf("code" to it.code, "message" to it.message) }
+      return map
+    }
+  }
+
+  /** What a request for `step` means, from the raw `step` option. */
+  sealed class RequestedStep {
+    object Next : RequestedStep()
+    data class Step(val id: StepId) : RequestedStep()
+    /** A contract id Android has no step for (`screenTime`, `accessibility`). */
+    data class NotOnThisPlatform(val name: String) : RequestedStep()
+    data class Unknown(val name: String) : RequestedStep()
+  }
+
+  // MARK: - Options
+
+  /**
+   * `features` from the options: absent, or not a list, is the default;
+   * names this build does not know are ignored (the JS type is the guard).
+   * Order kept, duplicates dropped.
+   */
+  fun features(from: Any?): List<Feature> {
+    val names = from as? List<*> ?: return defaultFeatures
+    val features = mutableListOf<Feature>()
+    for (name in names) {
+      val feature = (name as? String)?.let { n -> Feature.values().firstOrNull { it.name == n } } ?: continue
+      if (feature !in features) features.add(feature)
+    }
+    return features
+  }
+
+  /** `member` from the options: `child` or (default, and anything else) `individual`. */
+  fun isChild(from: Any?): Boolean = from == "child"
+
+  fun requestedStep(from: Any?): RequestedStep {
+    if (from == null) return RequestedStep.Next
+    val name = from as? String ?: return RequestedStep.Unknown(from.toString())
+    val id = StepId.values().firstOrNull { it.name == name } ?: return RequestedStep.Unknown(name)
+    return if (id in androidStepIds) RequestedStep.Step(id) else RequestedStep.NotOnThisPlatform(name)
+  }
+
+  // MARK: - Steps
+
+  /** The steps `features` need on [device], in onboarding order. */
+  fun plan(features: List<Feature>, child: Boolean, device: Device): List<Plan> {
+    val engine = Feature.blocking in features || Feature.monitoring in features
+    val plans = mutableListOf<Plan>()
+    if (engine) plans.add(Plan(StepId.overlay, required = true, kind = Kind.settings))
+    if (engine || Feature.usageReports in features) plans.add(Plan(StepId.usageAccess, required = true, kind = Kind.settings))
+    if (engine && device.sdkInt >= 33) plans.add(Plan(StepId.notifications, required = child, kind = Kind.prompt))
+    if (engine || Feature.appRemovalProtection in features) {
+      plans.add(Plan(StepId.deviceAdmin, required = child || Feature.appRemovalProtection in features, kind = Kind.settings))
+    }
+    if (engine) plans.add(Plan(StepId.batteryOptimization, required = false, kind = Kind.settings))
+    if (engine && device.hasVendorAutostartScreen) plans.add(Plan(StepId.backgroundAutostart, required = false, kind = Kind.guide))
+    return plans
+  }
+
+  /** The first required step not yet granted; null when onboarding is done. */
+  fun nextStep(steps: List<Step>): StepId? = steps.firstOrNull { it.required && it.status != Status.granted }?.id
+
+  // MARK: - Response
+
+  /**
+   * Expo's `PermissionResponse` plus `steps`:
+   * - `granted` ⇔ every required step is granted;
+   * - `status`: `granted` if so; else `denied` if a required step is denied
+   *   or restricted; else `undetermined`;
+   * - `canAskAgain` ⇔ no required step is restricted, and every required
+   *   step still to grant can show its prompt or screen.
+   */
+  fun response(steps: List<Step>): Map<String, Any> {
+    val required = steps.filter { it.required }
+    val pending = required.filter { it.status != Status.granted }
+    val granted = pending.isEmpty()
+    val status = when {
+      granted -> "granted"
+      pending.any { it.status == Status.denied || it.status == Status.restricted } -> "denied"
+      else -> "undetermined"
+    }
+    val canAskAgain = required.none { it.status == Status.restricted } && pending.all { it.canPrompt }
+    return mapOf(
+      "status" to status,
+      "granted" to granted,
+      "canAskAgain" to canAskAgain,
+      "expires" to "never",
+      "steps" to steps.map { it.toMap() },
+    )
+  }
+}

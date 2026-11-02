@@ -32,6 +32,11 @@ const PERMISSION_OPTIONS: ScreenTimePermissionOptions = {
 const STEP_TITLE: Partial<Record<PermissionStep["id"], string>> = {
   screenTime: "Screen Time access",
   notifications: "Notifications (shield → open app)",
+  overlay: "Display over other apps",
+  usageAccess: "Usage access",
+  deviceAdmin: "Device admin",
+  batteryOptimization: "Battery optimization",
+  backgroundAutostart: "Autostart (vendor screen)",
 };
 
 export default function HomeScreen() {

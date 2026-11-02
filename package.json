@@ -12,11 +12,13 @@
     "!src/report/__tests__",
     "plugin/src",
     "!plugin/src/ios/__tests__",
+    "!plugin/src/android/__tests__",
     "ios",
     "targets",
     "android",
     "!android/build",
     "!android/.gradle",
+    "!android/src/test",
     "app.plugin.js",
     "expo-module.config.json"
   ],

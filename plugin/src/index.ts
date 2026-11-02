@@ -1,6 +1,7 @@
 import { ConfigPlugin, createRunOncePlugin, withEntitlementsPlist } from 'expo/config-plugins';
 import * as path from 'path';
 
+import withScreenTimeAndroid from './android/withScreenTimeAndroid';
 import withScreenTimeTargets from './ios/withScreenTimeTargets';
 
 const pkg = require('../../package.json');
@@ -40,8 +41,16 @@ const TARGETS_ROOT = path.resolve(__dirname, '..', '..', 'targets');
  * - ShieldActionExtension - Custom shield button behavior
  * - DeviceActivityMonitorExtension - Schedule monitoring (time-based blocking)
  * - DeviceActivityReportExtension - Usage analytics view
+ *
+ * Android: the permissions, the launcher `<queries>` intent, the engine
+ * service and its receivers come from the library's own manifest (merged
+ * by Gradle). The plugin only writes the optional, app-level entries, from
+ * `expo.extra.expoScreenTime.android` (`parentalControl`).
  */
 const withExpoScreenTime: ConfigPlugin = (config) => {
+  // Android first: it does not depend on the iOS bundle identifier below.
+  config = withScreenTimeAndroid(config);
+
   const bundleIdentifier = config.ios?.bundleIdentifier;
   if (!bundleIdentifier) {
     console.warn(

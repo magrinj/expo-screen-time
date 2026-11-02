@@ -94,4 +94,8 @@ internal val NATIVE_FUNCTIONS: List<NativeFunction> = listOf(
 )
 
 /** Functions with a real Android definition in [ExpoScreenTimeModule]. */
-internal val IMPLEMENTED: Set<String> = setOf("getCapabilities")
+internal val IMPLEMENTED: Set<String> = setOf(
+  "getCapabilities",
+  "getScreenTimePermissionsAsync",
+  "requestScreenTimePermissionsAsync",
+)

@@ -101,6 +101,36 @@ name + bundle-id slug; deployment target 16.0):
   bundle-id suffixes to derive the base app bundle id — a new target's suffix must
   be added to those strip lists or the extension resolves the wrong App Group.
 
+### 4. Android — `android/src/main/`
+
+The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screentime/`):
+
+- `ExpoScreenTimeModule.kt` — the module definition; `NativeFunctions.kt` is
+  the registry the parity test reads (every function not in `IMPLEMENTED`
+  rejects `UNSUPPORTED`).
+- `PermissionSteps.kt` (pure: which steps the features need, the response
+  derivation; the twin of `ios/PermissionSteps.swift`) and
+  `AndroidPermissionRequester.kt` (the OS reads, the settings screens, the
+  return-after-permission watch).
+- `StateStore.kt` — **the App Group counterpart**: one JSON document under
+  `noBackupFilesDir`, read and written by both processes under a
+  `FileChannel` lock on a sidecar file (exclusive for `update`, shared for
+  `read`, re-entrant in-process), replaced by atomic rename. Engine desired
+  state and failures, permission requests; blocks and schedules join later.
+- `ScreenTimeEngineService.kt` — the enforcement engine's `specialUse`
+  foreground service, in the **`:screentime` process** so the React Native
+  process stays killable. It runs only while the store says so; a refused
+  `startForeground` is recorded, never thrown. `EngineController.kt` starts
+  and stops it from any process; `ScreenTimeRestartReceiver.kt` (boot,
+  update) and the module's `OnCreate` are the recovery paths, so the engine
+  never depends on the system's sticky restart.
+- `ScreenTimeDeviceAdminReceiver.kt` — a no-policy device admin (force-stop
+  and uninstall friction).
+- `AndroidManifest.xml` — the static declarations every consumer needs
+  (permissions, `<queries>`, the service and receivers), merged by Gradle;
+  the plugin's Android mod (`plugin/src/android/`) only writes optional
+  app-level entries.
+
 ## The opaque `selectionId` principle
 
 Apple's tokens are opaque and must not be readable from JS. The whole API is built

@@ -1,2 +1,88 @@
-<manifest>
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Static declarations the Android implementation needs in every consumer app.
+  Gradle's manifest merger folds this file into the app's manifest, so these
+  entries are present once whatever the number of prebuilds: that is what makes
+  them inherently idempotent, and why they live here rather than in the config
+  plugin (plugin/src/android/, which only adds the optional, app-level bits).
+  "Config plugin (Android)".
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+
+  <!-- Usage access (Settings toggle, read through AppOps): the usageStats engine. -->
+  <uses-permission
+    android:name="android.permission.PACKAGE_USAGE_STATS"
+    tools:ignore="ProtectedPermissions" />
+  <!-- Display over other apps: the background-activity-launch exemption the shield needs. -->
+  <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+  <!-- The engine's foreground service (Android 14+: typed as specialUse). -->
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+  <!-- Android 13+: the persistent notice of the engine. -->
+  <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+  <!-- Restart the engine after a reboot. -->
+  <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+  <!--
+    Package visibility (Android 11+): the launchable apps the picker lists.
+    Deliberately not QUERY_ALL_PACKAGES, which Play restricts.
+  -->
+  <queries>
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+  </queries>
+
+  <application>
+    <!--
+      The enforcement engine, in its own process: the React Native process
+      stays killable without taking the engine down.
+      `specialUse` with its mandatory subtype property; Android 15+ lets a
+      specialUse service start from BOOT_COMPLETED.
+    -->
+    <service
+      android:name="expo.modules.screentime.ScreenTimeEngineService"
+      android:exported="false"
+      android:foregroundServiceType="specialUse"
+      android:process=":screentime"
+      android:stopWithTask="false">
+      <property
+        android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+        android:value="Blocks the apps the user chose to restrict, on the schedule they set, while a restriction is active" />
+    </service>
+
+    <!--
+      Brings the engine back after a reboot or an update when the state store
+      says it should run. Not exported: system broadcasts still reach it
+      (WorkManager's RescheduleReceiver uses the same shape).
+    -->
+    <receiver
+      android:name="expo.modules.screentime.ScreenTimeRestartReceiver"
+      android:exported="false"
+      android:process=":screentime">
+      <intent-filter>
+        <action android:name="android.intent.action.BOOT_COMPLETED" />
+        <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+      </intent-filter>
+    </receiver>
+
+    <!--
+      Device admin with no policy: an active admin cannot be force-stopped
+      from Settings and must be deactivated before the app can be uninstalled
+      (the `deviceAdmin` permission step).
+    -->
+    <receiver
+      android:name="expo.modules.screentime.ScreenTimeDeviceAdminReceiver"
+      android:exported="true"
+      android:permission="android.permission.BIND_DEVICE_ADMIN">
+      <meta-data
+        android:name="android.app.device_admin"
+        android:resource="@xml/expo_st_device_admin" />
+      <intent-filter>
+        <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+      </intent-filter>
+    </receiver>
+  </application>
 </manifest>

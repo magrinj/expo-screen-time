@@ -4,7 +4,8 @@
  * The same scripted scenarios run on every platform through the public API.
  * They branch on `getCapabilities()`, never on `Platform.OS`: where a capability
  * is off, the scenario asserts the coded `UNSUPPORTED` error instead of the
- * behaviour. Driven by `example/conformance/suite.ad` (agent-device), which
+ * behaviour. Permissions have no capability: C02 and C11 branch on whether
+ * `getScreenTimePermissionsAsync` answers (see `permissionsIfImplemented`). Driven by `example/conformance/suite.ad` (agent-device), which
  * taps "Run" and waits for the verdict line.
  *
  * Shields are drawn by the OS outside the accessibility tree, so what they
@@ -39,7 +40,10 @@ import {
   temporaryUnlock,
   unblockAll,
   type DateComponents,
+  type PermissionStepId,
   type ScreenTimeCapabilities,
+  type ScreenTimePermissionOptions,
+  type ScreenTimePermissionResponse,
 } from "expo-screen-time";
 import { router } from "expo-router";
 import { useState } from "react";
@@ -48,6 +52,11 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 const APPS = "conformance_apps";
 const CATEGORY = "conformance_category";
 const ACTIVITY = "conformance_schedule";
+
+// The contract's vocabulary (`PermissionStep`), checked on every platform.
+const STEP_IDS: PermissionStepId[] = ["screenTime", "usageAccess", "overlay", "accessibility", "notifications", "batteryOptimization", "backgroundAutostart", "deviceAdmin"];
+const STEP_STATUSES = ["granted", "denied", "undetermined", "restricted", "unknown"];
+const STEP_KINDS = ["prompt", "settings", "guide"];
 
 type Status = "pass" | "fail";
 type Result = { id: string; title: string; status: Status; detail: string };
@@ -89,6 +98,22 @@ async function eventually(predicate: () => Promise<boolean>, ms = 4000): Promise
   return predicate();
 }
 
+/**
+ * The permission response, or null where the permission steps are not
+ * implemented. Permissions have no capability field: a platform that can
+ * list its steps answers, one that cannot rejects with `UNSUPPORTED` (the
+ * Android skeleton before stage 3). The condition is the call itself, never
+ * the platform.
+ */
+async function permissionsIfImplemented(options?: ScreenTimePermissionOptions): Promise<ScreenTimePermissionResponse | null> {
+  try {
+    return await getScreenTimePermissionsAsync(options);
+  } catch (error) {
+    if (isScreenTimeError(error) && error.code === "UNSUPPORTED") return null;
+    throw error;
+  }
+}
+
 async function reset(caps: ScreenTimeCapabilities): Promise<void> {
   if (caps.blocking === "none") return;
   await stopAllMonitoring();
@@ -119,33 +144,54 @@ const scenarios: Scenario[] = [
     id: "C02",
     title: "Permissions report their steps",
     async run(caps) {
-      if (caps.blocking === "none") {
-        await expectCode("UNSUPPORTED", () => getScreenTimePermissionsAsync());
-        return "UNSUPPORTED (blocking off)";
+      const response = await permissionsIfImplemented();
+      if (!response) {
+        expect(caps.blocking === "none", "permissions must be implemented wherever blocking is");
+        return "UNSUPPORTED (not implemented)";
       }
-      const response = await getScreenTimePermissionsAsync();
-      const step = response.steps.find((s) => s.id === "screenTime");
-      expect(!!step && step.required, "a required screenTime step");
-      expect(response.granted && step!.status === "granted", `screen time access must be granted to run the suite (status=${response.status})`);
-      return `granted, ${response.steps.length} step(s)`;
+      const { steps } = response;
+      expect(steps.length > 0, "at least one step");
+      for (const s of steps) {
+        expect(STEP_IDS.includes(s.id) && STEP_STATUSES.includes(s.status) && STEP_KINDS.includes(s.kind) && typeof s.required === "boolean", `step shape: ${JSON.stringify(s)}`);
+        expect(s.error === undefined || (typeof s.error.code === "string" && typeof s.error.message === "string"), `step error shape: ${JSON.stringify(s.error)}`);
+      }
+      expect(new Set(steps.map((s) => s.id)).size === steps.length, "step ids are unique");
+      const required = steps.filter((s) => s.required);
+      expect(required.length > 0, "a required step");
+      // The derivation rules of the contract.
+      expect(response.granted === required.every((s) => s.status === "granted"), "granted iff every required step is granted");
+      const expectedStatus = response.granted ? "granted" : required.some((s) => s.status === "denied" || s.status === "restricted") ? "denied" : "undetermined";
+      expect(response.status === expectedStatus, `status=${response.status}, expected ${expectedStatus} from the steps`);
+      expect(!required.some((s) => s.status === "restricted") || !response.canAskAgain, "a restricted required step means canAskAgain is false");
+      // The rest of the suite blocks and monitors: that needs the access.
+      if (caps.blocking !== "none") expect(response.granted, `access must be granted to run the suite (status=${response.status})`);
+      return `${response.status}, ${steps.length} step(s): ${steps.map((s) => `${s.id}=${s.status}${s.required ? "" : " (recommended)"}`).join(", ")}`;
     },
   },
   {
     id: "C11",
     title: "Features decide the required steps",
     async run(caps) {
-      if (caps.blocking === "none") {
-        await expectCode("UNSUPPORTED", () => getScreenTimePermissionsAsync({ features: ["blocking", "shieldOpenApp"] }));
-        return "UNSUPPORTED (blocking off)";
+      const plain = await permissionsIfImplemented({ features: ["blocking"] });
+      if (!plain) {
+        expect(caps.blocking === "none", "permissions must be implemented wherever blocking is");
+        await expectCode("UNSUPPORTED", () => requestScreenTimePermissionsAsync({ features: ["blocking"], step: "usageAccess" }));
+        return "UNSUPPORTED (not implemented)";
       }
-      const plain = await getScreenTimePermissionsAsync({ features: ["blocking"] });
       expect(!plain.steps.some((s) => s.id === "notifications" && s.required), "no required notifications step without shieldOpenApp");
       const withOpenApp = await getScreenTimePermissionsAsync({ features: ["blocking", "shieldOpenApp"] });
       const notifications = withOpenApp.steps.find((s) => s.id === "notifications");
-      expect(!!notifications && notifications.required, "shieldOpenApp requires the notifications step");
+      if (caps.shieldOpenApp === "notification") {
+        expect(!!notifications && notifications.required, "shieldOpenApp through a notification requires the notifications step");
+      } else {
+        expect(!notifications?.required, "a direct shieldOpenApp does not require the notifications step");
+      }
       expect(withOpenApp.granted === withOpenApp.steps.filter((s) => s.required).every((s) => s.status === "granted"), "granted iff every required step is granted");
-      await expectCode("INVALID_CONFIG", () => requestScreenTimePermissionsAsync({ features: ["blocking"], step: "usageAccess" }));
-      return `notifications step ${notifications!.status}; unlisted step rejected`;
+      // A step the features do not list is a caller error, whichever platform: pick one from the response.
+      const unlisted = STEP_IDS.find((id) => !plain.steps.some((s) => s.id === id));
+      expect(!!unlisted, "a step id the features do not list");
+      await expectCode("INVALID_CONFIG", () => requestScreenTimePermissionsAsync({ features: ["blocking"], step: unlisted }));
+      return `notifications step ${notifications ? `${notifications.status}${notifications.required ? ", required" : ", recommended"}` : "not listed"}; unlisted step ${unlisted} rejected`;
     },
   },
   {

@@ -21,9 +21,11 @@ export type ScreenTimeFeature =
 
 /**
  * One thing the user must allow. iOS lists `screenTime` (the Family Controls
- * prompt) and, for the `shieldOpenApp` feature, `notifications`. The other
- * ids are Android's; they exist so shared code can label every step, and
- * iOS never lists them.
+ * prompt) and, for the `shieldOpenApp` feature, `notifications`. Android
+ * lists `overlay` and `usageAccess` (required), then `notifications`,
+ * `deviceAdmin`, `batteryOptimization` and, on some makers,
+ * `backgroundAutostart` (recommended). Each platform lists only its own
+ * steps; the ids exist in one type so shared code can label every step.
  */
 export type PermissionStepId =
   /** iOS: Family Controls authorization (system prompt). */
@@ -36,11 +38,11 @@ export type PermissionStepId =
   | "accessibility"
   /** iOS: for `shieldOpenApp`. Android 13+: the protection notice. */
   | "notifications"
-  /** Android: the system's battery-optimization list. */
+  /** Android: the system's battery-optimization list (no permission is requested). */
   | "batteryOptimization"
-  /** Android OEMs: the vendor autostart screen. */
+  /** Android OEMs (Xiaomi, Oppo, Vivo, Huawei, OnePlus…): the vendor autostart screen; its status stays `unknown`. */
   | "backgroundAutostart"
-  /** Android: device admin activation. */
+  /** Android: device admin activation, which disables "Force stop" and guards uninstall. */
   | "deviceAdmin";
 
 export type PermissionStep = {
@@ -48,20 +50,30 @@ export type PermissionStep = {
   /**
    * `restricted`: the OS refuses to let this user grant it (iOS
    * `FamilyControlsError.restricted`: Screen Time restrictions, a managed
-   * device). `unknown`: the status cannot be read back.
+   * device; Android "restricted settings" for a sideloaded app, or the
+   * overlay permission on a low-RAM device). `unknown`: the status cannot
+   * be read back (the vendor autostart screen). An Android settings toggle
+   * that is off reads `undetermined` until the app has sent the user to
+   * that screen once, `denied` after.
    */
   status: "granted" | "denied" | "undetermined" | "restricted" | "unknown";
   /** `true`: needed by the requested features. `false`: recommended for reliability. */
   required: boolean;
-  /** `prompt`: a system dialog. `settings`: a settings screen. `guide`: a vendor screen. */
+  /**
+   * `prompt`: a system dialog. `settings`: a settings screen; the request
+   * resolves when the user comes back to the app. `guide`: a vendor screen
+   * (same), whose status stays `unknown`.
+   */
   kind: "prompt" | "settings" | "guide";
   /**
    * Why the last request failed, verbatim from the OS: for `screenTime` the
    * `FamilyControlsError` case name (`restricted`, `invalidAccountType`,
    * `authorizationCanceled`, `networkError`, …) and its description; for
    * `notifications` an error thrown by the request (a refusal is not an
-   * error: the step reads `denied`). Absent when the last request succeeded
-   * or once the step is granted. Kept for the app's lifetime only.
+   * error: the step reads `denied`); on Android, a settings screen that
+   * could not be opened (`ActivityNotFoundException`). Absent when the last
+   * request succeeded or once the step is granted. Kept for the app's
+   * lifetime on iOS, across launches on Android.
    */
   error?: { code: string; message: string };
 };
@@ -92,10 +104,11 @@ export type ScreenTimePermissionOptions = {
   /**
    * Who authorizes. `individual` (default): the user approves for this
    * device. `child`: Family Sharing authorization of a child account, approved
-   * by a parent; requests `.child` on iOS, and fails with the step error
-   * `invalidAccountType` on an account that is not a child in a family.
-   * Only read when requesting.
-   * @platform ios
+   * by a parent; requests `.child` on iOS (only read when requesting), and
+   * fails with the step error `invalidAccountType` on an account that is not
+   * a child in a family. On Android it makes the `notifications` and
+   * `deviceAdmin` steps required (Google Play's parental-control rules
+   * demand a persistent notice), so it is read when listing the steps too.
    */
   member?: "individual" | "child";
 };

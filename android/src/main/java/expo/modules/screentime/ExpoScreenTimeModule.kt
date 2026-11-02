@@ -8,23 +8,85 @@ import expo.modules.kotlin.modules.ModuleDefinitionBuilder
 /**
  * Android counterpart of `ios/ExpoScreenTimeModule.swift`.
  *
- * Stage 1 of the Android port: the module autolinks,
- * exports the same functions, event and views as iOS, and every function fails
- * with a coded `UNSUPPORTED` error. Nothing is enforced on the device yet.
+ * Stage 3 of the Android port, step 1: the
+ * permission steps are real, the engine service and its state store exist,
+ * and every function not yet implemented fails with a coded `UNSUPPORTED`
+ * error. Nothing is enforced on the device yet.
  */
 class ExpoScreenTimeModule : Module() {
+  private val permissionRequester by lazy { AndroidPermissionRequester(appContext) }
+
   override fun definition() = ModuleDefinition {
     Name("ExpoScreenTime")
 
     // Declared for parity with iOS; never emitted until monitoring exists.
     Events("onMonitorEvent")
 
+    OnCreate {
+      // The recovery path that does not depend on the system's sticky
+      // restart: every launch brings the engine in line with the stored
+      // desired state (and stops a stray one).
+      appContext.reactContext?.let { EngineController.sync(it, "launch") }
+    }
+
+    OnActivityEntersForeground {
+      permissionRequester.onForeground()
+    }
+
+    OnDestroy {
+      permissionRequester.dispose()
+    }
+
     NATIVE_FUNCTIONS.filterNot { it.name in IMPLEMENTED }.forEach { unsupported(it) }
 
+    // MARK: - Permissions
+
+    // `options` (`ScreenTimePermissionOptions`): `features` decides which
+    // steps are listed and required, `member: "child"` makes the
+    // notification notice and the device admin required (PermissionSteps).
+    AsyncFunction("getScreenTimePermissionsAsync") { options: Map<String, Any?>?, promise: Promise ->
+      promise.resolve(
+        permissionRequester.response(
+          features = PermissionSteps.features(options?.get("features")),
+          child = PermissionSteps.isChild(options?.get("member")),
+        )
+      )
+    }
+
+    // Advances onboarding by one step: `step` if given, else the first
+    // required step not granted. Never rejects for a refused permission; an
+    // iOS step id, an unknown one, or a step the requested features do not
+    // list (its outcome could not be reported) is a caller error.
+    AsyncFunction("requestScreenTimePermissionsAsync") { options: Map<String, Any?>?, promise: Promise ->
+      val features = PermissionSteps.features(options?.get("features"))
+      val child = PermissionSteps.isChild(options?.get("member"))
+      val step = when (val requested = PermissionSteps.requestedStep(options?.get("step"))) {
+        is PermissionSteps.RequestedStep.Next -> null
+        is PermissionSteps.RequestedStep.Step -> {
+          val device = PermissionSteps.Device(android.os.Build.VERSION.SDK_INT, VendorAutostart.screens().isNotEmpty())
+          if (PermissionSteps.plan(features, child, device).none { it.id == requested.id }) {
+            throw ScreenTimeException(
+              ScreenTimeException.INVALID_CONFIG,
+              "The permission step '${requested.id.name}' is not needed by the requested features (${features.joinToString(", ") { it.name }}); request the steps the response lists"
+            )
+          }
+          requested.id
+        }
+        is PermissionSteps.RequestedStep.NotOnThisPlatform ->
+          throw ScreenTimeException(ScreenTimeException.INVALID_CONFIG, "The permission step '${requested.name}' does not exist on Android; request the steps the response lists")
+        is PermissionSteps.RequestedStep.Unknown ->
+          throw ScreenTimeException(ScreenTimeException.INVALID_CONFIG, "Unknown permission step '${requested.name}'")
+      }
+      permissionRequester.request(step, child, features, promise)
+    }
+
     // Apps call this at render time to decide what to show; it must answer,
-    // not throw. Nothing is enforced on Android yet, so everything is off.
-    // The limits are the cross-platform ones (the contract enforces the iOS
-    // values on both platforms).
+    // not throw. Nothing is enforced on Android yet (step 1 brings the
+    // permission steps, the engine skeleton and the state store, nothing a
+    // user can see), so every capability stays off until the step that
+    // delivers it flips its value ("Android
+    // slices"). The limits are the cross-platform ones (the contract
+    // enforces the iOS values on both platforms).
     Function("getCapabilities") {
       mapOf(
         "blocking" to "none",

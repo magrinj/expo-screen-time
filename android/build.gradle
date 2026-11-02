@@ -16,3 +16,10 @@ android {
     abortOnError false
   }
 }
+
+dependencies {
+  // JVM unit tests of the pure parts (android/src/test): the permission
+  // derivation and the state store. `org.json` is a stub in android.jar.
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.json:json:20250517'
+}
