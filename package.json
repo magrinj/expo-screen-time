@@ -1,6 +1,6 @@
 {
   "name": "expo-screen-time",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "A module for accessing and managing screen time data.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
