@@ -8,13 +8,15 @@ import expo.modules.kotlin.modules.ModuleDefinitionBuilder
 /**
  * Android counterpart of `ios/ExpoScreenTimeModule.swift`.
  *
- * Stage 3 of the Android port, step 1: the
- * permission steps are real, the engine service and its state store exist,
- * and every function not yet implemented fails with a coded `UNSUPPORTED`
+ * Stage 3 of the Android port. Step 1: the
+ * permission steps are real, the engine service and its state store exist.
+ * Step 2: the selection store, the handles, the picker and the token label.
+ * Every function not yet implemented fails with a coded `UNSUPPORTED`
  * error. Nothing is enforced on the device yet.
  */
 class ExpoScreenTimeModule : Module() {
   private val permissionRequester by lazy { AndroidPermissionRequester(appContext) }
+  private val selections by lazy { SelectionStore(StateStore(requireNotNull(appContext.reactContext) { "React context is not available" })) }
 
   override fun definition() = ModuleDefinition {
     Name("ExpoScreenTime")
@@ -81,16 +83,17 @@ class ExpoScreenTimeModule : Module() {
     }
 
     // Apps call this at render time to decide what to show; it must answer,
-    // not throw. Nothing is enforced on Android yet (step 1 brings the
-    // permission steps, the engine skeleton and the state store, nothing a
-    // user can see), so every capability stays off until the step that
-    // delivers it flips its value ("Android
-    // slices"). The limits are the cross-platform ones (the contract
-    // enforces the iOS values on both platforms).
+    // not throw. Each capability stays off until the step that delivers it
+    // flips its value ("Android steps"): step 2
+    // turned `selectableKinds.applications` on (the picker lists apps, the
+    // store holds them); categories and web domains stay off in v1 (review
+    // R10: `ApplicationInfo.category` is mostly unset; no web blocking), and
+    // blocking stays "none" until step 3. The limits are the cross-platform
+    // ones (the contract enforces the iOS values on both platforms).
     Function("getCapabilities") {
       mapOf(
         "blocking" to "none",
-        "selectableKinds" to mapOf("applications" to false, "categories" to false, "webDomains" to false),
+        "selectableKinds" to mapOf("applications" to true, "categories" to false, "webDomains" to false),
         "webDomainBlocking" to false,
         "appRemovalProtection" to "none",
         "appInstallationBlocking" to "none",
@@ -105,26 +108,65 @@ class ExpoScreenTimeModule : Module() {
       )
     }
 
-    // Views keep the iOS names and props so a shared screen renders (an empty
-    // view) instead of crashing on `requireNativeView`. Props are ignored.
+    // MARK: - Selection Store
+
+    // Same answers as `ios/SelectionStore.swift` for the same inputs: null
+    // metadata / handles / blob for an unknown selection, a no-op removal,
+    // set operations that skip a missing source, `false` for a blob that is
+    // not this install's (SelectionStore.kt).
+    AsyncFunction("listSelections") { selections.list() }
+
+    AsyncFunction("hasSelection") { selectionId: String -> selections.has(selectionId) }
+
+    AsyncFunction("getSelectionMetadata") { selectionId: String -> selections.metadata(selectionId) }
+
+    AsyncFunction("deleteSelection") { selectionId: String -> selections.delete(selectionId) }
+
+    AsyncFunction("getTokens") { selectionId: String -> selections.tokens(selectionId) }
+
+    AsyncFunction("removeToken") { selectionId: String, handle: String -> selections.removeToken(selectionId, handle) }
+
+    // MARK: - Selection Set Operations
+
+    AsyncFunction("mergeSelections") { targetId: String, sourceIds: List<String> -> selections.merge(targetId, sourceIds) }
+
+    AsyncFunction("keepCommonSelections") { targetId: String, sourceIds: List<String> -> selections.keepCommon(targetId, sourceIds) }
+
+    AsyncFunction("subtractSelection") { targetId: String, fromId: String, subtractId: String ->
+      selections.subtract(targetId, fromId, subtractId)
+    }
+
+    // MARK: - Selection Export/Import
+
+    AsyncFunction("exportSelection") { selectionId: String -> selections.export(selectionId) }
+
+    AsyncFunction("importSelection") { selectionId: String, data: String -> selections.import(selectionId, data) }
+
+    // MARK: - View Registration
+
+    // The iOS names, props and events (the parity test holds them equal).
     View(ExpoScreenTimeActivityPickerView::class) {
-      Prop("selectionId") { _: ExpoScreenTimeActivityPickerView, _: String? -> }
-      Prop("headerText") { _: ExpoScreenTimeActivityPickerView, _: String? -> }
-      Prop("footerText") { _: ExpoScreenTimeActivityPickerView, _: String? -> }
+      Prop("selectionId") { view: ExpoScreenTimeActivityPickerView, selectionId: String? -> view.setSelectionId(selectionId) }
+      Prop("headerText") { view: ExpoScreenTimeActivityPickerView, headerText: String? -> view.setHeaderText(headerText) }
+      Prop("footerText") { view: ExpoScreenTimeActivityPickerView, footerText: String? -> view.setFooterText(footerText) }
       Events("onSelectionChange", "onOpen", "onClose")
     }
 
+    // Props accepted and ignored until the report renderer.
     View(ExpoScreenTimeReportView::class) {
       Prop("filterSegment") { _: ExpoScreenTimeReportView, _: String? -> }
       Prop("filterDate") { _: ExpoScreenTimeReportView, _: Double? -> }
       Prop("templateHash") { _: ExpoScreenTimeReportView, _: String? -> }
     }
 
+    // Props are stored, then resolved once per batch (the handle lookup
+    // and the PackageManager reads run off the main thread).
     View(ExpoScreenTimeTokenLabelView::class) {
-      Prop("tokenType") { _: ExpoScreenTimeTokenLabelView, _: String? -> }
-      Prop("displayMode") { _: ExpoScreenTimeTokenLabelView, _: String? -> }
-      Prop("selectionId") { _: ExpoScreenTimeTokenLabelView, _: String? -> }
-      Prop("handle") { _: ExpoScreenTimeTokenLabelView, _: String? -> }
+      Prop("tokenType") { view: ExpoScreenTimeTokenLabelView, tokenType: String? -> view.tokenType = tokenType }
+      Prop("displayMode") { view: ExpoScreenTimeTokenLabelView, displayMode: String? -> view.displayMode = displayMode }
+      Prop("selectionId") { view: ExpoScreenTimeTokenLabelView, selectionId: String? -> view.selectionId = selectionId }
+      Prop("handle") { view: ExpoScreenTimeTokenLabelView, handle: String? -> view.handle = handle }
+      OnViewDidUpdateProps { view: ExpoScreenTimeTokenLabelView -> view.render() }
     }
   }
 }

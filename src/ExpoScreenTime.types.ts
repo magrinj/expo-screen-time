@@ -202,10 +202,9 @@ export type EnforcementGap = {
 
 /**
  * Reference to a native token, used to address it from JS (labels, removal).
- * The handle is derived from the encoded token so it's stable across launches.
- * Apple's tokens are opaque blobs — undecodable even natively — but treat the
- * handle itself as opaque too: never parse or construct one in JS.
- * @platform ios
+ * On iOS the handle is derived from the encoded token; on Android from the
+ * package name and a per-install secret. Either way it is stable across
+ * launches on one install and opaque: never parse or construct one in JS.
  */
 export type TokenHandle = {
   /** Opaque, stable identifier for the token */
@@ -216,7 +215,6 @@ export type TokenHandle = {
 
 /**
  * Metadata about a selection (counts only, no token data)
- * @platform ios
  */
 export type SelectionMetadata = {
   applicationCount: number;
@@ -230,7 +228,6 @@ export type SelectionMetadata = {
 
 /**
  * Event payload from ActivityPicker selection change
- * @platform ios
  */
 export type OnSelectionChangeEvent = {
   metadata: SelectionMetadata;
@@ -250,13 +247,11 @@ export type ExpoScreenTimeActivityPickerProps = {
 
 /**
  * Display mode for token labels
- * @platform ios
  */
 export type DisplayMode = "icon-only" | "title-only" | "title-and-icon";
 
 /**
  * Props for TokenLabel component
- * @platform ios
  */
 export type TokenLabelProps = {
   style?: StyleProp<ViewStyle>;

@@ -4,7 +4,8 @@
  * The same scripted scenarios run on every platform through the public API.
  * They branch on `getCapabilities()`, never on `Platform.OS`: where a capability
  * is off, the scenario asserts the coded `UNSUPPORTED` error instead of the
- * behaviour. Permissions have no capability: C02 and C11 branch on whether
+ * behaviour (C12, the selection store, branches on `selectableKinds`).
+ * Permissions have no capability: C02 and C11 branch on whether
  * `getScreenTimePermissionsAsync` answers (see `permissionsIfImplemented`). Driven by `example/conformance/suite.ad` (agent-device), which
  * taps "Run" and waits for the verdict line.
  *
@@ -19,7 +20,9 @@
 import {
   blockSelection,
   clearMonitorEvents,
+  deleteSelection,
   drainShieldInteractions,
+  exportSelection,
   getCapabilities,
   getEnforcementGaps,
   getMonitorEvents,
@@ -28,15 +31,22 @@ import {
   getScreenTimePermissionsAsync,
   getSelectionMetadata,
   getTokens,
+  hasSelection,
+  importSelection,
   isBlocked,
   isScreenTimeError,
   isTemporarilyUnlocked,
+  keepCommonSelections,
+  listSelections,
+  mergeSelections,
   openApplication,
   relock,
+  removeToken,
   requestScreenTimePermissionsAsync,
   startMonitoring,
   stopAllMonitoring,
   stopMonitoring,
+  subtractSelection,
   temporaryUnlock,
   unblockAll,
   type DateComponents,
@@ -44,6 +54,8 @@ import {
   type ScreenTimeCapabilities,
   type ScreenTimePermissionOptions,
   type ScreenTimePermissionResponse,
+  type SelectionMetadata,
+  type TokenHandle,
 } from "expo-screen-time";
 import { router } from "expo-router";
 import { useState } from "react";
@@ -192,6 +204,61 @@ const scenarios: Scenario[] = [
       expect(!!unlisted, "a step id the features do not list");
       await expectCode("INVALID_CONFIG", () => requestScreenTimePermissionsAsync({ features: ["blocking"], step: unlisted }));
       return `notifications step ${notifications ? `${notifications.status}${notifications.required ? ", required" : ", recommended"}` : "not listed"}; unlisted step ${unlisted} rejected`;
+    },
+  },
+  {
+    id: "C12",
+    title: "Selections round-trip",
+    async run(caps) {
+      if (!caps.selectableKinds.applications) {
+        await expectCode("UNSUPPORTED", () => getSelectionMetadata(APPS));
+        await expectCode("UNSUPPORTED", () => exportSelection(APPS));
+        return "UNSUPPORTED (no selectable kind)";
+      }
+      await requireFixture(APPS, "applicationCount");
+      // The scratch selections: never the fixtures, which the other scenarios need intact.
+      const A = "conformance_scratch_a";
+      const B = "conformance_scratch_b";
+      const C = "conformance_scratch_c";
+      const counts = (m: SelectionMetadata | null) => (m ? `${m.applicationCount}/${m.categoryCount}/${m.webDomainCount}` : "null");
+      const handles = (t: TokenHandle[] | null) => (t ?? []).map((x) => `${x.type}:${x.handle}`).sort().join("|");
+      const fixture = (await getSelectionMetadata(APPS))!;
+      const tokens = (await getTokens(APPS)) ?? [];
+      expect(tokens.length === fixture.applicationCount + fixture.categoryCount + fixture.webDomainCount, `getTokens() length ${tokens.length} vs metadata ${counts(fixture)}`);
+      for (const t of tokens) expect(typeof t.handle === "string" && t.handle.length > 0 && ["application", "category", "webDomain"].includes(t.type), `token shape: ${JSON.stringify(t)}`);
+      expect(new Set(tokens.map((t) => t.handle)).size === tokens.length, "handles are unique");
+      expect(await hasSelection(APPS), "hasSelection(fixture)");
+      expect((await listSelections()).includes(APPS), "listSelections() includes the fixture");
+      expect((await getSelectionMetadata("conformance_missing")) === null, "metadata of an unknown selection is null");
+      expect((await getTokens("conformance_missing")) === null, "tokens of an unknown selection are null");
+      expect(!(await hasSelection("conformance_missing")), "hasSelection(unknown) is false");
+      // Set operations: union is idempotent, intersection with a copy is the copy, a selection minus itself is empty.
+      await mergeSelections(A, [APPS, APPS]);
+      expect(counts(await getSelectionMetadata(A)) === counts(fixture), `merge: ${counts(await getSelectionMetadata(A))} vs ${counts(fixture)}`);
+      expect(handles(await getTokens(A)) === handles(tokens), "merge keeps the same handles");
+      await keepCommonSelections(B, [APPS, A]);
+      expect(counts(await getSelectionMetadata(B)) === counts(fixture), `keepCommon: ${counts(await getSelectionMetadata(B))}`);
+      await subtractSelection(C, APPS, A);
+      expect(counts(await getSelectionMetadata(C)) === "0/0/0", `subtract: ${counts(await getSelectionMetadata(C))}`);
+      expect(handles(await getTokens(C)) === "", "an empty selection has no tokens");
+      // removeToken by handle.
+      const app = tokens.find((t) => t.type === "application")!;
+      await removeToken(A, app.handle);
+      const afterRemove = (await getSelectionMetadata(A))!;
+      expect(afterRemove.applicationCount === fixture.applicationCount - 1, `removeToken: ${afterRemove.applicationCount} apps, expected ${fixture.applicationCount - 1}`);
+      expect(!((await getTokens(A)) ?? []).some((t) => t.handle === app.handle), "the removed handle is gone");
+      // Export / import: a round-trip restores the same handles; a foreign or malformed blob is refused and changes nothing.
+      const blob = await exportSelection(APPS);
+      expect(typeof blob === "string" && blob.length > 0, "exportSelection() returns a blob");
+      expect((await exportSelection("conformance_missing")) === null, "export of an unknown selection is null");
+      expect(await importSelection(C, blob!), "importSelection(own blob) is true");
+      expect(counts(await getSelectionMetadata(C)) === counts(fixture) && handles(await getTokens(C)) === handles(tokens), "the import restores the same handles");
+      expect(!(await importSelection(C, "not a selection blob")), "a malformed blob is refused");
+      expect(!(await importSelection(C, "AAAA")), "a blob that decodes to no selection is refused");
+      expect(handles(await getTokens(C)) === handles(tokens), "a refused import leaves the selection untouched");
+      for (const id of [A, B, C]) await deleteSelection(id);
+      expect(!(await hasSelection(A)) && (await getSelectionMetadata(C)) === null, "deleteSelection() removes the scratch selections");
+      return `${counts(fixture)} fixture; merge, keepCommon, subtract, removeToken, export/import round-trip, 2 refused blobs`;
     },
   },
   {

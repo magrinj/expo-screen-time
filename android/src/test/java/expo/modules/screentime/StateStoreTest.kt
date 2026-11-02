@@ -50,6 +50,21 @@ class StateStoreTest {
   }
 
   @Test
+  fun `an update nested in an update keeps both writes, and a nested read sees them`() {
+    val store = store()
+    store.update { document ->
+      document.put("outer", 1)
+      // Another instance of the same directory, as SelectionStore's first
+      // handle derivation reaches installSecret() from inside save().
+      store().update { nested -> nested.put("inner", 2) }
+      assertEquals(2, store().read { it.optInt("inner") })
+      assertEquals(1, store().read { it.optInt("outer") })
+    }
+    assertEquals(1, store().read { it.optInt("outer") })
+    assertEquals(2, store().read { it.optInt("inner") })
+  }
+
+  @Test
   fun `a corrupt document is replaced, not fatal`() {
     val dir = folder.root.resolve("expo_screen_time").apply { mkdirs() }
     dir.resolve("state.json").writeText("{ not json")
@@ -112,8 +127,9 @@ class StateStoreTest {
     val store = store()
     store.update { document ->
       document.put("a", 1)
-      // The in-process lock is re-entrant; the file lock is held once.
-      assertEquals(0, store.read { it.optInt("a", 0) })
+      // The in-process lock is re-entrant; the file lock is held once, and
+      // the nested read sees the document the update is changing.
+      assertEquals(1, store.read { it.optInt("a", 0) })
     }
     assertEquals(1, store.read { it.optInt("a", 0) })
   }

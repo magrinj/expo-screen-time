@@ -116,7 +116,29 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   `noBackupFilesDir`, read and written by both processes under a
   `FileChannel` lock on a sidecar file (exclusive for `update`, shared for
   `read`, re-entrant in-process), replaced by atomic rename. Engine desired
-  state and failures, permission requests; blocks and schedules join later.
+  state and failures, permission requests, the install secret, the
+  selections; blocks and schedules join later.
+- `SelectionStore.kt` — the twin of `ios/SelectionStore.swift` over the
+  state store: `selections.<id>` holds package-name sets (`Selection.kt`,
+  pure: the set algebra and the document codec; categories and web domains
+  keep their slot but stay empty in v1). Every set operation is one `update`,
+  so the engine process never reads a half-applied one. **Handles**
+  (`TokenHandles.kt`): `HMAC-SHA256(installSecret, "<type>\0<package>")`,
+  base64url — stable per install, never `base64(package)`, useless on
+  another install; `tokens.<handle>` in the document is the only way back to
+  a package, which is how a handle labels on its own (as an iOS handle
+  decodes on its own). **Export blobs** (`SelectionBlob`): the selection
+  JSON encrypted (AES-GCM) under a key derived from the secret, behind the
+  textual tag `expo-screen-time/android/1:` — opaque to JS, bound to the
+  install, and refused by iOS at `Data(base64Encoded:)` (the tag is not
+  base64), so iOS needed no change for "a foreign blob returns `false`".
+- `LaunchableApps.kt` — the picker's app list: `queryIntentActivities`
+  (`MAIN`/`LAUNCHER`, visible through the manifest's `<queries>`, never
+  `QUERY_ALL_PACKAGES`), the host app excluded, main profile only.
+  `ExpoScreenTimeActivityPickerView.kt` (classic views: searchable
+  multi-select `ListView`, system light/dark) and
+  `ExpoScreenTimeTokenLabelView.kt` (PackageManager icon + label) keep the
+  iOS props and events; package names stay native.
 - `ScreenTimeEngineService.kt` — the enforcement engine's `specialUse`
   foreground service, in the **`:screentime` process** so the React Native
   process stays killable. It runs only while the store says so; a refused

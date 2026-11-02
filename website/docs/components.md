@@ -10,7 +10,8 @@ sidebar_position: 6
 
 Native view for selecting apps, categories, and web domains. The selection is
 stored **natively** under the `selectionId` you provide — JS receives only counts
-and opaque token handles.
+and opaque token handles. iOS embeds Apple's `FamilyActivityPicker`; Android
+shows the library's own list of launchable apps ([Android notes](#android)).
 
 ```typescript
 import { ActivityPicker, type OnSelectionChangeEvent } from 'expo-screen-time';
@@ -118,9 +119,10 @@ const apps = tokens?.filter((t) => t.type === 'application') ?? [];
 ```
 
 `selectionId` is optional. A handle is self-describing — the native side
-resolves it on its own — so a label renders a handle wherever it came from,
-even one that is no longer part of any stored selection (a token the user
-removed, a handle you persisted earlier):
+resolves it on its own (on Android, through the library's handle map) — so a
+label renders a handle wherever it came from, even one that is no longer part
+of any stored selection (a token the user removed, a handle you persisted
+earlier):
 
 ```typescript
 // A handle you kept from an earlier getTokens() — no selection needed
@@ -143,3 +145,24 @@ a category handle, so pass each handle to the label of its own
 | `displayMode` | `'icon-only' \| 'title-only' \| 'title-and-icon'` | Default `'title-and-icon'` |
 | `style` | `StyleProp<ViewStyle>` | Container style |
 | `tokenType` | `'application' \| 'category' \| 'webDomain'` | `TokenLabel` only; must be the handle's `TokenHandle.type` |
+
+## Android {#android}
+
+**`<ActivityPicker />`** is drawn by the library (Android has no system
+picker): a searchable, multi-select list of the apps the user can launch —
+the ones with a launcher icon, which the library's `<queries>` declaration
+makes visible without `QUERY_ALL_PACKAGES` — with their icons and names, in
+the system's light or dark scheme. The app embedding the picker is not
+listed (it cannot be blocked, as on iOS). Apps only: there are no category or
+web-domain rows while `getCapabilities().selectableKinds` reports them off.
+Same props and events as iOS: `headerText` and `footerText` frame the list,
+`onSelectionChange` fires on every tap with the counts and the handles,
+`onOpen` / `onClose` when the view is attached and detached. Package names
+never reach JS.
+
+**Token labels** read the app's icon and name from the package manager.
+`ApplicationLabel` renders a resolved handle; an app selected and uninstalled
+since shows a generic icon with "Unavailable app"; a handle this install does
+not know shows the same placeholder text as iOS. `CategoryLabel` and
+`WebDomainLabel` always show their placeholder on Android (no such handles
+exist there).

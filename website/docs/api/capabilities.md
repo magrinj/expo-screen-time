@@ -23,7 +23,7 @@ const shortest = limits.minIntervalSeconds; // 900 on iOS
 | Field | iOS |
 |---|---|
 | `blocking` | `"enforced"`: the OS draws the shield. |
-| `selectableKinds` | Applications, categories and web domains. |
+| `selectableKinds` | Applications, categories and web domains. Android: applications only (`categories` and `webDomains` are `false`: [selections](./selections.md#android)). |
 | `webDomainBlocking` | `true` |
 | `appRemovalProtection`, `appInstallationBlocking` | `"friction"` after an `individual` authorization (the user can revoke Screen Time access in Settings, which lifts them); `"enforced"` after a `child` one (a parent holds it). |
 | `usageReports` | `true` when the report extension is in the build (the config plugin can leave it out). |

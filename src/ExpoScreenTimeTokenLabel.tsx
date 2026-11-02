@@ -13,7 +13,9 @@ const NativeView: React.ComponentType<TokenLabelProps> = requireNativeView(
  * The actual token data stays on the native side — only the handle crosses the bridge.
  * `selectionId` is optional: a handle resolves on its own, so a handle from
  * `getTokens` or the picker renders even once persisted on its own.
- * @platform ios
+ * iOS renders Apple's `Label(token)`; Android reads the app's icon and name
+ * from PackageManager (categories and web domains render their placeholder
+ * there — see `getCapabilities().selectableKinds`).
  */
 export default function TokenLabel(props: TokenLabelProps) {
   return <NativeView {...props} />;

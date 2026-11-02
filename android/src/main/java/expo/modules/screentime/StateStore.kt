@@ -5,8 +5,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.RandomAccessFile
+import java.security.SecureRandom
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
+import kotlin.io.encoding.Base64
 
 /**
  * The Android counterpart of the iOS App Group: one JSON document the React
@@ -27,8 +29,9 @@ import kotlin.concurrent.withLock
  * [ReentrantLock] taken first (re-entrant, as the iOS lock is).
  *
  * Step 1 stores the engine's desired state and failures, and the permission
- * requests already made; blocks, schedules and selections join later, in the
- * same document, each under its own key.
+ * requests already made; step 2 adds the install secret and, through
+ * [SelectionStore], the selections and the handle map; blocks and schedules
+ * join later, in the same document, each under its own key.
  */
 internal class StateStore(private val directory: File) {
   constructor(context: Context) : this(File(context.noBackupFilesDir, "expo_screen_time"))
@@ -36,18 +39,30 @@ internal class StateStore(private val directory: File) {
   private val file = File(directory, "state.json")
   private val lockFile = File(directory, "state.lock")
 
-  /** Reads the current document (an empty one when none exists yet). */
-  fun <T> read(block: (JSONObject) -> T): T = locked(shared = true) { block(load()) }
+  /**
+   * Reads the current document (an empty one when none exists yet). Nested
+   * in an `update`, it reads the document that update is changing.
+   */
+  fun <T> read(block: (JSONObject) -> T): T = locked(shared = true) { slot -> block(slot.open ?: load()) }
 
   /**
    * Applies [block] to the current document under the exclusive lock and
-   * persists the result. Returns what [block] returned.
+   * persists the result. Returns what [block] returned. Nested in an
+   * `update` (any instance of this directory, same thread), it applies to
+   * the outer document, which the outer section persists: a reload would
+   * make the last `save` drop the other's changes.
    */
-  fun <T> update(block: (JSONObject) -> T): T = locked(shared = false) {
+  fun <T> update(block: (JSONObject) -> T): T = locked(shared = false) { slot ->
+    slot.open?.let { return@locked block(it) }
     val document = load()
-    val result = block(document)
-    save(document)
-    result
+    slot.open = document
+    try {
+      val result = block(document)
+      save(document)
+      result
+    } finally {
+      slot.open = null
+    }
   }
 
   // MARK: - Engine
@@ -70,6 +85,26 @@ internal class StateStore(private val directory: File) {
   fun engineFailures(): List<JSONObject> = read { document ->
     val failures = document.optJSONObject(ENGINE)?.optJSONArray(FAILURES) ?: return@read emptyList()
     List(failures.length()) { failures.getJSONObject(it) }
+  }
+
+  // MARK: - Install secret
+
+  /**
+   * 32 random bytes drawn once per install and kept in the document, from
+   * which [TokenHandles] salts the handles and [SelectionBlob] derives its
+   * key. Created under the exclusive lock, so two processes starting at once
+   * agree on one secret; cached per process afterwards. It goes away with the
+   * document (uninstall, "clear storage"), and so do the selections it keyed.
+   */
+  fun installSecret(): ByteArray {
+    synchronized(secrets) { secrets[directory.absolutePath] }?.let { return it }
+    val existing = read { it.optJSONObject(INSTALL)?.optString(SECRET)?.takeIf { s -> s.isNotEmpty() } }
+    val encoded = existing ?: update { document ->
+      val install = document.optJSONObject(INSTALL) ?: JSONObject().also { document.put(INSTALL, it) }
+      install.optString(SECRET).takeIf { it.isNotEmpty() }
+        ?: Base64.encode(ByteArray(SECRET_BYTES).also(SecureRandom()::nextBytes)).also { install.put(SECRET, it) }
+    }
+    return Base64.decode(encoded).also { secret -> synchronized(secrets) { secrets[directory.absolutePath] = secret } }
   }
 
   // MARK: - Permissions
@@ -97,22 +132,22 @@ internal class StateStore(private val directory: File) {
 
   // MARK: - Plumbing
 
-  private fun <T> locked(shared: Boolean, block: () -> T): T {
-    val processLock = processLock(directory)
-    return processLock.withLock {
+  private fun <T> locked(shared: Boolean, block: (Slot) -> T): T {
+    val slot = slot(directory)
+    return slot.lock.withLock {
       // Re-entrant: a read nested in an update runs under the outer file
       // lock (the JVM would throw OverlappingFileLockException otherwise).
       // An update nested in a read would write under a shared lock: refused.
-      if (processLock.holdCount > 1) {
-        check(!(outerShared && !shared)) { "StateStore.update must not be nested in StateStore.read" }
-        return@withLock block()
+      if (slot.lock.holdCount > 1) {
+        check(!(slot.outerShared && !shared)) { "StateStore.update must not be nested in StateStore.read" }
+        return@withLock block(slot)
       }
-      outerShared = shared
+      slot.outerShared = shared
       directory.mkdirs()
       RandomAccessFile(lockFile, "rw").use { raf ->
         val lock = raf.channel.lock(0L, Long.MAX_VALUE, shared)
         try {
-          block()
+          block(slot)
         } finally {
           lock.release()
         }
@@ -120,9 +155,20 @@ internal class StateStore(private val directory: File) {
     }
   }
 
-  /** Mode of the outermost section on the thread holding the process lock. */
-  @Volatile
-  private var outerShared = false
+  /**
+   * The per-directory state every instance of the process shares: the
+   * in-process lock, the mode of the outermost section on the thread
+   * holding it, and the document an `update` in progress is changing.
+   */
+  private class Slot {
+    val lock = ReentrantLock()
+
+    @Volatile
+    var outerShared = false
+
+    @Volatile
+    var open: JSONObject? = null
+  }
 
   private fun load(): JSONObject {
     if (!file.exists()) return JSONObject()
@@ -151,15 +197,19 @@ internal class StateStore(private val directory: File) {
     private const val ENGINE = "engine"
     private const val DESIRED = "desired"
     private const val FAILURES = "failures"
+    private const val INSTALL = "install"
+    private const val SECRET = "secret"
+    private const val SECRET_BYTES = 32
     private const val PERMISSIONS = "permissions"
     private const val REQUESTED = "requested"
     private const val ERRORS = "errors"
     private const val MAX_FAILURES = 20
 
-    private val processLocks = HashMap<String, ReentrantLock>()
+    private val slots = HashMap<String, Slot>()
+    private val secrets = HashMap<String, ByteArray>()
 
-    private fun processLock(directory: File): ReentrantLock = synchronized(processLocks) {
-      processLocks.getOrPut(directory.absolutePath) { ReentrantLock() }
+    private fun slot(directory: File): Slot = synchronized(slots) {
+      slots.getOrPut(directory.absolutePath) { Slot() }
     }
   }
 }

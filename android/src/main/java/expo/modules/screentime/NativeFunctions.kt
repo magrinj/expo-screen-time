@@ -98,4 +98,16 @@ internal val IMPLEMENTED: Set<String> = setOf(
   "getCapabilities",
   "getScreenTimePermissionsAsync",
   "requestScreenTimePermissionsAsync",
+  // Selection store
+  "listSelections",
+  "hasSelection",
+  "getSelectionMetadata",
+  "deleteSelection",
+  "getTokens",
+  "removeToken",
+  "mergeSelections",
+  "keepCommonSelections",
+  "subtractSelection",
+  "exportSelection",
+  "importSelection",
 )

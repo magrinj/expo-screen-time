@@ -8,16 +8,28 @@ sidebar_position: 2
 
 `expo-screen-time` is an **iOS library today**, with the Android
 implementation landing slice by slice. The package autolinks on Android so a
-cross-platform app installs, builds and renders; the permission onboarding is
-real there already, and nothing is enforced yet.
+cross-platform app installs, builds and renders; the permission onboarding
+and the selections (picker, store, labels) are real there already, and
+nothing is enforced yet.
 
 | Platform | Status |
 |---|---|
 | **iOS 16+** | Supported. Every API on this site is implemented. |
-| **Android 7+ (API 24)** | Installs and builds. The [permission steps](./api/permissions.md#android) read and request the real settings. `getCapabilities()` still reports every capability off, and every other function fails with the `UNSUPPORTED` error code; the native views render an empty view. |
+| **Android 7+ (API 24)** | Installs and builds. The [permission steps](./api/permissions.md#android) read and request the real settings; the [picker](./components.md#activity-picker), the [selection store](./api/selections.md) and the [token labels](./components.md#token-labels) work for apps (`getCapabilities().selectableKinds.applications`). Blocking, monitoring, unlocks and reports still report their capability off and fail with the `UNSUPPORTED` error code; `<DeviceActivityReport />` renders its fallback. |
 | **Web** | Not supported. |
 
 ## What works on Android now
+
+- **Selections.** `<ActivityPicker />` lists the apps the user can launch
+  (icon and name, searchable, multi-select) and stores the choice natively
+  under its `selectionId`; `listSelections`, `getSelectionMetadata`,
+  `getTokens`, `removeToken`, the set operations and `exportSelection` /
+  `importSelection` work as on iOS. `<ApplicationLabel />` renders an app's
+  icon and name from a handle. Apps only: `selectableKinds.categories` and
+  `webDomains` are `false`, so the picker has no category or web-domain
+  rows and `CategoryLabel` / `WebDomainLabel` render their placeholder.
+  Details on the [selections page](./api/selections.md#android) and the
+  [components page](./components.md#android).
 
 - **`getScreenTimePermissionsAsync()` / `requestScreenTimePermissionsAsync()`**
   list the Android steps with their real status (`overlay`, `usageAccess`,
@@ -35,17 +47,16 @@ real there already, and nothing is enforced yet.
 The Android module declares the same functions, event and views as iOS, so a
 screen shared between the platforms does not crash at import or at render:
 
-- **`getCapabilities()`** answers: every capability is off (`blocking: "none"`,
-  `usageReports: false`, …), with the cross-platform `limits`. Each capability
-  turns on with the step that delivers it.
-- **Every other function** fails with a coded error. Synchronous functions (`isBlocked`,
-  `blockSelection`, `setShieldConfig`…) throw it; asynchronous ones
-  (`startMonitoring`, `getTokens`, `temporaryUnlock`…) reject with it.
-  `error.code` is `"UNSUPPORTED"` and the message names the function.
-- **Components**: `<ActivityPicker />` and `<TokenLabel />` (and the
-  `ApplicationLabel` / `CategoryLabel` / `WebDomainLabel` wrappers) render an
-  empty view; their props are accepted and ignored.
-  `<DeviceActivityReport />` renders its built-in fallback text.
+- **`getCapabilities()`** answers: `selectableKinds.applications` is `true`;
+  every other capability is off (`blocking: "none"`, `usageReports: false`,
+  …), with the cross-platform `limits`. Each capability turns on with the
+  slice that delivers it.
+- **Every function behind an off capability** fails with a coded error.
+  Synchronous functions (`isBlocked`, `blockSelection`, `setShieldConfig`…)
+  throw it; asynchronous ones (`startMonitoring`, `temporaryUnlock`…) reject
+  with it. `error.code` is `"UNSUPPORTED"` and the message names the function.
+- **Components**: `<DeviceActivityReport />` renders its built-in fallback
+  text.
 - **Events**: `onMonitorEvent` is declared but never emitted.
 
 Branch on [capabilities](./api/capabilities.md) rather than on the platform:
@@ -79,7 +90,7 @@ try {
 
 Until the Android implementation ships, keep Screen Time calls out of render
 paths and unconditional effects, behind one of these checks. The permission
-calls are the exception: they answer on both platforms.
+and selection calls are the exception: they answer on both platforms.
 
 ## Roadmap
 
@@ -89,5 +100,5 @@ a per-API mapping of the iOS behaviour to Android (UsageStats detection, a
 blocking Activity as the shield, device admin for anti-tamper), with the
 stages and their exit criteria. The module is in stage 3 of that plan, the
 Android MVP, delivered in slices: the foundation (config plugin, engine
-service, permission steps) is in; selections, blocking and the shield,
-monitoring, unlocks and tamper evidence follow.
+service, permission steps) and the selections (picker, store, labels) are
+in; blocking and the shield, monitoring, unlocks and tamper evidence follow.

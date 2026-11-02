@@ -9,7 +9,9 @@ sidebar_position: 3
 A **selection** is a natively-stored set of app/category/web-domain tokens,
 created by the [`<ActivityPicker />`](../components.md#activity-picker) and
 addressed everywhere by a `selectionId` string. These utilities manage stored
-selections. All are named exports and also live on the default export.
+selections. All are named exports and also live on the default export, and
+work the same on both platforms (the [Android notes](#android) below cover
+what differs underneath).
 
 ## Inspecting
 
@@ -72,15 +74,39 @@ await subtractSelection('weekday-blocklist', 'all-distractions', 'work-tools');
 
 ### `exportSelection(selectionId: string): Promise<string | null>`
 
-Export a selection as an opaque base64 string for backup.
+Export a selection as an opaque string for backup.
 
 :::warning Device-bound
-Tokens are device-specific and tied to the user's iCloud account. An exported
-selection only imports back on the **same device/account** — this is not a
-cross-device sync mechanism. Treat the string as an opaque blob.
+Tokens are device-specific and tied to the user's iCloud account; the Android
+blob is bound to the install the same way. An exported selection only imports
+back on the **same device/account** — this is not a cross-device sync
+mechanism. Treat the string as an opaque blob.
 :::
 
 ### `importSelection(selectionId: string, data: string): Promise<boolean>`
 
-Import a previously exported selection. Returns `false` if the data doesn't
-decode to a valid selection.
+Import a previously exported selection. Returns `false`, and leaves the
+selection as it was, if the data doesn't decode to a valid selection: a
+malformed string, a blob made on the other platform (an iOS blob on Android
+and the reverse — no mapping between tokens and packages exists), or an
+Android blob from another install.
+
+## Android {#android}
+
+The same functions, over package names instead of tokens, kept native:
+
+- **Apps only.** `getCapabilities().selectableKinds` reports `applications:
+  true`, `categories: false`, `webDomains: false`, so `categoryCount` and
+  `webDomainCount` are always `0` and every handle has `type: 'application'`.
+- **Handles are salted per install.** A handle is derived from the package
+  name and a random secret the library draws once per install, so it is
+  stable across launches (persist it, pass it to `removeToken` or a label)
+  but never an encoding of the package name, and meaningless on another
+  install. JS cannot learn a package name from a handle, nor build a handle
+  for a package it names.
+- **Export blobs are encrypted** under a key derived from that secret and
+  tagged as Android blobs. They restore on the same install (the counterpart
+  of iOS's same-device/account rule) and never show a package name.
+- **The store is shared with the enforcement engine**, which runs in its own
+  process: a selection written by the picker is what the engine will block
+  when blocking lands on Android.

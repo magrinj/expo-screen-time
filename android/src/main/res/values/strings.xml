@@ -5,4 +5,9 @@
   <string name="expo_st_notice_title">Screen Time protection is active</string>
   <string name="expo_st_notice_text">Restrictions you set are being enforced.</string>
   <string name="expo_st_device_admin_explanation">Keeps the protection from being force-stopped or removed without turning it off here first.</string>
+  <!-- The picker (ActivityPicker) and the token label. -->
+  <string name="expo_st_picker_search_hint">Search apps</string>
+  <string name="expo_st_picker_empty">No apps to show</string>
+  <string name="expo_st_picker_no_match">No apps match your search</string>
+  <string name="expo_st_label_unavailable">Unavailable app</string>
 </resources>
