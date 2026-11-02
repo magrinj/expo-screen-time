@@ -165,9 +165,10 @@ export type ScreenTimeCapabilities = {
   openApplication: boolean;
   limits: {
     /**
-     * Monitored activities you can count on: iOS has 20 DeviceActivity slots
-     * and the temporary-unlock meter holds one (each snooze in progress also
-     * holds one until it is spent).
+     * Activities you can monitor at once (19 on both platforms):
+     * `startMonitoring` rejects one more with `EXCESSIVE_ACTIVITIES`. iOS has
+     * 20 DeviceActivity slots and the temporary-unlock meter holds one (each
+     * snooze in progress also holds one until it is spent).
      */
     maxMonitoredActivities: number;
     /** Shortest schedule interval (`INTERVAL_TOO_SHORT` below it). */
@@ -337,7 +338,8 @@ export type MonitoringConfiguration = {
   /**
    * Stable identity of the activity: events, `getMonitoredActivities`,
    * per-activity shield configs and actions always use this name. One
-   * activity costs one of the 20 DeviceActivity slots, `weekdays` included.
+   * activity costs one of the `limits.maxMonitoredActivities` slots,
+   * `weekdays` included.
    * Must not be empty or contain `__expo_st_gen_` (reserved). Calling
    * `startMonitoring` again with the same name updates the activity in
    * place; an interval in progress keeps its shields.
@@ -364,7 +366,9 @@ export type MonitoringConfiguration = {
    * Restrict the schedule to these weekdays (1 = Sunday … 7 = Saturday). The
    * activity is still registered once; occurrences on other days are ignored
    * (no block, no events). An occurrence that crosses midnight belongs to the
-   * weekday on which it starts.
+   * weekday on which it starts. A one-off schedule (`repeats: false`) covers
+   * its next occurrence on a selected weekday (the one in progress when it
+   * is on a selected weekday).
    */
   weekdays?: number[];
 };

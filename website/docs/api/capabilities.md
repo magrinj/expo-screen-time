@@ -35,9 +35,10 @@ Values are `Enforcement` levels: `"enforced"` (the OS refuses the action),
 `"friction"` (the restriction holds, but the user can lift it through a route
 the app cannot close) or `"none"`. On iOS before 16, every capability is off.
 
-`limits.maxMonitoredActivities` is what you can count on: iOS has 20
-DeviceActivity slots and the temporary-unlock meter holds one. Each
-[snooze](./shields.md) in progress also holds one until it is spent.
+`limits.maxMonitoredActivities` is what `startMonitoring` enforces (a 20th
+activity rejects `EXCESSIVE_ACTIVITIES`): iOS has 20 DeviceActivity slots and
+the temporary-unlock meter holds one. Each [snooze](./shields.md) in progress
+also holds one until it is spent.
 
 ## `getEnforcementGaps(since?)`
 

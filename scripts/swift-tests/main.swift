@@ -471,6 +471,81 @@ let multiDay: [String: Any] = [
 check(DailySchedule(scheduleDict: multiDay, weekdays: nil) == nil, "a multi-day weekly interval is not a daily schedule")
 check(DailySchedule(scheduleDict: ["intervalStart": ["hour": 9]], weekdays: nil) == nil, "missing intervalEnd ⇒ nil")
 
+section("DailySchedule — a one-off restricted to weekdays covers the next selected occurrence")
+// Today a one-off (`repeats: false`) is registered with the system as given,
+// so its single occurrence is the next 09:00 — Saturday's, when registered
+// on Friday evening with weekdays Mon–Fri. The monitor extension ignores an
+// occurrence on an unselected weekday, and a one-off never calls back
+// again: the activity never blocks. The fix covers the next SELECTED
+// occurrence (the one in progress when it is selected), as Android does.
+let friday18 = date(2026, 10, 30, 18, 0)   // Friday 2026-10-30
+let monday9 = date(2026, 11, 2, 9, 0)      // Monday 2026-11-02
+check(weekdaysOffice.coveredOccurrenceStart(at: friday18, calendar: utc) == monday9,
+      "Friday 18:00, Mon–Fri ⇒ Monday 09:00 (the system's own next occurrence, Saturday's, is unselected)")
+check(weekdaysOffice.coveredOccurrenceStart(at: date(2026, 10, 30, 10, 0), calendar: utc) == date(2026, 10, 30, 9, 0),
+      "inside Friday's occurrence ⇒ that occurrence")
+check(weekdaysOffice.coveredOccurrenceStart(at: date(2026, 10, 31, 10, 0), calendar: utc) == monday9,
+      "inside Saturday's (unselected) occurrence ⇒ Monday's")
+check(weekdaysOffice.coveredOccurrenceStart(at: date(2026, 10, 26, 8, 0), calendar: utc) == date(2026, 10, 26, 9, 0),
+      "Monday 08:00 ⇒ Monday 09:00 (today, later)")
+check(weekdaysOffice.coveredOccurrenceStart(at: date(2026, 10, 26, 9, 0), calendar: utc) == date(2026, 10, 26, 9, 0),
+      "the start instant is in progress")
+check(mondayNight.coveredOccurrenceStart(at: date(2026, 10, 27, 1, 0), calendar: utc) == date(2026, 10, 26, 22, 0),
+      "Tuesday 01:00 is inside Monday's 22–06 ⇒ Monday 22:00")
+check(mondayNight.coveredOccurrenceStart(at: date(2026, 10, 27, 7, 0), calendar: utc) == date(2026, 11, 2, 22, 0),
+      "Tuesday 07:00 ⇒ next Monday 22:00 (six days later)")
+check(office.coveredOccurrenceStart(at: friday18, calendar: utc) == date(2026, 10, 31, 9, 0),
+      "no weekdays ⇒ the next start, Saturday 09:00, as the system computes it")
+check(office.coveredOccurrenceStart(at: date(2026, 10, 25, 8, 0, 0, paris), calendar: paris) == date(2026, 10, 25, 9, 0, 0, paris),
+      "wall-clock start on the day of a DST change (Paris)")
+
+// What `startMonitoring` registers: the covered occurrence's weekdays pinned
+// on the system's date components — only when that occurrence starts after
+// now. A selected occurrence in progress is registered as given (the
+// system's own in-progress interval, the path every one-off takes today).
+let oneOffDict: [String: Any] = [
+    "intervalStart": ["hour": 9.0, "minute": 0.0], "intervalEnd": ["hour": 17.0, "minute": 0.0], "repeats": false,
+]
+let monToFri: [Any] = [2.0, 3.0, 4.0, 5.0, 6.0]
+check(DailySchedule.oneOffPinning(scheduleDict: oneOffDict, weekdays: monToFri, now: friday18, calendar: utc)
+      == .init(start: 2, end: 2), "Friday 18:00 ⇒ pinned to Monday, start and end")
+check(DailySchedule.oneOffPinning(scheduleDict: oneOffDict, weekdays: monToFri, now: date(2026, 10, 30, 10, 0), calendar: utc) == nil,
+      "inside a selected occurrence ⇒ registered as given")
+check(DailySchedule.oneOffPinning(scheduleDict: oneOffDict, weekdays: monToFri, now: date(2026, 10, 31, 10, 0), calendar: utc)
+      == .init(start: 2, end: 2), "inside an unselected occurrence ⇒ pinned to Monday")
+check(DailySchedule.oneOffPinning(scheduleDict: oneOffDict, weekdays: monToFri, now: date(2026, 10, 26, 8, 0), calendar: utc)
+      == .init(start: 2, end: 2), "Monday 08:00 ⇒ pinned to today")
+let nightOneOff: [String: Any] = [
+    "intervalStart": ["hour": 22.0, "minute": 0.0], "intervalEnd": ["hour": 6.0, "minute": 0.0], "repeats": false,
+]
+check(DailySchedule.oneOffPinning(scheduleDict: nightOneOff, weekdays: [2.0], now: date(2026, 10, 27, 7, 0), calendar: utc)
+      == .init(start: 2, end: 3), "a crossing occurrence ends on the next weekday (Mon 22:00 → Tue 06:00, never Mon → Mon = six days)")
+check(DailySchedule.oneOffPinning(scheduleDict: nightOneOff, weekdays: [7.0], now: date(2026, 10, 27, 7, 0), calendar: utc)
+      == .init(start: 7, end: 1), "Saturday night ends on Sunday (the weekday wraps)")
+let allDayOneOff: [String: Any] = [
+    "intervalStart": ["hour": 0.0, "minute": 0.0], "intervalEnd": ["hour": 0.0, "minute": 0.0], "repeats": false,
+]
+check(DailySchedule.oneOffPinning(scheduleDict: allDayOneOff, weekdays: [1.0], now: date(2026, 10, 27, 7, 0), calendar: utc)
+      == .init(start: 1, end: 2), "a 24 h occurrence ends on the next weekday")
+check(DailySchedule.oneOffPinning(scheduleDict: dailyDict, weekdays: monToFri, now: friday18, calendar: utc) == nil,
+      "repeats defaults to true ⇒ registered as given (the monitor skips unselected occurrences)")
+check(DailySchedule.oneOffPinning(scheduleDict: jsSchedule, weekdays: monToFri, now: friday18, calendar: utc) == nil,
+      "repeats: true ⇒ as given")
+check(DailySchedule.oneOffPinning(scheduleDict: oneOffDict, weekdays: nil, now: friday18, calendar: utc) == nil
+      && DailySchedule.oneOffPinning(scheduleDict: oneOffDict, weekdays: [], now: friday18, calendar: utc) == nil
+      && DailySchedule.oneOffPinning(scheduleDict: oneOffDict, weekdays: [0.0, 9.0], now: friday18, calendar: utc) == nil,
+      "no (valid) weekdays ⇒ as given")
+var weeklyOneOff = weekly
+weeklyOneOff["repeats"] = false
+check(DailySchedule.oneOffPinning(scheduleDict: weeklyOneOff, weekdays: [3.0], now: friday18, calendar: utc) == nil,
+      "components carrying a weekday are already pinned ⇒ as given")
+check(DailySchedule.oneOffPinning(scheduleDict: ["intervalStart": ["hour": 9.0], "repeats": false], weekdays: monToFri, now: friday18, calendar: utc) == nil,
+      "an incomplete schedule ⇒ as given (buildSchedule rejects it)")
+var storedOneOff = storedSchedule
+storedOneOff["repeats"] = NSNumber(value: false)
+check(DailySchedule.oneOffPinning(scheduleDict: storedOneOff, weekdays: [NSNumber(value: 2)], now: date(2026, 10, 27, 7, 0), calendar: utc)
+      == .init(start: 2, end: 3), "a stored config (NSNumber repeats and weekdays) pins the same way — the rollback path")
+
 section("DailySchedule.intValue")
 check(DailySchedule.intValue(9.0) == 9, "Double 9.0 → 9")
 check(DailySchedule.intValue(9.5) == 9, "fractional Double truncates through NSNumber, like the module helper in #27")
@@ -545,6 +620,31 @@ check(ActivityRegistration.logicalName(ofRegistered: "B_weekday_2", config: look
 check(ActivityRegistration.logicalName(ofRegistered: "A_weekday_3", config: lookup) == "A", "a listed legacy variant is reported under its parent")
 check(ActivityRegistration.logicalName(ofRegistered: "C\(sep)4", config: lookup) == "C", "a generation suffix is stripped")
 check(ActivityRegistration.currentRegistration(forPhysical: "A_weekday_9", config: lookup) == nil, "an unlisted, unconfigured variant-looking name is stale")
+
+section("ActivityRegistration — the 19-activity limit (limits.maxMonitoredActivities)")
+// The system refuses the 21st DeviceActivity (`excessiveActivities`), so a
+// 20th logical activity used to go through whenever no meter held its slot
+// — and took the slot the unlock meter or a snooze then needed. The
+// contract enforces 19 logical activities on both platforms.
+check(ActivityRegistration.maxLogicalActivities == 19, "19: iOS caps DeviceActivity at 20 and the temporary-unlock meter holds one")
+let nineteen = Set((1...19).map { "a\($0)" })
+check(ActivityRegistration.exceedsLimit(registering: "a20", among: nineteen), "a 20th logical activity is refused")
+check(!ActivityRegistration.exceedsLimit(registering: "a7", among: nineteen), "re-registering one of the 19 costs no slot")
+check(!ActivityRegistration.exceedsLimit(registering: "a20", among: nineteen.subtracting(["a1"])), "18 others leave room")
+check(!ActivityRegistration.exceedsLimit(registering: "a", among: []), "the first activity")
+check(ActivityRegistration.exceedsLimit(registering: "a2", among: ["a1"], limit: 1), "the limit is a parameter")
+// What the system's registrations amount to, in logical activities: every
+// generation of a name is that name, a legacy variant is its parent, and
+// the module's own meters are not activities.
+configs = [
+    "A": ["_generation": 3, "schedule": dailyDict],
+    "C": ["_weekdayActivities": ["C_weekday_2"], "schedule": dailyDict],
+    "C_weekday_2": ["_parentActivity": "C"],
+]
+check(ActivityRegistration.logicalNames(ofRegistered: [
+    "A\(sep)3", "A\(sep)2", "B", "C_weekday_2", "expo_st_temporary_unlock", "expo_st_snooze_1",
+], config: lookup) == ["A", "B", "C"], "generations collapse, a legacy variant folds into its parent, meters are left out")
+check(ActivityRegistration.logicalNames(ofRegistered: [], config: lookup).isEmpty, "nothing registered")
 
 section("ActivityRegistration.isLegacyVariantState — only a legacy variant's state is deleted (pass 3, finding 9)")
 check(ActivityRegistration.isLegacyVariantState(["_parentActivity": "A"], variant: "A_weekday_2", of: "A"), "a listed variant with the parent's name and no generation")

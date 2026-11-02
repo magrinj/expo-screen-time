@@ -157,9 +157,11 @@ type DeviceActivityEventThreshold = {
 ```
 
 One activity is registered per `activityName`, `weekdays` included: it costs one
-of the 20 DeviceActivity slots, and its events carry that name. Occurrences on
-unselected weekdays are ignored (no block, no events); an occurrence that
-crosses midnight belongs to the weekday on which it starts.
+of the 19 activities you can monitor at once, and its events carry that name.
+Occurrences on unselected weekdays are ignored (no block, no events); an
+occurrence that crosses midnight belongs to the weekday on which it starts. A
+one-off schedule (`repeats: false`) with `weekdays` covers its next occurrence
+on a selected weekday (see [monitoring](./api/monitoring.md)).
 
 ## `ShieldConfig`
 
@@ -290,7 +292,7 @@ try {
 | `UNSUPPORTED` | The OS version is too old for the call, or `temporaryUnlock` while an [allowlist](./api/blocking.md#allowlist) block is active. |
 | `SELECTION_NOT_FOUND` | `blockSelection` with a `selectionId` that was never saved; `startMonitoring` with `mode: "allowlist"` over one. |
 | `NO_ACTIVE_BLOCK` | `temporaryUnlock` while nothing is blocked. |
-| `EXCESSIVE_ACTIVITIES` | `startMonitoring` past the system limit of monitored activities. |
+| `EXCESSIVE_ACTIVITIES` | `startMonitoring` for a 20th activity (`limits.maxMonitoredActivities` is 19), or when the temporary-unlock meter or a shield snooze holds the remaining DeviceActivity slot. |
 | `INTERVAL_TOO_SHORT` | A schedule shorter than 15 minutes. |
 | `INTERVAL_TOO_LONG` | A schedule longer than a week. |
 | `INVALID_DATE_COMPONENTS` | A schedule the system rejects as invalid dates. |

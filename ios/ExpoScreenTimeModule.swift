@@ -500,8 +500,12 @@ public class ExpoScreenTimeModule: Module {
                 // ignores occurrences on unselected days (DailySchedule), so
                 // events and shield configs use this name and the activity
                 // costs one slot.
+                // One clock reading: what is registered (a one-off's pinned
+                // weekday) and what is applied now (`syncDecision`) must
+                // judge the same instant.
+                let now = Date()
                 let weekdays = Array(DailySchedule.weekdays(from: config["weekdays"] as? [Any])).sorted()
-                let schedule = try self.buildSchedule(from: scheduleDict)
+                let schedule = try self.buildSchedule(from: scheduleDict, weekdays: weekdays, now: now)
 
                 try self.register(
                     activityName: activityName,
@@ -509,14 +513,19 @@ public class ExpoScreenTimeModule: Module {
                     weekdays: weekdays,
                     scheduleDict: scheduleDict,
                     schedule: schedule,
-                    events: deviceActivityEvents
+                    events: deviceActivityEvents,
+                    now: now
                 )
 
                 promise.resolve(nil)
             } catch let error as DeviceActivityCenter.MonitoringError {
                 switch error {
                 case .excessiveActivities:
-                    promise.reject(.excessiveActivities, "Maximum of 20 activities can be monitored simultaneously")
+                    // The 19-activity limit was checked before this call
+                    // (`ActivityRegistration.exceedsLimit`): the system
+                    // refuses here only when the module's own meters hold
+                    // the remaining slot.
+                    promise.reject(.excessiveActivities, "Could not register the activity: all 20 DeviceActivity slots are in use (your activities, the unlock meter, the snoozes in progress, or registrations left by an older build)")
                 case .intervalTooLong:
                     promise.reject(.intervalTooLong, "Schedule interval cannot exceed 1 week")
                 case .intervalTooShort:
@@ -558,7 +567,7 @@ public class ExpoScreenTimeModule: Module {
             let center = DeviceActivityCenter()
             let config = self.sharedDefaults.getMonitoringConfig(activityName: activityName)
             let legacyVariants = ActivityRegistration.legacyWeekdayVariants(in: config, of: activityName)
-            let physicals = Self.registeredPhysicalNames(of: activityName, legacyVariants: legacyVariants, in: center)
+            let physicals = Self.registeredPhysicalNames(of: activityName, legacyVariants: legacyVariants, among: center.activities)
 
             // App Group first, under the lock: the `intervalDidEnd` the stop
             // triggers arrives within milliseconds, takes the lock after this
@@ -615,12 +624,10 @@ public class ExpoScreenTimeModule: Module {
             // block composition registered `<name>_weekday_<n>` variants:
             // report every registration under its logical name.
             let center = DeviceActivityCenter()
-            let lookup = { self.sharedDefaults.getMonitoringConfig(activityName: $0) }
-            var names = Set<String>()
-            for activity in center.activities where !ActivityRegistration.isInternalName(activity.rawValue) {
-                names.insert(ActivityRegistration.logicalName(ofRegistered: activity.rawValue, config: lookup))
-            }
-            return names.sorted()
+            return ActivityRegistration.logicalNames(
+                ofRegistered: center.activities.map(\.rawValue),
+                config: { self.sharedDefaults.getMonitoringConfig(activityName: $0) }
+            ).sorted()
         }
 
         // MARK: - Shield Configuration
@@ -794,16 +801,28 @@ public class ExpoScreenTimeModule: Module {
         return mode
     }
 
+    /// The system schedule for a JS `schedule` and the activity's `weekdays`
+    /// (as stored: normalized, or the raw array of a stored config).
+    ///
+    /// A one-off (`repeats: false`) restricted to weekdays covers the next
+    /// SELECTED occurrence (`DailySchedule.oneOffPinning`): registered as
+    /// given, its single occurrence would be the next one at all, which the
+    /// monitor ignores when its weekday is unselected — and a one-off
+    /// never calls back again, so it never blocked.
     @available(iOS 15.0, *)
-    private func buildSchedule(from dict: [String: Any]) throws -> DeviceActivitySchedule {
+    private func buildSchedule(from dict: [String: Any], weekdays: [Any]?, now: Date) throws -> DeviceActivitySchedule {
         guard let intervalStartDict = dict["intervalStart"] as? [String: Any],
               let intervalEndDict = dict["intervalEnd"] as? [String: Any] else {
             throw screenTimeError(.invalidConfig, "schedule.intervalStart and schedule.intervalEnd are required")
         }
 
-        let intervalStart = buildDateComponents(from: intervalStartDict)
-        let intervalEnd = buildDateComponents(from: intervalEndDict)
-        let repeats = dict["repeats"] as? Bool ?? true
+        var intervalStart = buildDateComponents(from: intervalStartDict)
+        var intervalEnd = buildDateComponents(from: intervalEndDict)
+        let repeats = DailySchedule.repeats(dict)
+        if let pinned = DailySchedule.oneOffPinning(scheduleDict: dict, weekdays: weekdays, now: now, calendar: Calendar.current) {
+            intervalStart.weekday = pinned.start
+            intervalEnd.weekday = pinned.end
+        }
 
         var warningTime: DateComponents?
         if let warningSeconds = Self.intValue(dict["warningTime"]), warningSeconds > 0 {
@@ -914,9 +933,9 @@ public class ExpoScreenTimeModule: Module {
     static func registeredPhysicalNames(
         of activityName: String,
         legacyVariants: [String],
-        in center: DeviceActivityCenter
+        among activities: [DeviceActivityName]
     ) -> [DeviceActivityName] {
-        return center.activities.filter {
+        return activities.filter {
             ActivityRegistration.parse($0.rawValue).logical == activityName || legacyVariants.contains($0.rawValue)
         }
     }
@@ -945,6 +964,11 @@ public class ExpoScreenTimeModule: Module {
         "activityName must not be empty, start with '\(ActivityRegistration.reservedPrefix)' "
         + "or contain '\(ActivityRegistration.generationSeparator)'"
 
+    /// The Android port's text (#57), so the two platforms report alike.
+    static let excessiveActivitiesMessage =
+        "Maximum of \(ActivityRegistration.maxLogicalActivities) activities can be monitored simultaneously "
+        + "(iOS allows 20 and keeps one for the temporary-unlock meter)"
+
     /// Register `activityName` — or re-register it: a schedule update, or a
     /// restart right after a stop.
     ///
@@ -968,6 +992,13 @@ public class ExpoScreenTimeModule: Module {
     /// new one can be tried: a failure after that re-registers the previous
     /// schedule under a fresh generation, and if THAT fails the activity is
     /// stopped and a `RollbackError` is thrown.
+    ///
+    /// Before any of it, the 19-activity limit (`limits.maxMonitoredActivities`,
+    /// `ActivityRegistration.maxLogicalActivities`): a 20th logical activity
+    /// is refused with `EXCESSIVE_ACTIVITIES` here, and nothing is written.
+    /// The system's own `excessiveActivities` only refuses the 21st
+    /// registration, which let a 20th activity through whenever no meter or
+    /// snooze held its slot. Replacing a registered name costs nothing.
     @available(iOS 15.0, *)
     private func register(
         activityName: String,
@@ -975,20 +1006,30 @@ public class ExpoScreenTimeModule: Module {
         weekdays: [Int],
         scheduleDict: [String: Any],
         schedule: DeviceActivitySchedule,
-        events: [DeviceActivityEvent.Name: DeviceActivityEvent]
+        events: [DeviceActivityEvent.Name: DeviceActivityEvent],
+        now: Date
     ) throws {
         let center = DeviceActivityCenter()
         let defaults = sharedDefaults
         let lock = BlockStateLock.shared
-        let now = Date()
         let decision = DailySchedule.syncDecision(scheduleDict: scheduleDict, weekdays: weekdays, now: now, calendar: Calendar.current)
 
-        // What the system has registered for this activity — an XPC read,
-        // outside the lock.
+        // What the system has registered — one XPC read, outside the lock:
+        // this activity's own registrations, which this call replaces, and
+        // the logical activities the OTHERS amount to, for the limit (what
+        // is about to be stopped never counts, whatever it is called).
+        let registered = center.activities
         let legacyVariantNames = ActivityRegistration.legacyWeekdayVariants(
             in: defaults.getMonitoringConfig(activityName: activityName), of: activityName
         )
-        let previousPhysicals = Self.registeredPhysicalNames(of: activityName, legacyVariants: legacyVariantNames, in: center)
+        let previousPhysicals = Self.registeredPhysicalNames(of: activityName, legacyVariants: legacyVariantNames, among: registered)
+        let otherActivities = ActivityRegistration.logicalNames(
+            ofRegistered: registered.filter { !previousPhysicals.contains($0) }.map(\.rawValue),
+            config: { defaults.getMonitoringConfig(activityName: $0) }
+        )
+        if ActivityRegistration.exceedsLimit(registering: activityName, among: otherActivities) {
+            throw screenTimeError(.excessiveActivities, Self.excessiveActivitiesMessage)
+        }
 
         // 1. Snapshot the previous registration, then the App Group in its
         //    final state — one critical section.
@@ -1171,7 +1212,10 @@ public class ExpoScreenTimeModule: Module {
             guard let scheduleDict = previousConfig["schedule"] as? [String: Any] else {
                 throw screenTimeError(.monitoringError, "the stored schedule is missing")
             }
-            restoredSchedule = try buildSchedule(from: scheduleDict)
+            // A one-off whose occurrence already ran is re-armed for its next
+            // selected one here, as the as-given registration always re-armed
+            // the next occurrence at all.
+            restoredSchedule = try buildSchedule(from: scheduleDict, weekdays: previousConfig["weekdays"] as? [Any], now: now)
             restoredEvents = try buildEvents(from: previousConfig)
         } catch let rollbackError {
             lock.withLock { forget(activityName, recordingEnd: previous.interval != nil) }
@@ -1637,8 +1681,9 @@ public class ExpoScreenTimeModule: Module {
     /// can do (`ScreenTimeCapabilities`). Synchronous and cheap.
     private func capabilities() -> [String: Any] {
         let limits: [String: Any] = [
-            // iOS caps DeviceActivity at 20 and the unlock meter holds one.
-            "maxMonitoredActivities": 19,
+            // iOS caps DeviceActivity at 20 and the unlock meter holds one;
+            // `startMonitoring` enforces it (`ActivityRegistration.exceedsLimit`).
+            "maxMonitoredActivities": ActivityRegistration.maxLogicalActivities,
             "minIntervalSeconds": 15 * 60,
             "maxIntervalSeconds": 7 * 24 * 60 * 60,
         ]

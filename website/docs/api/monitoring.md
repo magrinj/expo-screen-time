@@ -55,8 +55,13 @@ await ExpoScreenTime.startMonitoring({
 See [`MonitoringConfiguration`](../types.md#monitoringconfiguration).
 
 `weekdays` does not multiply activities: `workHours` above is one activity (one
-of the 20 DeviceActivity slots), its events are recorded under `workHours`, and
-occurrences on Saturday and Sunday are ignored. A `blockOnThreshold` shield
+of the 19 you can monitor at once, see below), its events are recorded under
+`workHours`, and occurrences on Saturday and Sunday are ignored. A one-off
+schedule (`repeats: false`) with `weekdays` covers its next occurrence on a
+selected weekday — the one in progress when it is on a selected weekday —
+rather than the next occurrence at all: the schedule above with
+`repeats: false`, started on a Friday evening, blocks on Monday from 09:00 to
+17:00. A `blockOnThreshold` shield
 covers the **event's** selection (`social-apps` here, not the activity's
 `work-blocklist`) and is lifted with the interval.
 
@@ -82,12 +87,17 @@ shield-snooze meters live there) or contain `__expo_st_gen_`, which the
 module appends to the name it registers with the system. `startMonitoring`
 and `stopMonitoring` both reject such a name with `INVALID_CONFIG`.
 
-iOS allows 20 DeviceActivities per app. The temporary-unlock meter takes one
-while an unlock is in progress, and each shield
-[snooze](./shields.md#snooze) in progress takes one, so **keep your own
-activities to 19 or fewer**, less if you rely on snoozes: at the limit,
-`startMonitoring` rejects with `EXCESSIVE_ACTIVITIES` and a snooze press
-cannot arm its meter (the shield stays).
+You can monitor **19 activities at once**
+([`limits.maxMonitoredActivities`](./capabilities.md), the same on both
+platforms): `startMonitoring` rejects a 20th `activityName` with
+`EXCESSIVE_ACTIVITIES` before anything is registered. Starting an activity
+that is already monitored replaces it and costs no slot. The limit comes from
+iOS, which allows 20 DeviceActivities per app: the temporary-unlock meter
+takes one while an unlock is in progress, and each shield
+[snooze](./shields.md#snooze) in progress takes one, so keep fewer activities
+if you rely on snoozes — when the meters hold the remaining slot,
+`startMonitoring` rejects with `EXCESSIVE_ACTIVITIES` as well (the message
+names the slots), and a snooze press cannot arm its meter (the shield stays).
 
 Calling `startMonitoring` again with the same `activityName` **updates the
 activity in place**: the new schedule, selection and events replace the old

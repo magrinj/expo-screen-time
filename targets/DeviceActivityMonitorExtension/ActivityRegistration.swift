@@ -180,6 +180,36 @@ enum ActivityRegistration {
         return physical
     }
 
+    // MARK: - The activity limit
+
+    /// How many logical activities `startMonitoring` accepts at once —
+    /// `limits.maxMonitoredActivities`, enforced identically on both
+    /// platforms: iOS caps DeviceActivity at 20 per app and the
+    /// temporary-unlock meter holds one. Checked by the module before the
+    /// system is asked: the system only refuses the 21st registration, so
+    /// a 20th logical activity used to go through whenever no meter or
+    /// snooze held its slot — and took the slot the next unlock or snooze
+    /// needed.
+    static let maxLogicalActivities = 19
+
+    /// The logical activities the system's registrations amount to: every
+    /// generation of a name is that name, a legacy weekday variant is its
+    /// parent, and the module's own meters are not activities.
+    static func logicalNames(ofRegistered physicals: [String], config lookup: (String) -> [String: Any]?) -> Set<String> {
+        var names = Set<String>()
+        for physical in physicals where !isInternalName(physical) {
+            names.insert(logicalName(ofRegistered: physical, config: lookup))
+        }
+        return names
+    }
+
+    /// Whether registering `activityName` would exceed the limit, given the
+    /// logical names registered. Re-registering one of them replaces it and
+    /// costs nothing.
+    static func exceedsLimit(registering activityName: String, among registered: Set<String>, limit: Int = maxLogicalActivities) -> Bool {
+        return !registered.contains(activityName) && registered.count >= limit
+    }
+
     // MARK: - Replacing a registration
 
     /// What `startMonitoring` does to the activity's interval state — under

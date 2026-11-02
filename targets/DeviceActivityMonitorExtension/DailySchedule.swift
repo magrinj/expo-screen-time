@@ -171,6 +171,80 @@ struct DailySchedule: Equatable {
         return .apply(occurrenceStart: daily.latestStart(at: now, calendar: calendar))
     }
 
+    // MARK: - One-off schedules
+
+    /// Whether the JS `schedule` repeats (the default). JS booleans reach
+    /// Swift as `Bool`; stored ones come back as `NSNumber`, which bridges.
+    static func repeats(_ scheduleDict: [String: Any]) -> Bool {
+        return scheduleDict["repeats"] as? Bool ?? true
+    }
+
+    /// Start of the occurrence a one-off (`repeats: false`) registered at
+    /// `now` covers: the occurrence in progress when it is on a selected
+    /// weekday, else the next start on a selected weekday — without
+    /// weekdays, the next start, which is what the system computes on its
+    /// own. The same rule as the Android port's `MonitoredActivity.register`.
+    func coveredOccurrenceStart(at now: Date, calendar: Calendar) -> Date {
+        if let occurrence = occurrence(at: now, calendar: calendar),
+           isSelected(occurrenceStart: occurrence.start, calendar: calendar) {
+            return occurrence.start
+        }
+        var candidate = Self.wallClock(start, onDayOf: now, calendar: calendar)
+        if candidate <= now {
+            candidate = Self.wallClock(start, onDayOf: Self.nextDay(of: candidate, calendar: calendar), calendar: calendar)
+        }
+        // At most six more days: a non-empty `weekdays` holds one of the seven.
+        var remaining = 7
+        while remaining > 0, !isSelected(occurrenceStart: candidate, calendar: calendar) {
+            candidate = Self.wallClock(start, onDayOf: Self.nextDay(of: candidate, calendar: calendar), calendar: calendar)
+            remaining -= 1
+        }
+        return candidate
+    }
+
+    /// Weekdays pinned on the date components `startMonitoring` registers.
+    struct PinnedWeekdays: Equatable {
+        var start: Int
+        var end: Int
+    }
+
+    /// What `startMonitoring` pins on the system's date components for a
+    /// one-off restricted to `weekdays`, or `nil` to register the schedule
+    /// as given.
+    ///
+    /// Registered as given, a one-off's single occurrence is the next one
+    /// at all — the system knows nothing of `weekdays` — and when that
+    /// weekday is unselected the monitor extension ignores it and nothing
+    /// follows: the activity never blocks. So the covered occurrence
+    /// (`coveredOccurrenceStart`) is pinned by its weekday, start and end
+    /// separately since a crossing occurrence ends on the next weekday —
+    /// `weekday` on both components is the weekly form the system already
+    /// takes. Pinned only when that occurrence starts after `now`: a
+    /// selected occurrence in progress is registered as given, the path
+    /// every one-off takes today, and `syncDecision` applies it at once.
+    /// `nil` too for a repeating schedule, without weekdays, when the
+    /// components already carry a weekday, and for a schedule that is not
+    /// daily (which `buildSchedule` rejects on its own).
+    static func oneOffPinning(scheduleDict: [String: Any], weekdays: [Any]?, now: Date, calendar: Calendar) -> PinnedWeekdays? {
+        guard !repeats(scheduleDict),
+              intValue((scheduleDict["intervalStart"] as? [String: Any])?["weekday"]) == nil,
+              let daily = DailySchedule(scheduleDict: scheduleDict, weekdays: weekdays),
+              !daily.weekdays.isEmpty else {
+            return nil
+        }
+        let occurrenceStart = daily.coveredOccurrenceStart(at: now, calendar: calendar)
+        guard occurrenceStart > now else { return nil }
+        let occurrenceEnd = daily.end(ofOccurrenceStarting: occurrenceStart, calendar: calendar)
+        return PinnedWeekdays(
+            start: calendar.component(.weekday, from: occurrenceStart),
+            end: calendar.component(.weekday, from: occurrenceEnd)
+        )
+    }
+
+    private static func nextDay(of day: Date, calendar: Calendar) -> Date {
+        return calendar.date(byAdding: .day, value: 1, to: day) ?? day.addingTimeInterval(86_400)
+    }
+
     /// `time` on the calendar day containing `day`.
     private static func wallClock(_ time: TimeOfDay, onDayOf day: Date, calendar: Calendar) -> Date {
         return calendar.date(bySettingHour: time.hour, minute: time.minute, second: time.second, of: day)
