@@ -3,7 +3,7 @@
 #
 # ManagedSettings tokens cannot be built outside the OS and FamilyControls
 # does not run in the simulator, so the block-composition, precedence,
-# weekday, registration, shield-interaction and permission-step rules live in Foundation-only types and are tested
+# weekday, registration, shield-interaction, permission-step and shield-text-colour rules live in Foundation-only types and are tested
 # here with plain `swiftc` on macOS; the cross-process mutex (BlockStateLock)
 # is exercised by threads in-process and by two concurrent processes. Also
 # asserts that every per-target copy of those files is byte-identical to the
@@ -35,6 +35,7 @@ done
 check_copy ios/DailySchedule.swift targets/DeviceActivityMonitorExtension/DailySchedule.swift
 check_copy ios/ActivityRegistration.swift targets/DeviceActivityMonitorExtension/ActivityRegistration.swift
 check_copy ios/MonitorEventCursor.swift ios/MonitorEventCursor.swift
+check_copy ios/ShieldTextColors.swift targets/ShieldConfigurationExtension/ShieldTextColors.swift
 # The extension copies of SelectionStore are the CRUD subset of ios/SelectionStore.swift.
 check_copy targets/DeviceActivityMonitorExtension/SelectionStore.swift targets/ShieldActionExtension/SelectionStore.swift
 check_copy targets/DeviceActivityMonitorExtension/SelectionStore.swift targets/ShieldConfigurationExtension/SelectionStore.swift
@@ -50,6 +51,7 @@ swiftc -O \
   ios/EnforcementGaps.swift \
   ios/ShieldInteractionQueue.swift \
   ios/PermissionSteps.swift \
+  ios/ShieldTextColors.swift \
   scripts/swift-tests/main.swift \
   -o "$out/swift-tests"
 "$out/swift-tests" || status=1

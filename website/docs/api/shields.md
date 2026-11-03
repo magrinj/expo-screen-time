@@ -31,6 +31,49 @@ ExpoScreenTime.setShieldConfig({
 });
 ```
 
+#### Default text colours
+
+Every `color` is optional. What you get when you leave one out depends on
+whether the element sits on a background you chose:
+
+- **No `backgroundColor`**: the system defaults, which follow the device's
+  light or dark appearance (on iOS the label colours and the system blue; on
+  Android the library's equivalent palette).
+- **A `backgroundColor`**: defaults chosen for contrast against it, the same
+  on both platforms. The **title** is white or black, whichever contrasts
+  more (at least 4.58:1 against any opaque colour, so always over the WCAG AA
+  4.5:1 bar for normal text). The **subtitle** is the title colour mixed into
+  the background at 70 %, so it reads as secondary, made more opaque in 5 %
+  steps where that falls under 3:1 (the AA bar for large and secondary
+  text). The **secondary button** label takes the title colour. On Android the
+  mapped `icon` is tinted with the title colour too.
+- **The primary button** label is chosen against the button's own
+  `backgroundColor` when you set one (white or black, as for the title),
+  whether or not the shield has a background; without one it stays white on
+  the platform's default button.
+
+These defaults colour the elements your config gives a `text` to. On iOS an
+element you leave out entirely (no `title`, say) is drawn by the system with
+its own text and colours; on Android the library draws every element, so the
+blocked app's name as the default title follows the rule too.
+
+A colour you set is always kept, readable or not. A translucent background
+(`#RRGGBBAA`) is judged by its RGB alone: what shows through it differs by
+platform (on iOS the blur over the blocked app, on Android nothing, the window
+is opaque), so set the text colours yourself when you rely on translucency.
+
+```typescript
+// Dark background, no text colours: white title, light grey subtitle,
+// white labels on the blue button and for "Not now", in light and dark mode.
+ExpoScreenTime.setShieldConfig({
+  backgroundColor: '#1a1a2e',
+  title: { text: 'App Blocked' },
+  subtitle: { text: 'This app is restricted during work hours' },
+  primaryButton: { text: 'OK', backgroundColor: '#4a4ae8' },
+  secondaryButton: { text: 'Not now' },
+});
+```
+
 ### `setShieldConfigForActivity(activityName: string, config: ShieldConfig)`
 
 Shield appearance for a specific monitoring activity. When several block
@@ -229,8 +272,10 @@ else the manual block).
 - **Fields.** `title`, `subtitle`, `primaryButton` (text, colour, background
   colour) and `secondaryButton` map one to one; `backgroundColor` fills the
   screen. Colours are `#RRGGBB` or `#RRGGBBAA`. What the config leaves out
-  follows the system light or dark setting, and the title defaults to the
-  blocked app's name with its icon, as the default iOS shield does.
+  follows the system light or dark setting — except the text colours over a
+  `backgroundColor` you set, chosen for contrast against it like on iOS
+  ([default text colours](#default-text-colours)) — and the title defaults to
+  the blocked app's name with its icon, as the default iOS shield does.
 - **`icon`** is an SF Symbol name on both platforms; Android maps this set to
   the equivalent Material Symbol and falls back to the blocked app's icon for
   any other name: `hand.raised.fill`, `lock.fill`, `nosign`, `clock.fill`,

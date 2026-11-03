@@ -142,27 +142,42 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
         logDebug("Building config with: \(config)")
         #endif
 
+        // The text colours the config leaves open: chosen for contrast against
+        // a configured background (ShieldTextColors, the Android rule too),
+        // else nil and the system-appearance defaults below, as before.
+        let text = ShieldTextColors.resolve(
+            background: color(config["backgroundColor"]),
+            title: color(config, nested: "title", legacy: "titleColor"),
+            subtitle: color(config, nested: "subtitle", legacy: "subtitleColor"),
+            primaryButtonBackground: primaryButtonBackground(from: config),
+            primaryButton: color(config, nested: "primaryButton", legacy: "primaryButtonColor"),
+            secondaryButton: color(config, nested: "secondaryButton", legacy: "secondaryButtonColor")
+        )
+        let title = label(config, nested: "title", legacy: "title", color: text.title.map(UIColor.init) ?? .label)
+        let subtitle = label(config, nested: "subtitle", legacy: "subtitle", color: text.subtitle.map(UIColor.init) ?? .secondaryLabel)
+        let primaryButton = label(config, nested: "primaryButton", legacy: "primaryButtonLabel", color: text.primaryButton.map(UIColor.init) ?? .white)
+        let secondaryButton = label(config, nested: "secondaryButton", legacy: "secondaryButtonLabel", color: text.secondaryButton.map(UIColor.init) ?? .systemBlue)
+
         // Build the configuration
         var shieldConfig = ShieldConfiguration()
 
         // Background
-        if let bgColorHex = config["backgroundColor"] as? String,
-           let bgColor = UIColor(hex: bgColorHex) {
+        if let bgColor = color(config["backgroundColor"]).map(UIColor.init) {
             shieldConfig = ShieldConfiguration(
                 backgroundColor: bgColor,
-                title: buildTitle(from: config),
-                subtitle: buildSubtitle(from: config),
-                primaryButtonLabel: buildPrimaryButton(from: config),
-                primaryButtonBackgroundColor: buildPrimaryButtonBg(from: config),
-                secondaryButtonLabel: buildSecondaryButton(from: config)
+                title: title,
+                subtitle: subtitle,
+                primaryButtonLabel: primaryButton,
+                primaryButtonBackgroundColor: primaryButtonBackground(from: config).map(UIColor.init),
+                secondaryButtonLabel: secondaryButton
             )
         } else {
             shieldConfig = ShieldConfiguration(
-                title: buildTitle(from: config),
-                subtitle: buildSubtitle(from: config),
-                primaryButtonLabel: buildPrimaryButton(from: config),
-                primaryButtonBackgroundColor: buildPrimaryButtonBg(from: config),
-                secondaryButtonLabel: buildSecondaryButton(from: config)
+                title: title,
+                subtitle: subtitle,
+                primaryButtonLabel: primaryButton,
+                primaryButtonBackgroundColor: primaryButtonBackground(from: config).map(UIColor.init),
+                secondaryButtonLabel: secondaryButton
             )
         }
 
@@ -197,87 +212,35 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
         return shieldConfig
     }
 
-    private func buildTitle(from config: [String: Any]) -> ShieldConfiguration.Label? {
-        // New nested format: { text: "...", color: "#..." }
-        if let titleDict = config["title"] as? [String: Any],
-           let text = titleDict["text"] as? String {
-            if let colorHex = titleDict["color"] as? String, let color = UIColor(hex: colorHex) {
-                return ShieldConfiguration.Label(text: text, color: color)
-            }
-            return ShieldConfiguration.Label(text: text, color: .label)
-        }
-        // Legacy flat format: title as string
-        if let text = config["title"] as? String {
-            if let colorHex = config["titleColor"] as? String, let color = UIColor(hex: colorHex) {
-                return ShieldConfiguration.Label(text: text, color: color)
-            }
-            return ShieldConfiguration.Label(text: text, color: .label)
-        }
-        return nil
+    /// A config colour string parsed (`#RRGGBB` / `#RRGGBBAA`); nil when absent or unparsable, which drops the colour, not the label.
+    private func color(_ value: Any?) -> ShieldTextColors.RGBA? {
+        return (value as? String).flatMap(ShieldTextColors.RGBA.init(hex:))
     }
 
-    private func buildSubtitle(from config: [String: Any]) -> ShieldConfiguration.Label? {
-        if let subtitleDict = config["subtitle"] as? [String: Any],
-           let text = subtitleDict["text"] as? String {
-            if let colorHex = subtitleDict["color"] as? String, let color = UIColor(hex: colorHex) {
-                return ShieldConfiguration.Label(text: text, color: color)
-            }
-            return ShieldConfiguration.Label(text: text, color: .secondaryLabel)
+    /// The `color` of the nested `{ text, color }` object under `nested`, else the legacy flat `legacy` key.
+    private func color(_ config: [String: Any], nested: String, legacy: String) -> ShieldTextColors.RGBA? {
+        if let dict = config[nested] as? [String: Any] {
+            return color(dict["color"])
         }
-        if let text = config["subtitle"] as? String {
-            if let colorHex = config["subtitleColor"] as? String, let color = UIColor(hex: colorHex) {
-                return ShieldConfiguration.Label(text: text, color: color)
-            }
-            return ShieldConfiguration.Label(text: text, color: .secondaryLabel)
-        }
-        return nil
+        return color(config[legacy])
     }
 
-    private func buildPrimaryButton(from config: [String: Any]) -> ShieldConfiguration.Label? {
-        if let btnDict = config["primaryButton"] as? [String: Any],
-           let text = btnDict["text"] as? String {
-            if let colorHex = btnDict["color"] as? String, let color = UIColor(hex: colorHex) {
-                return ShieldConfiguration.Label(text: text, color: color)
-            }
-            return ShieldConfiguration.Label(text: text, color: .white)
+    /// The primary button's own background: nested `primaryButton.backgroundColor`, else the legacy flat key.
+    private func primaryButtonBackground(from config: [String: Any]) -> ShieldTextColors.RGBA? {
+        if let dict = config["primaryButton"] as? [String: Any], let nested = color(dict["backgroundColor"]) {
+            return nested
         }
-        // Legacy
-        if let text = config["primaryButtonLabel"] as? String {
-            if let colorHex = config["primaryButtonColor"] as? String, let color = UIColor(hex: colorHex) {
-                return ShieldConfiguration.Label(text: text, color: color)
-            }
-            return ShieldConfiguration.Label(text: text, color: .white)
-        }
-        return nil
+        return color(config["primaryButtonBackgroundColor"])
     }
 
-    private func buildPrimaryButtonBg(from config: [String: Any]) -> UIColor? {
-        // New nested format
-        if let btnDict = config["primaryButton"] as? [String: Any],
-           let colorHex = btnDict["backgroundColor"] as? String {
-            return UIColor(hex: colorHex)
+    /// The nested `{ text }` object under `nested` (no text: no label), else the legacy flat `legacy` string; drawn in `color`.
+    private func label(_ config: [String: Any], nested: String, legacy: String, color: UIColor) -> ShieldConfiguration.Label? {
+        if let dict = config[nested] as? [String: Any] {
+            guard let text = dict["text"] as? String else { return nil }
+            return ShieldConfiguration.Label(text: text, color: color)
         }
-        // Legacy
-        if let colorHex = config["primaryButtonBackgroundColor"] as? String {
-            return UIColor(hex: colorHex)
-        }
-        return nil
-    }
-
-    private func buildSecondaryButton(from config: [String: Any]) -> ShieldConfiguration.Label? {
-        if let btnDict = config["secondaryButton"] as? [String: Any],
-           let text = btnDict["text"] as? String {
-            if let colorHex = btnDict["color"] as? String, let color = UIColor(hex: colorHex) {
-                return ShieldConfiguration.Label(text: text, color: color)
-            }
-            return ShieldConfiguration.Label(text: text, color: .systemBlue)
-        }
-        // Legacy
-        if let text = config["secondaryButtonLabel"] as? String {
-            if let colorHex = config["secondaryButtonColor"] as? String, let color = UIColor(hex: colorHex) {
-                return ShieldConfiguration.Label(text: text, color: color)
-            }
-            return ShieldConfiguration.Label(text: text, color: .systemBlue)
+        if let text = config[legacy] as? String {
+            return ShieldConfiguration.Label(text: text, color: color)
         }
         return nil
     }
@@ -286,32 +249,13 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
 // MARK: - UIColor Extension
 
 extension UIColor {
-    convenience init?(hex: String) {
-        var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-        hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
-
-        var rgb: UInt64 = 0
-
-        guard Scanner(string: hexSanitized).scanHexInt64(&rgb) else {
-            return nil
-        }
-
-        let length = hexSanitized.count
-
-        if length == 6 {
-            let r = CGFloat((rgb & 0xFF0000) >> 16) / 255.0
-            let g = CGFloat((rgb & 0x00FF00) >> 8) / 255.0
-            let b = CGFloat(rgb & 0x0000FF) / 255.0
-            self.init(red: r, green: g, blue: b, alpha: 1.0)
-        } else if length == 8 {
-            let r = CGFloat((rgb & 0xFF000000) >> 24) / 255.0
-            let g = CGFloat((rgb & 0x00FF0000) >> 16) / 255.0
-            let b = CGFloat((rgb & 0x0000FF00) >> 8) / 255.0
-            let a = CGFloat(rgb & 0x000000FF) / 255.0
-            self.init(red: r, green: g, blue: b, alpha: a)
-        } else {
-            return nil
-        }
+    convenience init(_ rgba: ShieldTextColors.RGBA) {
+        self.init(
+            red: CGFloat(rgba.red) / 255.0,
+            green: CGFloat(rgba.green) / 255.0,
+            blue: CGFloat(rgba.blue) / 255.0,
+            alpha: CGFloat(rgba.alpha) / 255.0
+        )
     }
 }
 

@@ -1288,5 +1288,60 @@ check(PermissionSteps.nextStep(in: [stGranted, nUndetermined]) == .notifications
 check(PermissionSteps.nextStep(in: [stGranted, nDenied]) == .notifications, "a denied step is still the next one (the response says it cannot prompt)")
 check(PermissionSteps.nextStep(in: [stGranted, nGranted]) == nil && PermissionSteps.nextStep(in: [stGranted]) == nil, "nothing pending: no step to request")
 
+// MARK: - Shield text colours (default colours over a custom background)
+
+section("ShieldTextColors — the rule and its guarantees")
+typealias RGBA = ShieldTextColors.RGBA
+check(RGBA(hex: "#1a1a2e") == RGBA(red: 0x1A, green: 0x1A, blue: 0x2E, alpha: 255), "#RRGGBB parses")
+check(RGBA(hex: " 1a1a2e80 ") == RGBA(red: 0x1A, green: 0x1A, blue: 0x2E, alpha: 0x80), "RRGGBBAA parses, # optional, whitespace trimmed")
+check(RGBA(hex: "#12345") == nil && RGBA(hex: "blue") == nil && RGBA(hex: "") == nil && RGBA(hex: "#1a1a2g") == nil, "anything else is nil")
+check(RGBA(hex: "#1a1a2e80")?.hex == "#1A1A2E80" && RGBA.white.hex == "#FFFFFF", "hex prints the fixture's spelling")
+check(abs(ShieldTextColors.contrast(.white, .black) - 21) < 1e-9, "white on black is 21:1")
+check(abs(ShieldTextColors.relativeLuminance(RGBA(hex: "#80808080")!) - 0.2159) < 5e-5, "#808080 has L = 0.2159 (WebAIM), alpha ignored")
+var worstTitle = Double.infinity
+var worstSubtitle = Double.infinity
+var subtitleNeverLouder = true
+for r in stride(from: 0, through: 255, by: 5) {
+    for g in stride(from: 0, through: 255, by: 5) {
+        for b in stride(from: 0, through: 255, by: 5) {
+            let bg = RGBA(red: UInt8(r), green: UInt8(g), blue: UInt8(b), alpha: 255)
+            let title = ShieldTextColors.onBackground(bg)
+            let subtitle = ShieldTextColors.secondaryOn(bg)
+            worstTitle = min(worstTitle, ShieldTextColors.contrast(title, bg))
+            worstSubtitle = min(worstSubtitle, ShieldTextColors.contrast(subtitle, bg))
+            if ShieldTextColors.contrast(subtitle, bg) > ShieldTextColors.contrast(title, bg) { subtitleNeverLouder = false }
+        }
+    }
+}
+check(worstTitle >= ShieldTextColors.titleMinContrast, "white or black always clears 4.5:1 on an opaque background (worst \(String(format: "%.2f", worstTitle)):1)")
+check(worstSubtitle >= ShieldTextColors.subtitleMinContrast, "the subtitle always clears 3:1 (worst \(String(format: "%.2f", worstSubtitle)):1)")
+check(subtitleNeverLouder, "the subtitle never contrasts more than the title")
+let none = ShieldTextColors.resolve(background: nil, title: nil, subtitle: nil, primaryButtonBackground: nil, primaryButton: nil, secondaryButton: nil)
+check(none == .init(title: nil, subtitle: nil, primaryButton: nil, secondaryButton: nil), "no background: every default stays the system's")
+
+section("ShieldTextColors — parity (scripts/swift-tests/fixtures/shield-text-colors.tsv, shared with the Kotlin test)")
+let fixturePath = "scripts/swift-tests/fixtures/shield-text-colors.tsv"
+if let fixture = try? String(contentsOfFile: fixturePath, encoding: .utf8) {
+    let rows = fixture.split(separator: "\n").filter { !$0.isEmpty && !$0.hasPrefix("#") }
+    check(rows.count >= 10, "the fixture has \(rows.count) cases")
+    func parse(_ cell: Substring) -> RGBA? { return cell == "-" ? nil : RGBA(hex: String(cell)) }
+    for row in rows {
+        let cells = row.split(separator: "\t", omittingEmptySubsequences: false)
+        guard cells.count == 12, cells[7] == "=>" else {
+            check(false, "row shape: \(row)")
+            continue
+        }
+        let resolved = ShieldTextColors.resolve(
+            background: parse(cells[1]), title: parse(cells[2]), subtitle: parse(cells[3]),
+            primaryButtonBackground: parse(cells[4]), primaryButton: parse(cells[5]), secondaryButton: parse(cells[6])
+        )
+        let actual = [resolved.title, resolved.subtitle, resolved.primaryButton, resolved.secondaryButton].map { $0?.hex ?? "-" }
+        let expected = cells[8...11].map(String.init)
+        check(actual == expected, "\(cells[0]): \(actual)" + (actual == expected ? "" : " expected \(expected)"))
+    }
+} else {
+    check(false, "fixture not found at \(fixturePath) (run from the repo root)")
+}
+
 print("\n\(passed) passed, \(failed) failed")
 exit(failed == 0 ? 0 : 1)

@@ -44,7 +44,9 @@ import java.util.UUID
  * - **Appearance** from the stored `ShieldConfig` ([ShieldAppearance]) with
  *   the iOS precedence ([StateStore.shieldConfig]); what the config leaves
  *   open follows the system light/dark setting ([ViewPalette]) and the
- *   blocked app's own label and icon, as the default iOS shield does.
+ *   blocked app's own label and icon, as the default iOS shield does —
+ *   except the text colours over a configured background, chosen for
+ *   contrast against it ([ShieldTextColors], the same rule as iOS).
  * - **Buttons**: every press is recorded for
  *   `drainShieldInteractions` ([ShieldInteractionQueue]: the pressed app's
  *   handle and the owning activity) and does what `setShieldActions` /
@@ -131,10 +133,14 @@ class ShieldActivity : Activity() {
   private fun render() {
     val appearance = ShieldAppearance.from(StateStore(this).shieldConfig(intent.getStringExtra(EXTRA_OWNER)))
     val palette = ViewPalette.of(this)
+    // The text colours the config leaves open: for contrast against a configured
+    // background, else null and the system-adaptive palette below.
+    val colors = ShieldTextColors.resolve(appearance)
     val backgroundColor = appearance.backgroundColor ?: palette.background
     window.setBackgroundDrawable(ColorDrawable(backgroundColor))
     WindowCompat.getInsetsController(window, window.decorView).apply {
-      isAppearanceLightStatusBars = isLight(backgroundColor)
+      // Dark system-bar icons where dark text reads: the same contrast rule as the title.
+      isAppearanceLightStatusBars = ShieldTextColors.onBackground(backgroundColor) == ShieldTextColors.BLACK
       isAppearanceLightNavigationBars = isAppearanceLightStatusBars
     }
 
@@ -148,7 +154,7 @@ class ShieldActivity : Activity() {
       val drawable = when (val spec = appearance.icon) {
         is ShieldAppearance.Icon.Symbol -> {
           val id = resources.getIdentifier(spec.resource, "drawable", packageName)
-          if (id != 0) getDrawable(id)?.also { imageTintList = ColorStateList.valueOf(appearance.title?.color ?: palette.text) } else null
+          if (id != 0) getDrawable(id)?.also { imageTintList = ColorStateList.valueOf(colors.title ?: palette.text) } else null
         }
         ShieldAppearance.Icon.App -> null
       } ?: LaunchableApps.icon(this@ShieldActivity, target)
@@ -157,21 +163,21 @@ class ShieldActivity : Activity() {
     }
     val title = TextView(this).apply {
       text = appearance.title?.text ?: LaunchableApps.label(this@ShieldActivity, target) ?: getString(R.string.expo_st_shield_title)
-      setTextColor(appearance.title?.color ?: palette.text)
+      setTextColor(colors.title ?: palette.text)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
     }
     val subtitle = TextView(this).apply {
       text = appearance.subtitle?.text ?: getString(R.string.expo_st_shield_subtitle)
-      setTextColor(appearance.subtitle?.color ?: palette.secondary)
+      setTextColor(colors.subtitle ?: palette.secondary)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
       gravity = Gravity.CENTER
       layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
     }
     val primary = TextView(this).apply {
       text = appearance.primaryButton?.text ?: getString(R.string.expo_st_shield_close)
-      setTextColor(appearance.primaryButton?.color ?: 0xFFFFFFFF.toInt())
+      setTextColor(colors.primaryButton ?: ShieldTextColors.WHITE)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
@@ -194,7 +200,7 @@ class ShieldActivity : Activity() {
     appearance.secondaryButton?.let { label ->
       column.addView(TextView(this).apply {
         text = label.text
-        setTextColor(label.color ?: palette.accent)
+        setTextColor(colors.secondaryButton ?: palette.accent)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
         gravity = Gravity.CENTER
         minHeight = dp(48)
@@ -304,13 +310,6 @@ class ShieldActivity : Activity() {
       Log.w(EngineController.TAG, "home intent failed: ${e.javaClass.simpleName}: ${e.message}")
     }
     finishAndRemoveTask()
-  }
-
-  private fun isLight(color: Int): Boolean {
-    val r = (color shr 16 and 0xFF) / 255.0
-    val g = (color shr 8 and 0xFF) / 255.0
-    val b = (color and 0xFF) / 255.0
-    return 0.299 * r + 0.587 * g + 0.114 * b > 0.6
   }
 
   companion object {
