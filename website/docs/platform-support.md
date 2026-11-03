@@ -15,7 +15,7 @@ nothing is enforced yet.
 | Platform | Status |
 |---|---|
 | **iOS 16+** | Supported. Every API on this site is implemented. |
-| **Android 7+ (API 24)** | Installs and builds. The [permission steps](./api/permissions.md#android) read and request the real settings; the [picker](./components.md#activity-picker), the [selection store](./api/selections.md) and the [token labels](./components.md#token-labels) work for apps (`getCapabilities().selectableKinds.applications`). Blocking and the shield are implemented but **not yet enabled** (below); monitoring, unlocks and reports still report their capability off. Everything behind an off capability fails with the `UNSUPPORTED` error code; `<DeviceActivityReport />` renders its fallback. |
+| **Android 7+ (API 24)** | Installs and builds. The [permission steps](./api/permissions.md#android) read and request the real settings; the [picker](./components.md#activity-picker), the [selection store](./api/selections.md) and the [token labels](./components.md#token-labels) work for apps (`getCapabilities().selectableKinds.applications`). Blocking, the shield and monitoring are implemented but **not yet enabled** (below); unlocks and reports still report their capability off. Everything behind an off capability fails with the `UNSUPPORTED` error code; `<DeviceActivityReport />` renders its fallback. |
 | **Web** | Not supported. |
 
 ## What works on Android now
@@ -42,11 +42,19 @@ nothing is enforced yet.
   detects the foreground app and a shield drawn by the library over it, but
   `getCapabilities().blocking` still reports `"none"` and the functions still
   fail with `UNSUPPORTED`: every blocking flow of the behavioural suite keys
-  on that capability, and it flips to `"friction"` only once monitoring and
-  unlocks exist too. There is no option to turn it on in a published build.
-  What ships, and how it behaves, is on the [blocking](./api/blocking.md#android)
-  and [shields](./api/shields.md#android) pages, so an app can be written
+  on that capability, and it flips to `"friction"` only once unlocks exist
+  too. There is no option to turn it on in a published build. What ships,
+  and how it behaves, is on the [blocking](./api/blocking.md#android) and
+  [shields](./api/shields.md#android) pages, so an app can be written
   against it now.
+- **Monitoring: preview, not yet enabled.** `startMonitoring` and the
+  rest of the [monitoring page](./api/monitoring.md#android) are implemented
+  behind the same switch: schedules evaluated by the engine as a function of
+  time (midnight wrap, weekdays, the iOS limits), exactly-once events across
+  the app and engine processes, usage thresholds measured from UsageStats
+  and `blockOnThreshold`, with the iOS block composition (union of every
+  source; the shield shows the threshold's, else the latest schedule's, else
+  the manual block's configuration).
 - **The config plugin** prepares the app: the permissions the engine needs,
   the launcher `<queries>` intent (no `QUERY_ALL_PACKAGES`), the enforcement
   service in its own `:screentime` process, the boot and update receivers and
@@ -61,9 +69,8 @@ screen shared between the platforms does not crash at import or at render:
 - **`getCapabilities()`** answers: `selectableKinds.applications` is `true`;
   every other capability is off (`blocking: "none"`, `usageReports: false`,
   …), with the cross-platform `limits`. Each capability turns on with the
-  slice that delivers it; `blocking` turns on together with monitoring and
-  unlocks, as `"friction"` (the user can stop the engine: that is recorded,
-  not hidden).
+  slice that delivers it; `blocking` turns on together with unlocks, as
+  `"friction"` (the user can stop the engine: that is recorded, not hidden).
 - **Every function behind an off capability** fails with a coded error.
   Synchronous functions (`isBlocked`, `blockSelection`, `setShieldConfig`…)
   throw it; asynchronous ones (`startMonitoring`, `temporaryUnlock`…) reject
@@ -113,7 +120,7 @@ a per-API mapping of the iOS behaviour to Android (UsageStats detection, a
 blocking Activity as the shield, device admin for anti-tamper), with the
 stages and their exit criteria. The module is in stage 3 of that plan, the
 Android MVP, delivered in slices: the foundation (config plugin, engine
-service, permission steps), the selections (picker, store, labels) and the
-blocking engine with its shield (behind the switch above) are in;
-monitoring, unlocks and tamper evidence follow, and the unlock slice turns
-`blocking` on.
+service, permission steps), the selections (picker, store, labels), the
+blocking engine with its shield and the monitoring (both behind the switch
+above) are in; unlocks and tamper evidence follow, and the unlock slice
+turns `blocking` on.

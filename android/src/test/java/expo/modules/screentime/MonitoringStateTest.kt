@@ -10,6 +10,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.TimeZone
@@ -68,6 +69,8 @@ class MonitoringStateTest {
   private fun MonitoringState.Result.types() = recorded.map { it.eventType + (it.eventName?.let { n -> ":$n" } ?: "") }
   private fun MonitoringState.persisted(): MonitoringState = MonitoringState.fromJson(JSONObject(toJson().toString()))
   private fun MonitoringState.count(name: String, type: String) = events(name, 1000).count { it.eventType == type }
+  /** The blocks without their interval start (asserted where it matters). */
+  private fun MonitoringState.blocks(exists: (String) -> Boolean = { true }) = activeBlocks(exists).map { it.copy(startedAtMs = 0) }
 
   // Wednesday 2026-10-28.
   private val d = 28
@@ -78,7 +81,7 @@ class MonitoringStateTest {
     val result = MonitoringState().start(config(), at(10))
     assertEquals(listOf("intervalDidStart"), result.types())
     assertEquals(at(10), result.recorded.single().timestampMs)
-    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), result.state.activeBlocks())
+    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), result.state.blocks())
     assertEquals(listOf("work"), result.state.monitoredActivities())
     assertEquals("the marker is the occurrence, started now", ActiveInterval(at(10), Occurrence(at(9), at(17))), result.state.intervals.getValue("work"))
     // The engine's pass a second later — in the same process or another one reading the persisted document — records nothing.
@@ -139,7 +142,7 @@ class MonitoringStateTest {
     assertTrue("no intervalDidEnd/intervalDidStart pair", again.recorded.isEmpty())
     assertEquals("the marker keeps its start", at(10), again.state.intervals.getValue("work").startedAtMs)
     assertFalse("the threshold is re-armed", again.state.intervals.getValue("work").thresholds.getValue("limit").fired)
-    assertEquals("the new selection applies", listOf(MonitoringBlock("work", "SOCIAL", "blocklist")), again.state.activeBlocks())
+    assertEquals("the new selection applies", listOf(MonitoringBlock("work", "SOCIAL", "blocklist")), again.state.blocks())
     assertEquals(2, again.state.revision)
     // Re-armed with includesPastActivity false: counting restarts from the re-registration; insta is still resumed.
     val refired = again.state.advance(at(10, 20)).let { assertTrue(it.recorded.isEmpty()); it.state }.advance(at(10, 25))
@@ -201,7 +204,7 @@ class MonitoringStateTest {
     // The engine, taking the lock next with the document the module wrote.
     val pass = MonitoringDocument.read(document).advance(at(10, 0, 0))
     assertTrue(pass.recorded.isEmpty())
-    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), pass.state.activeBlocks())
+    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), pass.state.blocks())
     assertTrue(document.getJSONObject("engine").getBoolean("desired"))
   }
 
@@ -297,7 +300,7 @@ class MonitoringStateTest {
     val moved = state.advance(monday + 23 * HOUR + 30 * MINUTE, plusOne)
     assertEquals(listOf("intervalDidEnd", "intervalDidStart"), moved.types())
     assertFalse("Tuesday's threshold is armed afresh", moved.state.intervals.getValue("work").thresholds.getValue("limit").fired)
-    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), moved.state.activeBlocks())
+    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), moved.state.blocks())
   }
 
   @Test
@@ -313,9 +316,9 @@ class MonitoringStateTest {
 
   @Test
   fun `history and the replayed stream never overlap, and includesPastActivity false counts from the registration`() {
-    // The stored cursor is 09:50; insta started at 09:55; the module starts a 9–17 schedule at 10:00 with includesPastActivity.
+    // Another activity keeps the engine reading the stream, so the stored cursor is 09:50; insta started at 09:55; the module starts a 9–17 schedule at 10:00 with includesPastActivity.
     val armed = config(events = listOf(threshold(seconds = 600, past = true)))
-    val fed = MonitoringState().advance(at(9, 50), usage = listOf(paused("com.insta", at(9, 40)))).state
+    val fed = MonitoringState().start(config("other", components(20), components(21)), at(9)).state.advance(at(9, 50), usage = listOf(paused("com.insta", at(9, 40)))).state
     val started = fed.start(armed, at(10))
     assertEquals("history up to the cursor only", listOf(HistoryRequest("work", "limit", "SOCIAL", at(9), at(9, 50))), started.historyRequests)
     val filled = started.state.backfill(started.historyRequests.single(), listOf(resumed("com.insta", at(9, 10)), paused("com.insta", at(9, 40))), at(10), selections)
@@ -363,7 +366,7 @@ class MonitoringStateTest {
     val armed = config(events = listOf(threshold(seconds = 0)))
     val state = MonitoringState().start(armed, at(10)).state
     assertEquals(2, state.activeBlocks().size)
-    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), state.activeBlocks { it == "APPS" })
+    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), state.blocks { it == "APPS" })
     assertTrue(state.activeBlocks { false }.isEmpty())
     val back = state.start(config("bed", components(22), components(6)), at(23, day = 27)).state
     assertEquals("newest timestamp first, as iOS sorts", listOf("work", "work", "bed"), back.events(null).map { it.activityName })
@@ -397,7 +400,7 @@ class MonitoringStateTest {
   fun `thresholds fire once per occurrence, with screen-off gaps and split-screen counted by the union rule`() {
     val armed = config(events = listOf(threshold(seconds = 600), threshold("pair", "APPS", 300, block = false)))
     var state = MonitoringState().start(armed, at(10)).state
-    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), state.activeBlocks())
+    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), state.blocks())
     // insta from 10:00, screen off at 10:03, back at 10:20.
     state = state.advance(at(10, 5), usage = listOf(resumed("com.insta", at(10)), screenOff(at(10, 3)))).let { assertTrue(it.recorded.isEmpty()); it.state }
     state = state.advance(at(10, 10)).let { assertTrue("3 minutes only: nothing", it.recorded.isEmpty()); it.state }
@@ -407,7 +410,7 @@ class MonitoringStateTest {
     assertEquals(
       "blockOnThreshold adds the event's selection, blocklist semantics",
       listOf(MonitoringBlock("work", "APPS", "blocklist"), MonitoringBlock("work", "SOCIAL", "blocklist", "limit")),
-      state.activeBlocks(),
+      state.blocks(),
     )
     state = state.advance(at(10, 40)).let { assertTrue("once per occurrence", it.recorded.isEmpty()); it.state }
     assertEquals(1, state.count("work", "eventDidReachThreshold"))
@@ -491,7 +494,7 @@ class MonitoringStateTest {
   fun `a weekly interval and an allowlist in the state`() {
     val weekend = config("weekend", components(22, weekday = 6), components(6, weekday = 1), selectionId = "APPS", mode = "allowlist")
     val state = MonitoringState().start(weekend, date(2026, 10, 31, 12, 0)).let { assertEquals(listOf("intervalDidStart"), it.types()); it.state }
-    assertEquals(listOf(MonitoringBlock("weekend", "APPS", "allowlist")), state.activeBlocks())
+    assertEquals(listOf(MonitoringBlock("weekend", "APPS", "allowlist")), state.blocks())
     assertEquals(date(2026, 11, 1, 6, 0), state.nextWakeMs(date(2026, 10, 31, 12, 0), utc))
     val ended = state.advance(date(2026, 11, 1, 6, 0)).let { assertEquals(listOf("intervalDidEnd"), it.types()); it.state }
     assertEquals(date(2026, 11, 6, 22, 0), ended.nextWakeMs(date(2026, 11, 1, 6, 0), utc))
@@ -528,5 +531,117 @@ class MonitoringStateTest {
     assertEquals(listOf("work"), cleaned.recorded.map { it.activityName })
     assertEquals("intervalDidEnd", cleaned.recorded.single().eventType)
     assertFalse("work" in cleaned.state.intervals)
+  }
+
+  @Test
+  fun `unblockAll lifts the schedule and its fired thresholds until the next start, and monitoring goes on (iOS liftActiveIntervals)`() {
+    val armed = config(events = listOf(threshold(seconds = 600)))
+    var state = MonitoringState().start(armed, at(10)).state
+    state = state.advance(at(10), usage = listOf(resumed("com.insta", at(10)))).state.advance(at(10, 10)).let { assertEquals(listOf("eventDidReachThreshold:limit"), it.types()); it.state }
+    assertEquals(2, state.blocks().size)
+
+    val lifted = state.lift()
+    assertTrue("the schedule's and the fired threshold's shields drop", lifted.activeBlocks().isEmpty())
+    assertEquals("the module changed the document", state.revision + 1, lifted.revision)
+    assertEquals("the interval stays in progress", listOf("work"), lifted.intervals.keys.toList())
+    assertSame("nothing more to lift: the same value", lifted, lifted.lift())
+    assertEquals("lifted flags round-trip", lifted, lifted.persisted())
+    assertTrue("the engine's next pass records nothing and shields nothing", lifted.advance(at(10, 20)).let { it.recorded.isEmpty() && it.state.activeBlocks().isEmpty() })
+    assertEquals("the end is still recorded, once", listOf("intervalDidEnd"), lifted.advance(at(17)).types())
+    assertEquals("the next occurrence shields again", listOf(MonitoringBlock("work", "APPS", "blocklist")), lifted.advance(at(17)).state.advance(at(9, day = 29)).state.blocks())
+
+    // A threshold that fires AFTER the lift shields again (iOS appends its selection afresh).
+    val two = config(events = listOf(threshold(seconds = 600), threshold("second", "APPS", 1200)))
+    var s2 = MonitoringState().start(two, at(10)).state.advance(at(10), usage = listOf(resumed("com.insta", at(10)), resumed("com.a", at(10)))).state
+    s2 = s2.advance(at(10, 10)).let { assertEquals(listOf("eventDidReachThreshold:limit"), it.types()); it.state }.lift()
+    assertTrue(s2.activeBlocks().isEmpty())
+    s2 = s2.advance(at(10, 20)).let { assertEquals(listOf("eventDidReachThreshold:second"), it.types()); it.state }
+    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist", "second")), s2.blocks())
+
+    // A re-registration inside the same occurrence un-lifts (iOS intervalPlan sets the marker afresh, not lifted).
+    val again = lifted.start(armed, at(10, 30))
+    assertTrue(again.recorded.isEmpty())
+    assertFalse(again.state.intervals.getValue("work").lifted)
+    assertEquals(listOf(MonitoringBlock("work", "APPS", "blocklist")), again.state.blocks())
+    // stopMonitoring on a lifted interval records its end like any other.
+    assertEquals(listOf("intervalDidEnd"), lifted.stop("work", at(11)).types())
+  }
+
+  @Test
+  fun `two stream events at the same instant are both fed (found wiring step 4)`() {
+    // paused(A) and resumed(B) share a millisecond routinely; the second must not read as "fed already".
+    val armed = config(events = listOf(threshold("a", "SOCIAL", 300), threshold("b", "APPS", 300)))
+    val state = MonitoringState().start(armed, at(10)).state
+      .advance(at(10, 0, 1), usage = listOf(resumed("com.insta", at(10)), resumed("com.a", at(10)))).state
+    assertEquals(setOf("com.insta", "com.a"), state.foreground.resumedPackages)
+    val fired = state.advance(at(10, 5))
+    assertEquals(listOf("eventDidReachThreshold:a", "eventDidReachThreshold:b"), fired.types())
+    // A re-query from the persisted cursor still feeds nothing twice.
+    assertTrue(fired.state.advance(at(10, 5, 1), usage = listOf(resumed("com.insta", at(10)), resumed("com.a", at(10)))).recorded.isEmpty())
+  }
+
+  @Test
+  fun `seeding a never-fed tracker rebuilds the resumed set without counting the lookback twice`() {
+    // The module armed a threshold at 10:00 against a tracker that knew nothing (cursor null): history up to 10:00, no open span.
+    val armed = config(events = listOf(threshold(seconds = 600, past = true)))
+    val started = MonitoringState().start(armed, at(10))
+    assertEquals(listOf(HistoryRequest("work", "limit", "SOCIAL", at(9), at(10))), started.historyRequests)
+    // The engine comes up at 10:00:05 and reads an hour back: insta resumed at 09:55 and is still on screen.
+    val lookback = listOf(resumed("com.insta", at(9, 55)))
+    val seeded = started.state.seed(lookback, at(10, 0, 5), selections)
+    assertEquals("the cursor is the seed's upto", at(10, 0, 5), seeded.foreground.cursorMs)
+    assertEquals(setOf("com.insta"), seeded.foreground.resumedPackages)
+    val progress = seeded.intervals.getValue("work").thresholds.getValue("limit")
+    assertEquals("the open span starts at the cursor, the history request ends there", at(10, 0, 5), progress.activeSinceMs)
+    assertEquals(listOf(HistoryRequest("work", "limit", "SOCIAL", at(9), at(10, 0, 5))), seeded.pendingHistoryRequests())
+    assertSame("a tracker with a cursor is left alone", seeded, seeded.seed(lookback, at(10, 1), selections))
+    // The history answer, from the same window: 5 min 5 s of insta inside [09:00, 10:00:05).
+    val filled = seeded.backfill(seeded.pendingHistoryRequests().single(), lookback, at(10, 0, 5), selections).state
+    assertEquals(5 * MINUTE + 5000, filled.intervals.getValue("work").thresholds.getValue("limit").accumulatedMs)
+    // The stream from the cursor: insta leaves at 10:05:00 — 4 min 55 s more, exactly 10 minutes in all, counted once: the threshold fires.
+    val fed = filled.advance(at(10, 5), usage = listOf(resumed("com.insta", at(9, 55)), paused("com.insta", at(10, 5))))
+    assertEquals(10 * MINUTE, fed.state.intervals.getValue("work").thresholds.getValue("limit").accumulatedMs)
+    assertEquals(listOf("eventDidReachThreshold:limit"), fed.types())
+    // Feeding the lookback through `advance` instead would have opened the span at 09:55 on top of the history: the defect `seed` avoids.
+    val doubled = started.state.backfill(started.historyRequests.single(), lookback, at(10), selections).state.advance(at(10, 0, 5), usage = lookback)
+    assertTrue(doubled.state.intervals.getValue("work").thresholds.getValue("limit").projectedMs(at(10, 0, 5)) > 5 * MINUTE + 5000)
+  }
+
+  @Test
+  fun `nothing monitored - the cursor does not move and the tracker forgets, so the next registration seeds (review 1)`() {
+    // The engine persisted insta as resumed; the activity is stopped; the user leaves insta while nothing reads the stream.
+    val fed = MonitoringState().start(config(), at(10)).state.advance(at(10, 1), usage = listOf(resumed("com.insta", at(10)))).state
+    assertEquals(setOf("com.insta"), fed.foreground.resumedPackages)
+    val stopped = fed.stop("work", at(10, 2)).state
+    assertEquals("the last stop forgets the resumed set", UsageForegroundState(), stopped.foreground)
+    val idle = stopped.advance(at(10, 30)).state
+    assertEquals("an idle pass moves nothing", UsageForegroundState(), idle.foreground)
+    // 10:40: a threshold on insta is armed — against a tracker that knows nothing (history up to now, no open span), not a stale "insta is open".
+    val armed = idle.start(config(events = listOf(threshold(seconds = 600, past = true))), at(10, 40))
+    val progress = armed.state.intervals.getValue("work").thresholds.getValue("limit")
+    assertNull(progress.activeSinceMs)
+    assertEquals(listOf(HistoryRequest("work", "limit", "SOCIAL", at(9), at(10, 40))), armed.historyRequests)
+    // A stale cursor with insta still "resumed" would have counted 20 minutes nobody spent in insta.
+    assertTrue(armed.state.advance(at(11)).recorded.isEmpty())
+    // An interval left behind by a dropped activity still ends (the cursor rule applies only when nothing is in progress).
+    val orphan = fed.copy(activities = emptyMap()).advance(at(10, 5))
+    assertEquals(listOf("intervalDidEnd"), orphan.types())
+  }
+
+  @Test
+  fun `schedulesAt evaluates the boundaries at now but leaves the thresholds as persisted (review 5)`() {
+    val armed = config(events = listOf(threshold(seconds = 600)))
+    // The engine persisted an open insta span at 10:00 and died; the module asks at 10:20.
+    val persisted = MonitoringState().start(armed, at(10)).state.advance(at(10, 0, 1), usage = listOf(resumed("com.insta", at(10)))).state
+    val view = persisted.schedulesAt(at(10, 20), utc, selections)
+    assertEquals("the schedule block is in force", listOf(MonitoringBlock("work", "APPS", "blocklist")), view.blocks())
+    assertFalse("the open span is not projected: the threshold the engine never fired does not fire here", view.intervals.getValue("work").thresholds.getValue("limit").fired)
+    assertEquals("the stream position is untouched", persisted.foreground, view.foreground)
+    // A boundary the engine has not recorded yet is still evaluated: outside at 17:30, the block is gone; inside tomorrow at 09:30, it is back.
+    assertTrue(persisted.schedulesAt(at(17, 30), utc, selections).activeBlocks().isEmpty())
+    assertEquals(1, persisted.schedulesAt(at(9, 30, day = 29), utc, selections).activeBlocks().size)
+    // A threshold the engine did fire stays fired in the view.
+    val fired = persisted.advance(at(10, 10)).let { assertEquals(listOf("eventDidReachThreshold:limit"), it.types()); it.state }
+    assertEquals(2, fired.schedulesAt(at(10, 11), utc, selections).activeBlocks().size)
   }
 }

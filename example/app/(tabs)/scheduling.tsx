@@ -51,12 +51,14 @@ function TimePicker({ label, hour, minute, onChangeHour, onChangeMinute }: TimeP
         <TextInput
           style={styles.timeInput}
           value={hour.toString().padStart(2, "0")}
+          // The last two digits typed win, so a value can be replaced by typing
+          // over it (a keyboard, or an automation driver that appends).
           onChangeText={(text) => {
-            const num = parseInt(text, 10);
+            const num = parseInt(text.replace(/\D/g, "").slice(-2), 10);
             if (!isNaN(num) && num >= 0 && num <= 23) onChangeHour(num);
           }}
           keyboardType="number-pad"
-          maxLength={2}
+          selectTextOnFocus
           placeholder="HH"
         />
         <Text style={styles.timeSeparator}>:</Text>
@@ -64,11 +66,11 @@ function TimePicker({ label, hour, minute, onChangeHour, onChangeMinute }: TimeP
           style={styles.timeInput}
           value={minute.toString().padStart(2, "0")}
           onChangeText={(text) => {
-            const num = parseInt(text, 10);
+            const num = parseInt(text.replace(/\D/g, "").slice(-2), 10);
             if (!isNaN(num) && num >= 0 && num <= 59) onChangeMinute(num);
           }}
           keyboardType="number-pad"
-          maxLength={2}
+          selectTextOnFocus
           placeholder="MM"
         />
       </View>
@@ -84,6 +86,17 @@ export default function SchedulingScreen() {
   const [endHour, setEndHour] = useState(17);
   const [endMinute, setEndMinute] = useState(0);
   const [repeats, setRepeats] = useState(true);
+  // Optional: weekdays (1 = Sunday … 7 = Saturday, comma-separated) and one
+  // usage threshold over the same selection, with blockOnThreshold.
+  // The selection the schedule shields (a stored selection id) and whether it
+  // shields at all: off, the activity only meters its threshold.
+  const [selectionId, setSelectionId] = useState(SELECTION_ID);
+  const [blocksSelection, setBlocksSelection] = useState(true);
+  const [weekdaysText, setWeekdaysText] = useState("");
+  const [thresholdText, setThresholdText] = useState("");
+  const [blockOnThreshold, setBlockOnThreshold] = useState(true);
+  // Shield config scope: the default (manual block, fallback) or this activity's.
+  const [shieldForActivity, setShieldForActivity] = useState(false);
 
   // Selection metadata (loaded from native store)
   const [totalSelected, setTotalSelected] = useState(0);
@@ -143,6 +156,11 @@ export default function SchedulingScreen() {
       return;
     }
 
+    const weekdays = weekdaysText
+      .split(",")
+      .map((part) => parseInt(part.trim(), 10))
+      .filter((day) => !isNaN(day));
+    const thresholdSeconds = parseInt(thresholdText, 10);
     const config: MonitoringConfiguration = {
       activityName,
       schedule: {
@@ -150,7 +168,21 @@ export default function SchedulingScreen() {
         intervalEnd: { hour: endHour, minute: endMinute },
         repeats,
       },
-      selectionId: SELECTION_ID,
+      ...(blocksSelection ? { selectionId } : {}),
+      ...(weekdays.length > 0 ? { weekdays } : {}),
+      ...(!isNaN(thresholdSeconds) && thresholdSeconds > 0
+        ? {
+            events: [
+              {
+                eventName: "usageLimit",
+                selectionId,
+                threshold: thresholdSeconds,
+                includesPastActivity: false,
+                blockOnThreshold,
+              },
+            ],
+          }
+        : {}),
     };
 
     try {
@@ -196,8 +228,13 @@ export default function SchedulingScreen() {
       secondaryButton: { text: "Snooze" },
     };
 
-    ExpoScreenTime.setShieldConfig(config);
-    Alert.alert("Success", "Shield configuration applied!\nBlock an app to see the custom shield.");
+    if (shieldForActivity) {
+      ExpoScreenTime.setShieldConfigForActivity(activityName, config);
+      Alert.alert("Success", `Shield configuration applied to "${activityName}"!\nIts schedule and thresholds draw this shield; the manual block keeps the default.`);
+    } else {
+      ExpoScreenTime.setShieldConfig(config);
+      Alert.alert("Success", "Shield configuration applied!\nBlock an app to see the custom shield.");
+    }
   };
 
   const toShieldAction = (choice: ShieldActionChoice): ShieldAction => {
@@ -281,6 +318,47 @@ export default function SchedulingScreen() {
         <View style={styles.switchRow}>
           <Text style={styles.inputLabel}>Repeat Daily</Text>
           <Switch value={repeats} onValueChange={setRepeats} />
+        </View>
+        <Separator />
+        <View style={styles.inputRow}>
+          <Text style={styles.inputLabel}>Selection</Text>
+          <TextInput
+            style={styles.textInput}
+            value={selectionId}
+            onChangeText={setSelectionId}
+            placeholder={SELECTION_ID}
+            autoCapitalize="none"
+          />
+        </View>
+        <View style={styles.switchRow}>
+          <Text style={styles.inputLabel}>Block during interval</Text>
+          <Switch value={blocksSelection} onValueChange={setBlocksSelection} />
+        </View>
+        <Separator />
+        <View style={styles.inputRow}>
+          <Text style={styles.inputLabel}>Weekdays (1=Sun … 7=Sat)</Text>
+          <TextInput
+            style={styles.textInput}
+            value={weekdaysText}
+            onChangeText={setWeekdaysText}
+            placeholder="every day"
+            keyboardType="numbers-and-punctuation"
+          />
+        </View>
+        <Separator />
+        <View style={styles.inputRow}>
+          <Text style={styles.inputLabel}>Usage threshold (s)</Text>
+          <TextInput
+            style={styles.textInput}
+            value={thresholdText}
+            onChangeText={setThresholdText}
+            placeholder="none"
+            keyboardType="number-pad"
+          />
+        </View>
+        <View style={styles.switchRow}>
+          <Text style={styles.inputLabel}>Block on threshold</Text>
+          <Switch value={blockOnThreshold} onValueChange={setBlockOnThreshold} />
         </View>
       </Card>
 
@@ -384,10 +462,15 @@ export default function SchedulingScreen() {
           />
           <View style={[styles.colorPreview, { backgroundColor: shieldButtonColor }]} />
         </View>
+        <Separator />
+        <View style={styles.switchRow}>
+          <Text style={styles.inputLabel}>For this activity only</Text>
+          <Switch value={shieldForActivity} onValueChange={setShieldForActivity} />
+        </View>
       </Card>
 
       <ActionButton
-        title="Apply Shield Configuration"
+        title={shieldForActivity ? `Apply Shield Configuration to "${activityName}"` : "Apply Shield Configuration"}
         icon="color-palette"
         color={colors.warning}
         onPress={handleApplyShieldConfig}

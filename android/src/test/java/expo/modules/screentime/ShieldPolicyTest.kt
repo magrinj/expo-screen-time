@@ -2,6 +2,7 @@ package expo.modules.screentime
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,7 +21,7 @@ class ShieldPolicyTest {
 
   @Test
   fun `a blocklist shields the selection's apps and nothing else`() {
-    val block = ActiveBlock(BlockMode.blocklist, setOf("com.chrome"))
+    val block = listOf(BlockSource(BlockSourceKind.Manual, 0, setOf("com.chrome"), BlockMode.blocklist))
     assertEquals(setOf("com.chrome"), ShieldPolicy.targets(setOf("com.chrome", "com.clock"), block, launchable, exempt))
     assertTrue(ShieldPolicy.targets(setOf("com.clock"), block, launchable, exempt).isEmpty())
     // Not launchable, still in the selection (an edited selection): shielded.
@@ -29,7 +30,7 @@ class ShieldPolicyTest {
 
   @Test
   fun `an allowlist shields every launchable app except the selection's`() {
-    val block = ActiveBlock(BlockMode.allowlist, setOf("com.clock"))
+    val block = listOf(BlockSource(BlockSourceKind.Manual, 0, setOf("com.clock"), BlockMode.allowlist))
     assertEquals(setOf("com.chrome", "com.maps"), ShieldPolicy.targets(setOf("com.chrome", "com.clock", "com.maps"), block, launchable, exempt))
     assertFalse(ShieldPolicy.shields("com.clock", block, launchable, exempt))
     // Apps without a launcher entry (permission dialogs, the share sheet) are reached from an allowed app: never shielded.
@@ -38,8 +39,8 @@ class ShieldPolicyTest {
 
   @Test
   fun `exemptions win over both modes`() {
-    val allowlist = ActiveBlock(BlockMode.allowlist, setOf("com.clock"))
-    val blocklist = ActiveBlock(BlockMode.blocklist, setOf("com.host", "com.launcher", "com.settings", "com.dialer"))
+    val allowlist = listOf(BlockSource(BlockSourceKind.Manual, 0, setOf("com.clock"), BlockMode.allowlist))
+    val blocklist = listOf(BlockSource(BlockSourceKind.Manual, 0, setOf("com.host", "com.launcher", "com.settings", "com.dialer"), BlockMode.blocklist))
     for (pkg in listOf("com.host", "com.launcher", "com.android.systemui", "com.dialer", "com.emergency", "com.ime", "com.settings")) {
       assertFalse(pkg, ShieldPolicy.shields(pkg, allowlist, launchable, exempt))
       assertFalse(pkg, ShieldPolicy.shields(pkg, blocklist, launchable, exempt))
@@ -50,17 +51,31 @@ class ShieldPolicyTest {
   }
 
   @Test
-  fun `no block shields nothing`() {
-    assertTrue(ShieldPolicy.targets(setOf("com.chrome"), null, launchable, exempt).isEmpty())
-    assertFalse(ShieldPolicy.shields("com.chrome", null, launchable, exempt))
+  fun `no source shields nothing`() {
+    assertTrue(ShieldPolicy.targets(setOf("com.chrome"), emptyList(), launchable, exempt).isEmpty())
+    assertFalse(ShieldPolicy.shields("com.chrome", emptyList(), launchable, exempt))
   }
 
   @Test
-  fun `isBlocked counts a block that shields something`() {
-    assertTrue(ActiveBlock(BlockMode.blocklist, setOf("com.chrome")).shieldsSomething)
+  fun `isBlocked counts a source that shields something`() {
+    assertTrue(BlockSource(BlockSourceKind.Manual, 0, setOf("com.chrome")).shieldsSomething)
     // A blocklist over an emptied selection shields nothing (iOS omits such a source).
-    assertFalse(ActiveBlock(BlockMode.blocklist, emptySet()).shieldsSomething)
+    assertFalse(BlockSource(BlockSourceKind.Manual, 0, emptySet()).shieldsSomething)
     // An allowlist always does: every other app, even once its selection was emptied.
-    assertTrue(ActiveBlock(BlockMode.allowlist, emptySet()).shieldsSomething)
+    assertTrue(BlockSource(BlockSourceKind.Manual, 0, emptySet(), BlockMode.allowlist).shieldsSomething)
+  }
+
+  @Test
+  fun `the union of several sources - shielded if any source shields it, the owner's config applies`() {
+    val manual = BlockSource(BlockSourceKind.Manual, 0, setOf("com.chrome"))
+    val focus = BlockSource(BlockSourceKind.Schedule("focus"), 2_000, setOf("com.clock", "com.maps"), BlockMode.allowlist)
+    val sources = listOf(manual, focus)
+    // Chrome: the manual blocklist and the allowlist; Maps and Clock: allowed and not listed; anything else launchable: the allowlist.
+    assertEquals(setOf("com.chrome"), ShieldPolicy.targets(setOf("com.chrome", "com.clock", "com.maps"), sources, launchable, exempt))
+    assertTrue(ShieldPolicy.shields("com.chrome", listOf(focus, manual), launchable, exempt))
+    assertFalse("an app without a launcher entry is reached from an allowed app", ShieldPolicy.shields("com.permissioncontroller", sources, launchable, exempt))
+    assertEquals("a schedule owns an app it and the manual block both shield", BlockSourceKind.Schedule("focus"), ShieldPolicy.owner("com.chrome", listOf(focus, manual))?.kind)
+    assertEquals(BlockSourceKind.Manual, ShieldPolicy.owner("com.chrome", listOf(manual))?.kind)
+    assertNull("nothing covers an allowed app", ShieldPolicy.owner("com.clock", sources))
   }
 }

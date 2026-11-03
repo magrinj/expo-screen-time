@@ -205,3 +205,70 @@ await ExpoScreenTime.clearMonitorEvents();            // all
 Monitor events fire when the device is first used after the schedule time — not
 exactly at the scheduled time.
 :::
+
+## Android {#android}
+
+**Preview, not yet enabled:** monitoring is implemented on Android and
+exercised by the behavioural suite (C06, C07), but ships behind the same
+internal build switch as [blocking](./blocking.md#android), with
+`getCapabilities().blocking` still `"none"` and every function on this page
+failing with `UNSUPPORTED` in a published build (see
+[platform support](../platform-support.md)). It documents what an app written
+against the capability will get.
+
+- **The same API, the same codes.** `startMonitoring` validates in the iOS
+  order with the iOS codes: `INVALID_CONFIG` (no `activityName`, a reserved
+  name, no `schedule`, an allowlist without `selectionId` or over a selection
+  that is not apps only), `INVALID_DATE_COMPONENTS`, `INTERVAL_TOO_SHORT`
+  (under 15 minutes), `INTERVAL_TOO_LONG` (over a week),
+  `EXCESSIVE_ACTIVITIES` (a 20th logical activity; the contract's limit is
+  19 on both platforms). `stopMonitoring`, `stopAllMonitoring`,
+  `getMonitoredActivities`, `getMonitorEvents`, `clearMonitorEvents` and the
+  live `onMonitorEvent` stream (`useMonitorEvents`) behave as on iOS, down
+  to `getMonitorEvents` ordering: one activity oldest first, all activities
+  newest first.
+- **Schedules are a function of time.** Android has no DeviceActivity: the
+  engine evaluates `block = f(now, schedules)` at every wake and every
+  foreground change, so a schedule starting *now* shields at once and
+  records its `intervalDidStart` synchronously (as iOS does since fix 12),
+  midnight wrap and `weekdays` work the same, and `repeats: false` covers
+  the one occurrence in progress or next. Boundaries that fall while the
+  screen is off are observed at an **inexact alarm** (no exact-alarm
+  permission): an `intervalDidEnd` due at 17:00 may be recorded later —
+  within the window Android gives inexact alarms, up to an hour for a
+  boundary a day away, and at the next maintenance window in Doze — or at
+  the next screen-on, whichever comes first; iOS records it at the first
+  device use after the boundary. The shields themselves are exact at the
+  moment of use: a boundary is also evaluated the moment the screen comes
+  on and on every foreground change. A device off for days records nothing for the occurrences
+  it missed, like iOS.
+- **Events are exactly once.** Every event is recorded in the same store
+  write as the state that justifies it (the interval marker, the fired
+  threshold), under a cross-process lock, so a process killed between a
+  transition and its record, or the app and the engine observing the same
+  boundary, never duplicate an event; ids are sequence numbers, unique per
+  install.
+- **Usage thresholds are measured from the UsageStats event stream**, exact
+  to the tick — no 30 s ladder: the selection counts while at least one of
+  its apps is in the foreground, an instant counts once however many of
+  them share the screen, and nothing counts while the screen is off.
+  `includesPastActivity` reads the OS's history for the part of the interval
+  before the registration (needs `usageAccess`; the OS keeps about 10 days).
+  `blockOnThreshold` shields the **event's** selection from the fire until
+  the interval ends, and its shield shows the threshold's configuration
+  (precedence: threshold, then the latest schedule, then the manual block —
+  the iOS rule).
+- **`unblockAll`** lifts every active block — the manual block, the
+  schedules in progress and their fired thresholds — and monitoring keeps
+  running: the interval's end is still recorded and the schedule shields
+  again at its next start, as on iOS. `stopAllMonitoring` leaves the manual
+  block alone. `isBlocked()` is `true` during a schedule-driven block.
+- **The engine runs while anything is monitored** (its persistent notice
+  stays), polling the foreground only while the screen is on and a block or
+  a threshold needs it. A monitored activity whose interval is not in
+  progress costs one inexact alarm, nothing else.
+- **A `weekday` on one bound only** rejects `INVALID_DATE_COMPONENTS` (no
+  platform defines that interval; iOS hands it to the system, which declines
+  it). The weekly shape (`weekday` on both bounds, Friday 22:00 to Sunday
+  06:00) is evaluated by the engine.
+

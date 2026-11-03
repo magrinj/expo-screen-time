@@ -1,53 +1,50 @@
 package expo.modules.screentime
 
 /**
- * A block as the engine applies it: the mode and the selection's apps,
- * resolved from the store at the moment of the decision (the selection is
- * read live, as iOS re-projects the stored selection).
- */
-internal data class ActiveBlock(val mode: BlockMode, val applications: Set<String>) {
-  /**
-   * Whether this block shields anything at all: what `isBlocked()` reports.
-   * A blocklist over an emptied or deleted selection shields nothing, so it
-   * does not count (iOS: `BlockComposition.sources` omits a source with
-   * nothing to shield, and `isBlocked` reads the stores). An allowlist
-   * always shields: "every other app", even when the selection was emptied
-   * after the fact (every app, fail closed).
-   */
-  val shieldsSomething: Boolean
-    get() = mode == BlockMode.allowlist || applications.isNotEmpty()
-}
-
-/**
  * The decision the engine takes on every foreground change, as a pure
  * function: which of the apps on screen must be shielded, given the block
- * in force, the launchable apps and the exemptions. No Android imports, so
- * the policy is unit-tested on the JVM (`ShieldPolicyTest`).
+ * sources in force ([BlockComposition.sources]), the launchable apps and
+ * the exemptions. No Android imports, so the policy is unit-tested on the
+ * JVM (`ShieldPolicyTest`).
  *
- * - **blocklist:** the selection's apps.
+ * - **union:** a package is shielded when ANY source covers it
+ *   ([BlockSource.covers]): a blocklist listing it, or an allowlist not
+ *   allowing it.
+ * - **blocklist:** the source's apps.
  * - **allowlist:** every *launchable* app (`MAIN`/`LAUNCHER`, the set the
- *   picker offers) except the selection's apps. Apps without a launcher
+ *   picker offers) except the source's apps. Apps without a launcher
  *   entry are never shielded by an allowlist: they are reached from an
  *   allowed app (the permission controller's dialogs, the share sheet, the
  *   document picker, the package installer) and shielding them would break
  *   the allowed app, which is the opposite of what an allowlist means.
- * - **exemptions** win over both: the apps the user must always reach
- *   ([SystemExemptions]).
+ * - **exemptions** win over everything: the apps the user must always
+ *   reach ([SystemExemptions]).
  */
 internal object ShieldPolicy {
   /** The subset of [foreground] to shield; empty when nothing is. */
-  fun targets(foreground: Set<String>, block: ActiveBlock?, launchable: Set<String>, exempt: Set<String>): Set<String> {
-    if (block == null) return emptySet()
-    return foreground.filterTo(LinkedHashSet()) { shields(it, block, launchable, exempt) }
+  fun targets(foreground: Set<String>, sources: List<BlockSource>, launchable: Set<String>, exempt: Set<String>): Set<String> {
+    if (sources.isEmpty()) return emptySet()
+    return foreground.filterTo(LinkedHashSet()) { shields(it, sources, launchable, exempt) }
   }
 
-  fun shields(packageName: String, block: ActiveBlock?, launchable: Set<String>, exempt: Set<String>): Boolean {
-    if (block == null || packageName in exempt) return false
-    return when (block.mode) {
-      BlockMode.blocklist -> packageName in block.applications
-      BlockMode.allowlist -> packageName in launchable && packageName !in block.applications
-    }
+  fun shields(packageName: String, sources: List<BlockSource>, launchable: Set<String>, exempt: Set<String>): Boolean {
+    if (packageName in exempt) return false
+    return sources.any { shields(packageName, it, launchable) }
   }
+
+  private fun shields(packageName: String, source: BlockSource, launchable: Set<String>): Boolean = when (source.mode) {
+    BlockMode.blocklist -> source.covers(packageName)
+    BlockMode.allowlist -> packageName in launchable && source.covers(packageName)
+  }
+
+  /**
+   * The source that owns the shield drawn over [packageName] — its
+   * configuration applies ([BlockComposition.owner]); null for the default
+   * configuration. The launchable rule above is the engine's own refinement
+   * of the allowlist: a target it shields is covered by the composition's
+   * rule too, so the owner is resolved with the iOS rule alone.
+   */
+  fun owner(packageName: String, sources: List<BlockSource>): BlockSource? = BlockComposition.owner(packageName, sources)
 
   /**
    * The apps the engine must always leave alone, from the identities the OS

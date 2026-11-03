@@ -13,8 +13,10 @@ import expo.modules.kotlin.modules.ModuleDefinitionBuilder
  * Step 2: the selection store, the handles, the picker and the token label.
  * Step 3: the manual block, the shield and its configuration, behind the
  * internal preview switch (`BuildConfig.BLOCKING_PREVIEW`): off, the build
- * behaves exactly as before the step. Every function not yet implemented
- * fails with a coded `UNSUPPORTED` error.
+ * behaves exactly as before the step. Step 4: monitoring (schedules,
+ * thresholds, the event history and the live events), under the same
+ * switch. Every function not yet implemented fails with a coded
+ * `UNSUPPORTED` error.
  */
 class ExpoScreenTimeModule : Module() {
   private val permissionRequester by lazy { AndroidPermissionRequester(appContext) }
@@ -23,11 +25,13 @@ class ExpoScreenTimeModule : Module() {
   private val store by lazy { StateStore(context) }
   private val selections by lazy { SelectionStore(store) }
   private val blocks by lazy { BlockController(context, store, selections) }
+  private val monitoring by lazy { MonitoringController(context, store, selections) { payload -> sendEvent("onMonitorEvent", payload) } }
 
   override fun definition() = ModuleDefinition {
     Name("ExpoScreenTime")
 
-    // Declared for parity with iOS; never emitted until monitoring exists.
+    // Emitted by the monitoring layer under the preview switch (below);
+    // declared either way, for parity with iOS.
     Events("onMonitorEvent")
 
     OnCreate {
@@ -43,6 +47,7 @@ class ExpoScreenTimeModule : Module() {
 
     OnDestroy {
       permissionRequester.dispose()
+      if (BuildConfig.BLOCKING_PREVIEW) monitoring.stopObserving()
     }
 
     NATIVE_FUNCTIONS.filterNot { it.name in IMPLEMENTED }.forEach { unsupported(it) }
@@ -125,6 +130,8 @@ class ExpoScreenTimeModule : Module() {
       // engine process is told to look again.
       Function("blockSelection") { selectionId: String, options: Map<String, Any?>? -> blocks.blockSelection(selectionId, options) }
 
+      // Lifts every active block — manual, schedule, threshold — as iOS does;
+      // monitoring keeps running (BlockController.unblockAll).
       Function("unblockAll") { blocks.unblockAll() }
 
       Function("isBlocked") { blocks.isBlocked() }
@@ -137,18 +144,51 @@ class ExpoScreenTimeModule : Module() {
 
       Function("clearShieldConfig") { blocks.clearShieldConfig() }
 
-      // Honest empties: nothing can be monitored yet, no shield
-      // interaction is recorded and no unlock can be granted yet,
-      // so stopping, clearing and draining have nothing to do, nothing is
-      // unlocked and no budget remains. The suite's reset() calls the first
-      // three; a screen that sees `blocking !== "none"` reads the last two
-      // (the example's Blocking tab crashed on UNSUPPORTED there).
+      // MARK: - Monitoring
+
+      // Same validation order, codes and semantics as the Swift
+      // `startMonitoring` (MonitoringValidation); review R7: inside the
+      // interval the block applies at once and one intervalDidStart is
+      // recorded. The engine process is told to look again.
+      AsyncFunction("startMonitoring") { config: Map<String, Any?>, promise: Promise ->
+        monitoring.start(config)
+        promise.resolve(null)
+      }
+
+      AsyncFunction("stopMonitoring") { activityName: String, promise: Promise ->
+        monitoring.stop(activityName)
+        promise.resolve(null)
+      }
+
+      AsyncFunction("stopAllMonitoring") { promise: Promise ->
+        monitoring.stopAll()
+        promise.resolve(null)
+      }
+
+      AsyncFunction("getMonitoredActivities") { monitoring.monitoredActivities() }
+
+      // MARK: - Event History
+
+      AsyncFunction("getMonitorEvents") { activityName: String?, limit: Int? -> monitoring.events(activityName, limit) }
+
+      AsyncFunction("clearMonitorEvents") { activityName: String?, promise: Promise ->
+        monitoring.clearEvents(activityName)
+        promise.resolve(null)
+      }
+
+      // MARK: - Real-time Event Listening
+
+      OnStartObserving("onMonitorEvent") { monitoring.startObserving() }
+
+      OnStopObserving("onMonitorEvent") { monitoring.stopObserving() }
+
+      // Honest empties: no shield interaction is recorded and no unlock can
+      // be granted yet, so draining has nothing to return, nothing
+      // is unlocked and no budget remains. The suite's reset() drains; a
+      // screen that sees `blocking !== "none"` reads the last two (the
+      // example's Blocking tab crashed on UNSUPPORTED there).
       // `temporaryUnlock` and `relock` keep rejecting UNSUPPORTED: granting
       // or restoring is not something that can be honestly no-op'd.
-      AsyncFunction("stopAllMonitoring") { promise: Promise -> promise.resolve(null) }
-
-      AsyncFunction("clearMonitorEvents") { _: Any?, promise: Promise -> promise.resolve(null) }
-
       Function("drainShieldInteractions") { emptyList<Map<String, Any?>>() }
 
       Function("isTemporarilyUnlocked") { false }

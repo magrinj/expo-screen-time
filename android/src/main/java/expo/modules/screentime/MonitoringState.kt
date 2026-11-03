@@ -1,5 +1,6 @@
 package expo.modules.screentime
 
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.TimeZone
 
@@ -79,6 +80,20 @@ internal data class ActiveInterval(
   val warningIssued: Boolean = false,
   /** By event name. */
   val thresholds: Map<String, ThresholdProgress> = emptyMap(),
+  /**
+   * `unblockAll` lifted the schedule's shields: they come back at the next
+   * interval start (the iOS `ActiveInterval.lifted` marker). The interval
+   * stays in progress — its end is still recorded — and a re-registration
+   * inside the same occurrence un-lifts it (iOS `intervalPlan` sets the
+   * marker afresh, "not lifted").
+   */
+  val lifted: Boolean = false,
+  /**
+   * The `blockOnThreshold` events whose shields `unblockAll` lifted (iOS
+   * drops the fired threshold selections). A threshold firing afterwards in
+   * the same occurrence shields again, as on iOS.
+   */
+  val liftedThresholds: Set<String> = emptySet(),
 ) {
   /**
    * Whether this marker is the occurrence `current` describes: the bounds
@@ -107,12 +122,17 @@ internal data class ActiveInterval(
     },
   )
 
+  /** `unblockAll`: the schedule's shields and every fired threshold's are lifted until the next interval start. */
+  fun lift(): ActiveInterval = copy(lifted = true, liftedThresholds = liftedThresholds + thresholds.filterValues { it.fired }.keys)
+
   fun toJson(): JSONObject = JSONObject()
     .put(STARTED_AT, startedAtMs)
     .put(OCCURRENCE_START, occurrence.startMs)
     .put(OCCURRENCE_END, occurrence.endMs)
     .put(WARNING_ISSUED, warningIssued)
     .put(THRESHOLDS, JSONObject().also { json -> thresholds.forEach { (name, progress) -> json.put(name, progress.toJson()) } })
+    .put(LIFTED, lifted)
+    .put(LIFTED_THRESHOLDS, JSONArray(liftedThresholds.sorted()))
 
   companion object {
     private const val STARTED_AT = "startedAt"
@@ -120,6 +140,8 @@ internal data class ActiveInterval(
     private const val OCCURRENCE_END = "occurrenceEnd"
     private const val WARNING_ISSUED = "warningIssued"
     private const val THRESHOLDS = "thresholds"
+    private const val LIFTED = "lifted"
+    private const val LIFTED_THRESHOLDS = "liftedThresholds"
 
     fun fromJson(json: JSONObject): ActiveInterval? {
       val startedAt = ConfigValues.long(json.opt(STARTED_AT)) ?: return null
@@ -128,7 +150,9 @@ internal data class ActiveInterval(
       val thresholds = LinkedHashMap<String, ThresholdProgress>()
       val json2 = json.optJSONObject(THRESHOLDS)
       if (json2 != null) for (name in json2.keys()) json2.optJSONObject(name)?.let(ThresholdProgress::fromJson)?.let { thresholds[name] = it }
-      return ActiveInterval(startedAt, Occurrence(start, end), json.optBoolean(WARNING_ISSUED, false), thresholds)
+      val lifted = LinkedHashSet<String>()
+      json.optJSONArray(LIFTED_THRESHOLDS)?.let { array -> for (i in 0 until array.length()) (array.opt(i) as? String)?.let(lifted::add) }
+      return ActiveInterval(startedAt, Occurrence(start, end), json.optBoolean(WARNING_ISSUED, false), thresholds, json.optBoolean(LIFTED, false), lifted)
     }
   }
 }
@@ -171,7 +195,7 @@ internal data class IntervalPlan(
   }
 }
 
-/** A block source the monitoring state contributes right now, for the block composition to apply. */
+/** A block source the monitoring state contributes right now, for the block composition ([BlockComposition]) to apply. */
 internal data class MonitoringBlock(
   val activityName: String,
   val selectionId: String,
@@ -179,6 +203,8 @@ internal data class MonitoringBlock(
   val mode: String,
   /** The `eventName` of a `blockOnThreshold` block; null for the schedule's block. */
   val eventName: String? = null,
+  /** When the interval it belongs to started (`intervalDidStart`): among schedules the latest owns a shared target. */
+  val startedAtMs: Long = 0,
 )
 
 /** Usage before an accumulator existed that the wiring must measure (`UsageStatsManager.queryEvents(fromMs, toMs)`) and hand to `backfill`. */
@@ -301,7 +327,11 @@ internal data class MonitoringState(
     var log = this.log
     val recorded = ArrayList<MonitorEvent>()
     if (activityName in intervals) log = log.append(activityName, MonitorEvent.INTERVAL_DID_END, null, nowMs).also { recorded.add(it.second) }.first
-    return Result(copy(activities = activities - activityName, intervals = intervals - activityName, log = log, revision = revision + 1), recorded)
+    val remaining = activities - activityName
+    // Nothing monitored: the stream is not read any more, so the tracker
+    // must not claim to know the resumed set (the next registration seeds afresh).
+    val foreground = if (remaining.isEmpty()) UsageForegroundState() else this.foreground
+    return Result(copy(activities = remaining, intervals = intervals - activityName, log = log, foreground = foreground, revision = revision + 1), recorded)
   }
 
   /** `stopAllMonitoring`: every activity, in name order. Manual blocks and unlocks are other layers' and stay. */
@@ -314,6 +344,41 @@ internal data class MonitoringState(
       recorded.addAll(result.recorded)
     }
     return Result(state, recorded)
+  }
+
+  /**
+   * The engine's first contact with the stream, when the tracker was never
+   * fed (`cursorMs` null): the resumed set is rebuilt from a lookback
+   * window of events (an hour) WITHOUT counting any of it as live usage,
+   * and every threshold armed meanwhile — by the module, against a tracker
+   * that knew nothing: history up to its `now`, no open span — is armed
+   * again against the seeded tracker: its open span starts at `uptoMs` for
+   * the selected apps on screen, and its history request covers
+   * `[countFrom, uptoMs)`, which the wiring answers from the same window.
+   * Feeding the lookback through `advance` instead would open spans at the
+   * historical instants and count them a second time beside the history
+   * answer. A tracker with a cursor is left alone (nothing to seed).
+   */
+  fun seed(usage: List<UsageEvent>, uptoMs: Long, selections: (String) -> Selection?): MonitoringState {
+    if (foreground.cursorMs != null) return this
+    var tracker = UsageForegroundState()
+    for (event in usage.sortedBy { it.timestampMs }) {
+      if (event.timestampMs > uptoMs) continue
+      tracker = tracker.apply(event).first
+    }
+    tracker = tracker.advanceTo(uptoMs)
+    val intervals = intervals.mapValues { (name, interval) ->
+      val activity = activities[name] ?: return@mapValues interval
+      interval.copy(
+        thresholds = interval.thresholds.mapValues { (eventName, progress) ->
+          val event = activity.config.events.firstOrNull { it.eventName == eventName } ?: return@mapValues progress
+          if (progress.fired || progress.accumulatedMs > 0 || progress.activeSinceMs != null) return@mapValues progress
+          val selected = selections(event.selectionId)?.applications ?: emptySet()
+          ThresholdProgress.arm(progress.countFromMs, progress.countUntilMs, uptoMs, tracker, selected).copy(warned = progress.warned)
+        },
+      )
+    }
+    return copy(intervals = intervals, foreground = tracker)
   }
 
   /** `getMonitorEvents`. */
@@ -358,6 +423,12 @@ internal data class MonitoringState(
     uptoMs: Long = nowMs,
     selections: (String) -> Selection?,
   ): Result {
+    // Nothing monitored, nothing in progress: the stream is not read, so the
+    // cursor must not move (a resumed set "exact as of the cursor" would go
+    // stale) — the tracker forgets, and the next registration seeds afresh.
+    if (activities.isEmpty() && intervals.isEmpty()) {
+      return Result(if (foreground == UsageForegroundState()) this else copy(foreground = UsageForegroundState()))
+    }
     val cursor = foreground.cursorMs
     var state = if (cursor != null && uptoMs < cursor) clockShifted(uptoMs - cursor) else this
     val shifted = state !== this
@@ -411,6 +482,29 @@ internal data class MonitoringState(
   }
 
   /**
+   * The state as the schedules stand at `nowMs`, for a read-only answer
+   * (`isBlocked`): the interval boundaries are evaluated like `advance`
+   * does, nothing is fed, and the thresholds stay exactly as the engine
+   * persisted them — an open usage span is not projected to now (the stream
+   * that would close it is the engine's to read), so a threshold the engine
+   * has not fired does not fire here. Nothing is persisted by the caller.
+   */
+  fun schedulesAt(nowMs: Long, zone: TimeZone, selections: (String) -> Selection?): MonitoringState {
+    val cursor = foreground.cursorMs ?: nowMs
+    val dry = advance(nowMs, zone, emptyList(), minOf(cursor, nowMs), selections).state
+    return dry.copy(
+      intervals = dry.intervals.mapValues { (name, interval) ->
+        val stored = intervals[name]
+        // The occurrence the engine knows keeps its thresholds; one it has
+        // not seen yet has fired nothing (its accumulators would be armed
+        // over a tracker the engine has not caught up with).
+        if (stored != null && stored.belongsTo(interval.occurrence)) interval.copy(thresholds = stored.thresholds, liftedThresholds = stored.liftedThresholds) else interval.copy(thresholds = emptyMap())
+      },
+      foreground = foreground,
+    )
+  }
+
+  /**
    * The clock was set by `deltaMs`. The stream and its cursor read on the
    * new clock (the system renames its stats files by the delta and stores
    * events relative to them), so every stream instant held here moves with
@@ -457,22 +551,47 @@ internal data class MonitoringState(
    * The blocks the intervals in progress contribute: each schedule's
    * selection, and every fired `blockOnThreshold` — minus those whose
    * selection no longer exists (iOS checks `SelectionStore.has` before it
-   * shields a threshold's selection).
+   * shields a threshold's selection), and minus what `unblockAll` lifted
+   * ([lift]) until the next interval start.
    */
   fun activeBlocks(selectionExists: (String) -> Boolean = { true }): List<MonitoringBlock> {
     val result = ArrayList<MonitoringBlock>()
     for (name in intervals.keys.sorted()) {
       val activity = activities[name] ?: continue
       val interval = intervals.getValue(name)
-      activity.config.selectionId?.takeIf(selectionExists)?.let { result.add(MonitoringBlock(name, it, activity.config.mode)) }
+      if (!interval.lifted) {
+        activity.config.selectionId?.takeIf(selectionExists)?.let { result.add(MonitoringBlock(name, it, activity.config.mode, null, interval.startedAtMs)) }
+      }
       for (event in activity.config.events) {
-        if (event.blockOnThreshold && interval.thresholds[event.eventName]?.fired == true && selectionExists(event.selectionId)) {
-          result.add(MonitoringBlock(name, event.selectionId, MonitoringConfig.MODE_BLOCKLIST, event.eventName))
+        if (event.blockOnThreshold && event.eventName !in interval.liftedThresholds &&
+          interval.thresholds[event.eventName]?.fired == true && selectionExists(event.selectionId)
+        ) {
+          result.add(MonitoringBlock(name, event.selectionId, MonitoringConfig.MODE_BLOCKLIST, event.eventName, interval.startedAtMs))
         }
       }
     }
     return result
   }
+
+  /**
+   * `unblockAll`: every interval in progress is lifted — its shields and its
+   * fired thresholds' drop until the next interval start — and monitoring
+   * goes on: the interval's end is still recorded, the next occurrence
+   * shields again, a threshold firing later in this one shields again
+   * (`SharedDefaults.liftActiveIntervals` on iOS). Nothing to lift is a no-op
+   * (same value, same revision).
+   */
+  fun lift(): MonitoringState {
+    if (intervals.values.all { it.lifted && it.liftedThresholds.containsAll(it.thresholds.filterValues { p -> p.fired }.keys) }) return this
+    return copy(intervals = intervals.mapValues { (_, interval) -> interval.lift() }, revision = revision + 1)
+  }
+
+  /** Whether an interval in progress still has unfired thresholds: usage must be observed. */
+  val observesUsage: Boolean
+    get() = intervals.any { (name, interval) ->
+      val activity = activities[name] ?: return@any false
+      activity.config.events.any { interval.thresholds[it.eventName]?.fired == false }
+    }
 
   /**
    * When the engine must evaluate next even if nothing happens on screen:
@@ -513,8 +632,11 @@ internal data class MonitoringState(
 
     for (event in usage.sortedBy { it.timestampMs }) {
       // Events after `uptoMs` are not known to be complete yet (the pipeline
-      // lag): they stay in the next window, which the wiring queries from the cursor.
-      if (event.timestampMs > uptoMs || !tracker.accepts(event)) continue
+      // lag): they stay in the next window, which the wiring queries from the
+      // cursor. "Fed already" is judged against the cursor this batch started
+      // from, not the one moving through it: two events at the same instant
+      // (paused(A) and resumed(B) share a millisecond routinely) are both new.
+      if (event.timestampMs > uptoMs || !foreground.accepts(event)) continue
       val (next, change) = tracker.apply(event)
       tracker = next
       if (change == null) continue

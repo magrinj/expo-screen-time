@@ -3,6 +3,7 @@ package expo.modules.screentime
 import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.TimeZone
 
 /**
  * The module-process half of blocking: the twin of the `// MARK: - Blocking`
@@ -22,36 +23,46 @@ internal class BlockController(private val context: Context, private val store: 
    * starts for a block that is not there yet.
    */
   fun blockSelection(selectionId: String, options: Map<String, Any?>?) {
-    val block = store.update { _ ->
+    val block = store.update { document ->
       val validated = BlockValidation.manualBlock(selectionId, selections.get(selectionId), options?.get("mode"))
       store.manualBlock = validated
-      store.engineDesired = true
+      store.syncEngineDesired(document)
       validated
     }
     EngineController.sync(context, "block:${block.mode.name}")
   }
 
   /**
-   * `unblockAll`: lifts the manual block (the only source until schedules
-   * exist) and releases the engine, which stops polling and dismisses a
-   * shield on screen. Monitoring is untouched, as on iOS.
+   * `unblockAll`: lifts every active block — the manual block, and the
+   * schedule and threshold shields of the intervals in progress — as iOS
+   * does (`setBlockedSelectionId(nil)` + `liftActiveIntervals`). Monitoring
+   * keeps running: an interval in progress stays in progress (its end is
+   * still recorded) and a schedule re-applies its block at its next
+   * interval start, so the engine stays wanted while anything is
+   * monitored.
    */
   fun unblockAll() {
-    store.update { _ ->
+    store.update { document ->
       store.manualBlock = null
-      store.engineDesired = false
+      MonitoringDocument.write(document, MonitoringDocument.read(document).lift())
+      store.syncEngineDesired(document)
     }
     EngineController.sync(context, "released")
   }
 
   /**
-   * `isBlocked`: whether the manual block shields something right now
-   * ([ActiveBlock.shieldsSomething] over the apps captured at block time,
-   * what the engine enforces). Synchronous: one shared-lock file read. This
-   * is the *intended* state (review R2): whether the engine is alive to
-   * enforce it is a gap for `getEnforcementGaps`, not a `false` here.
+   * `isBlocked`: whether any source shields something right now
+   * ([BlockComposition.shieldsSomething] over the composed sources: the
+   * manual block with the apps captured at block time, the schedules in
+   * progress and the fired thresholds). The schedules are evaluated at
+   * `now` here, not read from the engine's last pass: a boundary the
+   * engine has not recorded yet (its alarm is inexact) still answers as
+   * the engine will. Synchronous: one shared-lock file read, nothing
+   * written. This is the *intended* state (review R2): whether the engine
+   * is alive to enforce it is a gap for `getEnforcementGaps`, not a `false`
+   * here.
    */
-  fun isBlocked(): Boolean = activeBlock(store)?.shieldsSomething == true
+  fun isBlocked(): Boolean = BlockComposition.shieldsSomething(activeSources(store, selections))
 
   // MARK: - Shield configuration
 
@@ -62,8 +73,16 @@ internal class BlockController(private val context: Context, private val store: 
   fun clearShieldConfig() = store.clearShieldConfigs()
 
   companion object {
-    /** The manual block as the engine applies it, or null when none is set. */
-    fun activeBlock(store: StateStore): ActiveBlock? = store.manualBlock?.active
+    /**
+     * The sources in force now, from the document as it is: the schedules
+     * evaluated at `now` in memory (`schedulesAt`: boundaries as the engine
+     * will record them, thresholds as the engine persisted them; nothing
+     * written) and the manual block.
+     */
+    fun activeSources(store: StateStore, selections: SelectionStore): List<BlockSource> = store.read { document ->
+      val monitoring = MonitoringDocument.read(document).schedulesAt(System.currentTimeMillis(), TimeZone.getDefault(), selections::get)
+      BlockComposition.sources(store.manualBlock, monitoring, selections::get)
+    }
 
     /** A JS record (nested maps and lists of primitives) as the JSON the document stores. */
     fun toJson(value: Map<String, Any?>): JSONObject {

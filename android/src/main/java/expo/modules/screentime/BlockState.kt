@@ -47,9 +47,9 @@ internal enum class BlockMode {
  * of the iOS `expo_st_blocked_selection_id` + `_mode` pair.
  */
 internal data class ManualBlock(val selectionId: String, val mode: BlockMode, val applications: Set<String>) {
-  /** The block as the engine applies it. */
-  val active: ActiveBlock
-    get() = ActiveBlock(mode, applications)
+  /** The block as a source of the composition ([BlockComposition]): the manual kind, started at 0 as on iOS. */
+  val source: BlockSource
+    get() = BlockSource(BlockSourceKind.Manual, 0, applications, mode)
 
   fun toJson(): JSONObject = JSONObject()
     .put(SELECTION_ID, selectionId)

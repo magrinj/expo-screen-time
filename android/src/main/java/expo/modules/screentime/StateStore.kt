@@ -33,8 +33,8 @@ import kotlin.io.encoding.Base64
  * [SelectionStore], the selections and the handle map; step 3 adds the
  * manual block (`blocks.manual`, read by the engine process on every
  * change) and the shield configurations (`shield.default`,
- * `shield.activities.<name>`); schedules join later, in the same document,
- * each under its own key.
+ * `shield.activities.<name>`); step 4 adds the monitoring layer
+ * (`monitoring`: activities, intervals, the event log, the usage cursor).
  */
 internal class StateStore(private val directory: File) {
   constructor(context: Context) : this(File(context.noBackupFilesDir, "expo_screen_time"))
@@ -116,6 +116,34 @@ internal class StateStore(private val directory: File) {
       if (value == null) blocks.remove(MANUAL) else blocks.put(MANUAL, value.toJson())
     }
 
+  // MARK: - Monitoring
+
+  /**
+   * The monitoring layer (`monitoring`): activities, intervals in progress,
+   * the event log and the usage stream position. Read by both processes;
+   * mutated by the module (`start` / `stop` / `stopAll` / `clearEvents`,
+   * [MonitoringController]) and by the engine (`advance` / `backfill`,
+   * [EngineLoop]), each inside one `update` with the decision that
+   * justifies the write, which is what makes the events exactly once.
+   */
+  var monitoring: MonitoringState
+    get() = read(MonitoringDocument::read)
+    set(value) = update { document -> MonitoringDocument.write(document, value) }
+
+  /**
+   * Whether the engine should run, derived from the state: a manual block
+   * in force or any monitored activity (thresholds need usage observation,
+   * schedule boundaries need the alarm). Written by every module mutation
+   * in the same `update` as the state it follows from, so the engine
+   * process never reads a block or a schedule without the desire to run,
+   * or the reverse.
+   */
+  fun syncEngineDesired(document: JSONObject) {
+    val desired = ManualBlock.fromJson(document.optJSONObject(BLOCKS)?.optJSONObject(MANUAL)) != null ||
+      MonitoringDocument.read(document).activities.isNotEmpty()
+    engine(document).put(DESIRED, desired)
+  }
+
   // MARK: - Shield configuration
 
   /** `setShieldConfig`: the default shield, used by the manual block and as the fallback. */
@@ -141,8 +169,9 @@ internal class StateStore(private val directory: File) {
    * The config the shield draws, with the iOS precedence (fix 8, review R5):
    * the config of the source that owns the shield ([owner], an activity
    * name; null for the manual block), else the default, else null (the
-   * built-in shield). Step 3 has one source, the manual block, so the owner
-   * is always null; the lookup is in place for the schedules of step 4.
+   * built-in shield). The owner is resolved by the engine from the block
+   * composition (`BlockComposition.owner`: threshold > latest schedule >
+   * manual) and handed to the shield.
    */
   fun shieldConfig(owner: String?): JSONObject? = read { document ->
     val shield = document.optJSONObject(SHIELD) ?: return@read null

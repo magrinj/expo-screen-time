@@ -51,11 +51,11 @@ class BlockStateTest {
   fun `the manual block round-trips with its apps, and an unknown stored mode reads as blocklist`() {
     val block = ManualBlock("focus", BlockMode.allowlist, setOf("com.a", "com.b"))
     assertEquals(block, ManualBlock.fromJson(JSONObject(block.toJson().toString())))
-    assertEquals(ActiveBlock(BlockMode.allowlist, setOf("com.a", "com.b")), block.active)
+    assertEquals(BlockSource(BlockSourceKind.Manual, 0, setOf("com.a", "com.b"), BlockMode.allowlist), block.source)
     val legacy = ManualBlock.fromJson(JSONObject().put("selectionId", "s").put("mode", "later"))!!
     assertEquals(BlockMode.blocklist, legacy.mode)
     // No apps captured: a blocklist over nothing shields nothing.
-    assertEquals(false, legacy.active.shieldsSomething)
+    assertEquals(false, legacy.source.shieldsSomething)
     assertNull(ManualBlock.fromJson(JSONObject()))
     assertNull(ManualBlock.fromJson(null))
   }

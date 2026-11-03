@@ -93,7 +93,7 @@ internal val NATIVE_FUNCTIONS: List<NativeFunction> = listOf(
   async("clearMonitorEvents", 1)
 )
 
-/** The step-3 surface, behind the preview switch until step 5 flips `blocking`. */
+/** The step-3 and step-4 surface, behind the preview switch until step 5 flips `blocking`. */
 internal val BLOCKING_PREVIEW_FUNCTIONS: Set<String> = setOf(
   // Blocking
   "blockSelection",
@@ -103,14 +103,18 @@ internal val BLOCKING_PREVIEW_FUNCTIONS: Set<String> = setOf(
   "setShieldConfig",
   "setShieldConfigForActivity",
   "clearShieldConfig",
-  // Honest empties until monitoring and unlocks / interactions
-  // exist: the conformance suite's reset() calls the first three
-  // on every platform where blocking is on, and an app that sees
-  // `blocking !== "none"` reads the unlock state (the example's Blocking
-  // tab does, at render). Nothing can be monitored, recorded or unlocked
-  // yet, so no-op, no-op, [], false and 0 are the true answers.
+  // Monitoring and event history
+  "startMonitoring",
+  "stopMonitoring",
   "stopAllMonitoring",
+  "getMonitoredActivities",
+  "getMonitorEvents",
   "clearMonitorEvents",
+  // Honest empties until unlocks and interactions exist: the
+  // conformance suite's reset() drains the interactions on every platform
+  // where blocking is on, and an app that sees `blocking !== "none"` reads
+  // the unlock state (the example's Blocking tab does, at render). Nothing
+  // can be recorded or unlocked yet, so [], false and 0 are the true answers.
   "drainShieldInteractions",
   "isTemporarilyUnlocked",
   "getRemainingUnlockSeconds",
@@ -118,7 +122,7 @@ internal val BLOCKING_PREVIEW_FUNCTIONS: Set<String> = setOf(
 
 /**
  * Functions with a real Android definition in [ExpoScreenTimeModule]. The
- * blocking functions join only under the internal preview switch
+ * blocking and monitoring functions join only under the internal preview switch
  * (`BuildConfig.BLOCKING_PREVIEW`, `android/build.gradle`): the default build
  * registers exactly the set it registered before the step.
  */

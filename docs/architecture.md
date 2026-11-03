@@ -117,7 +117,11 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   `FileChannel` lock on a sidecar file (exclusive for `update`, shared for
   `read`, re-entrant in-process), replaced by atomic rename. Engine desired
   state and failures, permission requests, the install secret, the
-  selections, the manual block and the shield configs; schedules join later.
+  selections, the manual block, the shield configs and the monitoring
+  layer (`monitoring`: activities, intervals in progress, the event log,
+  the usage-stream cursor). `syncEngineDesired` derives the engine's
+  desired state from the document in the same `update` as the mutation:
+  a manual block in force or any monitored activity.
 - `SelectionStore.kt` — the twin of `ios/SelectionStore.swift` over the
   state store: `selections.<id>` holds package-name sets (`Selection.kt`,
   pure: the set algebra and the document codec; categories and web domains
@@ -150,7 +154,12 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   and sends one (`ACTION_SYNC`, never a STOP that would carry state, and
   never `stopService`, which kills a still-spawning foreground service), the
   service re-reads the store; a release sends it only while the service's
-  own `engine.running` flag is set.
+  own `engine.running` flag is set. The engine's inexact alarm
+  (`AlarmManager.setAndAllowWhileIdle`, armed at
+  `MonitoringState.nextWakeMs`) targets the same receiver with
+  `ACTION_WAKE` and sends the same SYNC: a schedule boundary due while the
+  screen is off is observed within the system's window, with no exact
+  alarm and no permission.
 - **Blocking.**
   `BlockController.kt` is the module-process half (the twin of the Swift
   `blockSelection` / `unblockAll` / `isBlocked` and the shield-config
@@ -165,11 +174,59 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   de-duplication, the clamped window and the per-poll try/catch the device
   runs showed were needed. `ForegroundTracker.kt` (pure) turns the activity
   events into the resumed and the still-visible sets; `ShieldPolicy.kt`
-  (pure) decides what to shield: blocklist = the selection, allowlist =
-  every launchable app but the selection, exemptions win (host, launchers,
-  SystemUI, dialer, emergency, IME, Settings; the OS reads are in
-  `SystemExemptions.kt`). The selection is resolved live from the store on
-  every block change, as iOS re-projects the stored selection.
+  (pure) decides what to shield from the composed sources: blocklist = the
+  source's apps, allowlist = every launchable app but the source's,
+  exemptions win (host, launchers, SystemUI, dialer, emergency, IME,
+  Settings; the OS reads are in `SystemExemptions.kt`). The selection is
+  resolved live from the store on every block change, as iOS re-projects
+  the stored selection.
+- **Block composition.** `BlockComposition.kt` (pure) is the
+  twin of `ios/BlockComposition.swift`: `BlockSource` (kind manual /
+  schedule / threshold, `startedAtMs`, apps, mode) and `sources(manual,
+  monitoring, selections)` — the manual block with the apps captured at
+  block time, then each interval's schedule block and its fired
+  `blockOnThreshold` selections merged into one threshold source. The
+  union rule: a package is shielded if ANY source covers it (a blocklist
+  listing it, an allowlist not allowing it); `owner(target)` is the
+  threshold, else the latest schedule, else the manual block, and its
+  `activityName` is what the shield resolves its configuration from
+  (`StateStore.shieldConfig(owner)`). `isBlocked()` sums the sources, with
+  the schedules evaluated at now. `unblockAll` lifts the intervals in
+  progress (`ActiveInterval.lifted`, like iOS `liftActiveIntervals`): the
+  schedule's and its fired thresholds' shields drop until the next start,
+  the interval stays in progress and its end is still recorded.
+- **Monitoring wake path.** `MonitoringController.kt` is the
+  module-process half (`startMonitoring` validation and registration,
+  `stopMonitoring`, `stopAllMonitoring`, the reads, `clearMonitorEvents`,
+  and the live `onMonitorEvent` stream: a `MonitorEventCursor` drained on a
+  package-local broadcast from the engine and on a 2 s poll, as the iOS
+  module polls beside its Darwin notification). Every mutation runs the
+  pure `MonitoringState` transition inside one `StateStore.update`, then
+  SYNCs the engine. In the engine, `EngineLoop.step` runs on every wake
+  (start intent, alarm, screen or clock change) and every poll: read the
+  UsageStats stream from the persisted cursor (one query serves the shield
+  tracker and the usage accumulators; `SCREEN_NON_INTERACTIVE` and
+  `KEYGUARD_SHOWN` close every span), `advance(now)`, persist what is
+  durable under the lock (an event, a marker, a history answer; the usage
+  totals every 30 s), and only then announce the events, recompose the
+  sources, apply the shields and re-arm the alarm. A document the module
+  changed meanwhile (`revision`) is reloaded and the step runs again from
+  it. A never-fed tracker is seeded from a one-hour lookback
+  (`MonitoringState.seed`) so history and the live stream never overlap;
+  every pending history request is answered after each step (a restart's
+  included, after the seed). With nothing monitored the cursor does not
+  move and the tracker forgets (a stale "resumed" set would count usage
+  nobody spent). The next boundary is also posted on the engine thread
+  (`wake`): while the process lives and the CPU is awake the boundary is
+  evaluated at the instant it falls, polling or not; the inexact alarm
+  covers a dead process or a sleeping CPU. Polling: 100 ms while a source
+  shields something, 1 s while only a threshold has to be observed, none
+  with the screen off (one settling step 3 s after `SCREEN_OFF` reads the
+  screen-off event) or with nothing to observe. `TIME_SET` shifts the
+  state by the wall-clock drift against `elapsedRealtime`, under the lock,
+  on whichever state is current; `TIMEZONE_CHANGED` re-evaluates in the
+  new zone. `isBlocked()` reads `MonitoringState.schedulesAt`: the
+  boundaries at now, the thresholds as the engine persisted them.
 - `ShieldActivity.kt` — the shield, in the `:screentime` process (already
   alive, so no React Native start on the hot path): `excludeFromRecents`,
   own task affinity, `singleTask`, `windowDisablePreview` (the first frame

@@ -16,7 +16,9 @@ import android.util.Log
  * (`android/src/main/AndroidManifest.xml`). It promotes itself to the
  * foreground with the persistent notice when the state store says the
  * engine is wanted, and leaves otherwise; while it runs, [EngineLoop]
- * detects the foreground app and launches the [ShieldActivity].
+ * detects the foreground app and launches the [ShieldActivity],
+ * evaluates the schedules and usage thresholds and records their events
+ *.
  *
  * Two lessons from the survival run are built in:
  * - `startForeground` can throw `ForegroundServiceStartNotAllowedException`
@@ -61,7 +63,8 @@ class ScreenTimeEngineService : Service() {
     Log.i(EngineController.TAG, "engine running in ${processName()} (reason=$reason)")
     store.engineRunning = true
     // Every start intent is also the "look again" signal from the module
-    // process: the block (and the sets it needs) is re-read from the store.
+    // process, the restart receiver and the alarm: the manual block, the
+    // monitoring state (and the sets they need) are re-read from the store.
     // The loop exists only under the preview switch: a default build has
     // no way to write a block, and must not enforce one a preview build
     // left behind.
