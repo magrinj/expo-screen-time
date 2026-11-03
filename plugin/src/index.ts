@@ -45,7 +45,9 @@ const TARGETS_ROOT = path.resolve(__dirname, '..', '..', 'targets');
  * Android: the permissions, the launcher `<queries>` intent, the engine
  * service and its receivers come from the library's own manifest (merged
  * by Gradle). The plugin only writes the optional, app-level entries, from
- * `expo.extra.expoScreenTime.android` (`parentalControl`).
+ * `expo.extra.expoScreenTime.android`: `parentalControl`, and `features`
+ * (the `ScreenTimeFeature` names the app uses; what no listed feature needs
+ * is removed from the merged manifest, see `android/withScreenTimeAndroid.ts`).
  */
 const withExpoScreenTime: ConfigPlugin = (config) => {
   // Android first: it does not depend on the iOS bundle identifier below.

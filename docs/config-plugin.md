@@ -86,6 +86,16 @@ no `path`. New wiring ⇒ new assertion.
   looked up by name before it is added and removed when its option is off
   (no stale entry on `--no-clean`). Same split as expo-widgets (its receiver
   is in its library manifest; `POST_NOTIFICATIONS` is a plugin option).
+- **`android.features` gates the library manifest.** `ANDROID_MANIFEST_GATES`
+  in `withScreenTimeAndroid.ts` is the one table mapping each library
+  component and permission to the features that need it; the plugin writes
+  a `tools:node="remove"` for every row no listed feature covers (by name,
+  idempotent, removed when the option changes back, never when the app
+  manifest declares the element itself). **Adding a component or a
+  permission to the library manifest ⇒ add its row**: the jest test fails
+  until every element of the library manifest has one. The runtime reading
+  is `android/.../BuildManifest.kt` (PackageManager, not a flag), gated at
+  the module's entry points only.
 - The mutation is the exported pure function
   `applyScreenTimeAndroidManifest(manifest, options)`;
   `plugin/src/android/__tests__/withScreenTimeAndroid.test.ts` asserts

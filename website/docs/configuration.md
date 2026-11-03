@@ -77,14 +77,14 @@ service in its own `:screentime` process, the boot and update receivers and
 the device-admin receiver come from the library's own manifest, merged into
 yours by Gradle.
 
-One option, under `expo.extra.expoScreenTime.android`:
+Two options, under `expo.extra.expoScreenTime.android`:
 
 ```json
 {
   "expo": {
     "extra": {
       "expoScreenTime": {
-        "android": { "parentalControl": true }
+        "android": { "parentalControl": true, "features": ["blocking", "monitoring"] }
       }
     },
     "plugins": ["expo-screen-time"]
@@ -95,6 +95,60 @@ One option, under `expo.extra.expoScreenTime.android`:
 | Option | Default | |
 |---|---|---|
 | `parentalControl` | `false` | The app is a parental-control app: adds Google Play's mandatory `IsMonitoringTool` manifest flag with the value `child_monitoring` ([Play Console help](https://support.google.com/googleplay/android-developer/answer/12955211)). Play requires it in every version code of such an app; Google Play Protect then tells the user a monitoring app is installed. Turning the option off removes the entry again. |
+| `features` | every feature | The features the app uses, by the names of [`ScreenTimeFeature`](./types.md): `blocking`, `monitoring`, `usageReports`, `shieldOpenApp`, `appRemovalProtection`, `webDomainBlocking`. The plugin removes from your manifest (`tools:node="remove"`) every component and permission no listed feature needs; see below. An unknown name fails the prebuild. Android only: the iOS build is shaped by [`targets`](#target-selection). |
+
+### Features {#android-features}
+
+An app that only reads usage data has no reason to be listed under Settings ›
+Special app access › Picture-in-picture or Device admin apps, nor to justify
+a `specialUse` foreground service in Play review. List what you use and the
+rest of what this library declares leaves the merged manifest:
+
+| Feature | Keeps |
+|---|---|
+| `blocking` | Everything: the engine service and its restart receiver, the shield activity and its picture-in-picture evictor, the device-admin receiver, and the permissions `PACKAGE_USAGE_STATS`, `SYSTEM_ALERT_WINDOW`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`. Schedules and thresholds that shield are part of it. |
+| `monitoring` | The engine service, its restart receiver and their permissions (`PACKAGE_USAGE_STATS`, the foreground-service pair, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`). No shield, no overlay permission, no device admin: schedules and thresholds record events only. |
+| `usageReports` | `PACKAGE_USAGE_STATS`. |
+| `appRemovalProtection` | The device-admin receiver. |
+| `shieldOpenApp`, `webDomainBlocking` | Nothing of their own (the first is a property of the shield, the second is not implemented on Android). |
+
+Omit the option and the manifest is the library's, as before. An empty array
+keeps only what the selection store and the picker need. The entries are
+idempotent and go away when the option changes back, so no `--clean` is
+needed.
+
+A removed permission is removed the way Expo's `android.blockedPermissions`
+removes one: from the merged manifest, **whichever library declared it**
+(the Android manifest merger offers nothing finer that survives the merge).
+So if another library in your app needs `POST_NOTIFICATIONS`,
+`RECEIVE_BOOT_COMPLETED` or `FOREGROUND_SERVICE` (a notifications or a
+background-task library), list it in `android.permissions`: what your own
+manifest requests is never removed, and `android.permissions` always wins.
+Check the result in the merged manifest
+(`android/app/build/intermediates/merged_manifests/<variant>/processReleaseManifest/AndroidManifest.xml`)
+or with `aapt2 dump permissions` on the APK. Two more notes:
+
+- The Expo template's own manifest requests `SYSTEM_ALERT_WINDOW`, so a
+  build without `blocking` still has it unless you drop it yourself with
+  `android.blockedPermissions: ["SYSTEM_ALERT_WINDOW"]` (and nothing else in
+  the app needs it). Your `blockedPermissions` are never touched by this
+  option.
+- A plugin listed *before* `expo-screen-time` that adds a permission inside
+  its own manifest mod runs after this one, sees the name already present
+  and skips it: use `android.permissions` for it.
+
+At runtime the module reads what the merged manifest declares, not the
+option: `getCapabilities().blocking` is `"none"` in a build without the
+shield, the functions of a removed feature reject `UNSUPPORTED` (in a
+`monitoring`-only build a `startMonitoring` with a `selectionId` or a
+`blockOnThreshold` event does too), and the [permission steps](./api/permissions.md)
+never ask for a step only a removed component needs. Requesting permissions
+for a feature the build lacks rejects `UNSUPPORTED` as well, naming it; with
+no `features` passed, the request covers the default features the build
+has. A parental-control app (`member: "child"`) built with `monitoring`
+alone has no device admin to require: add `appRemovalProtection` to keep
+it. An app updated from a build with the shield to one without lifts at
+launch a block the earlier build left in its store.
 
 The engine's persistent notice (channel, title, text) is localized through
 string resources you can override in your own `res/values/strings.xml`:

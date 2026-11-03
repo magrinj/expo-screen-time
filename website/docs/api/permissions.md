@@ -32,7 +32,7 @@ const response = await ExpoScreenTime.getScreenTimePermissionsAsync({
 
 | Option | Type | Default | |
 |---|---|---|---|
-| `features` | `ScreenTimeFeature[]` | `['blocking', 'monitoring']` | What the app will use; decides which steps are listed and required. On iOS every feature rests on the `screenTime` step; `shieldOpenApp` adds the `notifications` step. On Android, `blocking` and `monitoring` need `overlay` and `usageAccess`; `usageReports` needs `usageAccess`; `appRemovalProtection` needs `deviceAdmin`. |
+| `features` | `ScreenTimeFeature[]` | `['blocking', 'monitoring']` | What the app will use; decides which steps are listed and required. On iOS every feature rests on the `screenTime` step; `shieldOpenApp` adds the `notifications` step. On Android, `blocking` and `monitoring` need `overlay` and `usageAccess`; `usageReports` needs `usageAccess`; `appRemovalProtection` needs `deviceAdmin`. A feature the build does not contain ([`android.features`](../configuration.md#android-features)) rejects `UNSUPPORTED`, naming it; the default narrows to the default features the build has. |
 | `member` | `'individual' \| 'child'` | `'individual'` | `child` requests Family Sharing authorization for a child account, approved by a parent. On an account that is not a child in a family, the request fails with the step error `invalidAccountType`. iOS reads it only when requesting `screenTime`; Android makes the `notifications` and `deviceAdmin` steps required for a child (Google Play's parental-control rules demand a persistent notice), so it is read when listing the steps too. |
 
 ### Steps on iOS
@@ -48,12 +48,17 @@ Android has no single Screen Time authorization: the enforcement engine rests
 on special-access toggles the user flips in Settings, one screen each. The
 library lists them in onboarding order; `kind` says how each one is granted.
 
+A step is listed only when the build has what it grants: no `overlay`
+without the shield, no `deviceAdmin` without its receiver, no engine steps
+without the engine (the [`android.features`](../configuration.md#android-features)
+option removes them).
+
 | Step | Listed for | Required | Kind | What it is |
 |---|---|---|---|---|
-| `overlay` | `blocking`, `monitoring` | yes | `settings` | Settings › Display over other apps. The shield is an Activity the engine launches from the background, which Android allows once this is held. Requested first: it also lets the library bring the user back to the app from the next screens. |
+| `overlay` | `blocking`, `monitoring` (in a build with the shield) | yes | `settings` | Settings › Display over other apps. The shield is an Activity the engine launches from the background, which Android allows once this is held. Requested first: it also lets the library bring the user back to the app from the next screens. |
 | `usageAccess` | `blocking`, `monitoring`, `usageReports` | yes | `settings` | Settings › Usage access. How the engine sees which app is in the foreground. |
 | `notifications` | `blocking`, `monitoring` (Android 13+) | for `member: 'child'` | `prompt` | The runtime notification permission for the engine's persistent notice. Without it the service still runs; the notice moves to the Task Manager. |
-| `deviceAdmin` | `blocking`, `monitoring`, `appRemovalProtection` | for `appRemovalProtection` and `member: 'child'` | `settings` | Device admin activation (no policy). While active, Settings disables "Force stop" and the app cannot be uninstalled before the admin is turned off. |
+| `deviceAdmin` | `blocking`, `monitoring` (in a build with the device admin), `appRemovalProtection` | for `appRemovalProtection` and `member: 'child'` | `settings` | Device admin activation (no policy). While active, Settings disables "Force stop" and the app cannot be uninstalled before the admin is turned off. |
 | `batteryOptimization` | `blocking`, `monitoring` | no | `settings` | The system's battery-optimization list. The library opens the list and never requests `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (not an acceptable use for a blocker on Google Play). |
 | `backgroundAutostart` | `blocking`, `monitoring`, on Xiaomi, Oppo, Realme, Vivo, Huawei, Honor and OnePlus | no | `guide` | The vendor's autostart screen. Nothing reads it back: its status stays `unknown`. |
 

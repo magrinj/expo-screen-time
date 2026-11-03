@@ -4,6 +4,7 @@ import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 import expo.modules.kotlin.modules.ModuleDefinitionBuilder
+import expo.modules.screentime.PermissionSteps.Feature
 
 /**
  * Android counterpart of `ios/ExpoScreenTimeModule.swift`.
@@ -17,12 +18,16 @@ import expo.modules.kotlin.modules.ModuleDefinitionBuilder
  * shield actions and the interaction queue. Step 6: the enforcement gaps,
  * which is where `blocking` became `"friction"` for real and the internal
  * preview switch the steps 3–5 shipped behind went away. Every function
- * not implemented fails with a coded `UNSUPPORTED` error.
+ * not implemented fails with a coded `UNSUPPORTED` error, and so does every
+ * function of a feature the config plugin left out of this build
+ * (`android.features`, read back from the merged manifest: [BuildManifest]).
  */
 class ExpoScreenTimeModule : Module() {
-  private val permissionRequester by lazy { AndroidPermissionRequester(appContext) }
   private val context: android.content.Context
     get() = requireNotNull(appContext.reactContext) { "React context is not available" }
+  /** What the merged manifest declares, resolved once; `getCapabilities()` and the gates below read it. */
+  private val build by lazy { BuildManifest.resolve(context) }
+  private val permissionRequester by lazy { AndroidPermissionRequester(appContext) { build } }
   private val store by lazy { StateStore(context) }
   private val selections by lazy { SelectionStore(store) }
   private val blocks by lazy { BlockController(context, store, selections) }
@@ -44,6 +49,17 @@ class ExpoScreenTimeModule : Module() {
     if (sync) task.get()
   }
 
+  /** The gate of a function of [feature]: `UNSUPPORTED` when this build lacks what the feature needs. */
+  private fun requireInBuild(function: String, feature: Feature) {
+    if (!build.has(feature)) throw FeatureNotInBuildException(function, listOf(feature))
+  }
+
+  /** The gate of a permission request: every requested feature must be in the build (one error names them all). */
+  private fun requireInBuild(function: String, features: List<Feature>) {
+    val missing = build.missing(features)
+    if (missing.isNotEmpty()) throw FeatureNotInBuildException(function, missing)
+  }
+
   override fun definition() = ModuleDefinition {
     Name("ExpoScreenTime")
 
@@ -51,12 +67,25 @@ class ExpoScreenTimeModule : Module() {
 
     OnCreate {
       appContext.reactContext?.let { context ->
+        // A block a fuller build left in the store cannot be enforced
+        // without the shield, and `unblockAll` rejects here: lift it at
+        // launch, so a monitoring-only engine is not left with sources it
+        // cannot shield (which would stop its polling) and `isBlocked`
+        // never reads true from a build that cannot block.
+        if (!build.blocking && blocks.isBlocked()) {
+          android.util.Log.i(EngineController.TAG, "lifting a block left by a build with the shield (this build has none)")
+          blocks.unblockAll()
+        }
+        // Nothing to revive or observe in a build without the engine (a
+        // document a previous, fuller build left behind must not start a
+        // service this manifest does not declare).
+        if (!build.engine) return@let
         // The enforcement gaps are observed at launch, as the iOS module
         // observes its authorization: the exit history (a user stop, a
         // kill), the engine's liveness and the permissions. Off the main
         // thread; whichever of this and the engine's start lands first in
         // the store, the gap is reported the same.
-        observe("launch", sync = false)
+        if (build.blocking) observe("launch", sync = false)
         // The recovery path that does not depend on the system's sticky
         // restart: every launch brings the engine in line with the stored
         // desired state (and stops a stray one).
@@ -66,7 +95,7 @@ class ExpoScreenTimeModule : Module() {
 
     OnActivityEntersForeground {
       permissionRequester.onForeground()
-      observe("foreground", sync = false)
+      if (build.blocking) observe("foreground", sync = false)
     }
 
     OnDestroy {
@@ -83,12 +112,9 @@ class ExpoScreenTimeModule : Module() {
     // steps are listed and required, `member: "child"` makes the
     // notification notice and the device admin required (PermissionSteps).
     AsyncFunction("getScreenTimePermissionsAsync") { options: Map<String, Any?>?, promise: Promise ->
-      promise.resolve(
-        permissionRequester.response(
-          features = PermissionSteps.features(options?.get("features")),
-          child = PermissionSteps.isChild(options?.get("member")),
-        )
-      )
+      val features = PermissionSteps.features(options?.get("features"), build)
+      requireInBuild("getScreenTimePermissionsAsync", features)
+      promise.resolve(permissionRequester.response(features, child = PermissionSteps.isChild(options?.get("member"))))
     }
 
     // Advances onboarding by one step: `step` if given, else the first
@@ -96,13 +122,14 @@ class ExpoScreenTimeModule : Module() {
     // iOS step id, an unknown one, or a step the requested features do not
     // list (its outcome could not be reported) is a caller error.
     AsyncFunction("requestScreenTimePermissionsAsync") { options: Map<String, Any?>?, promise: Promise ->
-      val features = PermissionSteps.features(options?.get("features"))
+      val features = PermissionSteps.features(options?.get("features"), build)
+      requireInBuild("requestScreenTimePermissionsAsync", features)
       val child = PermissionSteps.isChild(options?.get("member"))
       val step = when (val requested = PermissionSteps.requestedStep(options?.get("step"))) {
         is PermissionSteps.RequestedStep.Next -> null
         is PermissionSteps.RequestedStep.Step -> {
           val device = PermissionSteps.Device(android.os.Build.VERSION.SDK_INT, VendorAutostart.screens().isNotEmpty())
-          if (PermissionSteps.plan(features, child, device).none { it.id == requested.id }) {
+          if (PermissionSteps.plan(features, child, device, build).none { it.id == requested.id }) {
             throw ScreenTimeException(
               ScreenTimeException.INVALID_CONFIG,
               "The permission step '${requested.id.name}' is not needed by the requested features (${features.joinToString(", ") { it.name }}); request the steps the response lists"
@@ -127,10 +154,13 @@ class ExpoScreenTimeModule : Module() {
     // `blocking` is "friction" (review R2): the engine shields, and a user
     // can stop it from the Task Manager or Settings, which
     // `getEnforcementGaps` reports. The limits are the cross-platform ones
-    // (the contract enforces the iOS values on both platforms).
+    // (the contract enforces the iOS values on both platforms). `blocking`
+    // is `"none"` when the config plugin left the engine or the shield out
+    // of this build (`android.features`): nothing can be enforced, and the
+    // blocking functions reject `UNSUPPORTED`.
     Function("getCapabilities") {
       mapOf(
-        "blocking" to "friction",
+        "blocking" to if (build.blocking) "friction" else "none",
         "selectableKinds" to mapOf("applications" to true, "categories" to false, "webDomains" to false),
         "webDomainBlocking" to false,
         "appRemovalProtection" to "none",
@@ -155,6 +185,7 @@ class ExpoScreenTimeModule : Module() {
     // revoked (`permissionRevoked`, open while they are). Observed here as
     // iOS observes its authorization in this function.
     AsyncFunction("getEnforcementGaps") { since: Double?, promise: Promise ->
+      requireInBuild("getEnforcementGaps", Feature.blocking)
       observe("getEnforcementGaps", sync = true)
       promise.resolve(gaps.gaps(since?.toLong()))
     }
@@ -164,21 +195,39 @@ class ExpoScreenTimeModule : Module() {
     // Same validation order, codes and semantics as the Swift `blockSelection`
     // (BlockValidation): one manual block that a second call replaces; the
     // engine process is told to look again.
-    Function("blockSelection") { selectionId: String, options: Map<String, Any?>? -> blocks.blockSelection(selectionId, options) }
+    Function("blockSelection") { selectionId: String, options: Map<String, Any?>? ->
+      requireInBuild("blockSelection", Feature.blocking)
+      blocks.blockSelection(selectionId, options)
+    }
 
     // Lifts every active block — manual, schedule, threshold — as iOS does;
     // monitoring keeps running (BlockController.unblockAll).
-    Function("unblockAll") { blocks.unblockAll() }
+    Function("unblockAll") {
+      requireInBuild("unblockAll", Feature.blocking)
+      blocks.unblockAll()
+    }
 
-    Function("isBlocked") { blocks.isBlocked() }
+    Function("isBlocked") {
+      requireInBuild("isBlocked", Feature.blocking)
+      blocks.isBlocked()
+    }
 
     // MARK: - Shield Configuration
 
-    Function("setShieldConfig") { config: Map<String, Any?> -> blocks.setShieldConfig(config) }
+    Function("setShieldConfig") { config: Map<String, Any?> ->
+      requireInBuild("setShieldConfig", Feature.blocking)
+      blocks.setShieldConfig(config)
+    }
 
-    Function("setShieldConfigForActivity") { activityName: String, config: Map<String, Any?> -> blocks.setShieldConfigForActivity(activityName, config) }
+    Function("setShieldConfigForActivity") { activityName: String, config: Map<String, Any?> ->
+      requireInBuild("setShieldConfigForActivity", Feature.blocking)
+      blocks.setShieldConfigForActivity(activityName, config)
+    }
 
-    Function("clearShieldConfig") { blocks.clearShieldConfig() }
+    Function("clearShieldConfig") {
+      requireInBuild("clearShieldConfig", Feature.blocking)
+      blocks.clearShieldConfig()
+    }
 
     // MARK: - Monitoring
 
@@ -186,35 +235,51 @@ class ExpoScreenTimeModule : Module() {
     // `startMonitoring` (MonitoringValidation); review R7: inside the
     // interval the block applies at once and one intervalDidStart is
     // recorded. The engine process is told to look again.
+    // A build with the engine but no shield (`features: ["monitoring"]`)
+    // records events and thresholds; a config that would shield is a
+    // blocking feature it does not have.
     AsyncFunction("startMonitoring") { config: Map<String, Any?>, promise: Promise ->
+      requireInBuild("startMonitoring", Feature.monitoring)
+      if (!build.blocking && monitoringConfigShields(config)) {
+        throw FeatureNotInBuildException("startMonitoring", listOf(Feature.blocking), "a selectionId or a blockOnThreshold event shields apps")
+      }
       monitoring.start(config)
       promise.resolve(null)
     }
 
     AsyncFunction("stopMonitoring") { activityName: String, promise: Promise ->
+      requireInBuild("stopMonitoring", Feature.monitoring)
       monitoring.stop(activityName)
       promise.resolve(null)
     }
 
     AsyncFunction("stopAllMonitoring") { promise: Promise ->
+      requireInBuild("stopAllMonitoring", Feature.monitoring)
       monitoring.stopAll()
       promise.resolve(null)
     }
 
-    AsyncFunction("getMonitoredActivities") { monitoring.monitoredActivities() }
+    AsyncFunction("getMonitoredActivities") {
+      requireInBuild("getMonitoredActivities", Feature.monitoring)
+      monitoring.monitoredActivities()
+    }
 
     // MARK: - Event History
 
-    AsyncFunction("getMonitorEvents") { activityName: String?, limit: Int? -> monitoring.events(activityName, limit) }
+    AsyncFunction("getMonitorEvents") { activityName: String?, limit: Int? ->
+      requireInBuild("getMonitorEvents", Feature.monitoring)
+      monitoring.events(activityName, limit)
+    }
 
     AsyncFunction("clearMonitorEvents") { activityName: String?, promise: Promise ->
+      requireInBuild("clearMonitorEvents", Feature.monitoring)
       monitoring.clearEvents(activityName)
       promise.resolve(null)
     }
 
     // MARK: - Real-time Event Listening
 
-    OnStartObserving("onMonitorEvent") { monitoring.startObserving() }
+    OnStartObserving("onMonitorEvent") { if (build.engine) monitoring.startObserving() }
 
     OnStopObserving("onMonitorEvent") { monitoring.stopObserving() }
 
@@ -226,28 +291,50 @@ class ExpoScreenTimeModule : Module() {
     // shield snooze granted from the app). `budgetSeconds` is taken as it
     // arrives so a non-number is INVALID_CONFIG, not a bridge error.
     AsyncFunction("temporaryUnlock") { budgetSeconds: Any?, options: Map<String, Any?>?, promise: Promise ->
+      requireInBuild("temporaryUnlock", Feature.blocking)
       promise.resolve(unlocks.temporaryUnlock(budgetSeconds, options))
     }
 
-    Function("isTemporarilyUnlocked") { unlocks.isTemporarilyUnlocked() }
+    Function("isTemporarilyUnlocked") {
+      requireInBuild("isTemporarilyUnlocked", Feature.blocking)
+      unlocks.isTemporarilyUnlocked()
+    }
 
-    Function("getRemainingUnlockSeconds") { unlocks.getRemainingUnlockSeconds() }
+    Function("getRemainingUnlockSeconds") {
+      requireInBuild("getRemainingUnlockSeconds", Feature.blocking)
+      unlocks.getRemainingUnlockSeconds()
+    }
 
-    Function("relock") { unlocks.relock() }
+    Function("relock") {
+      requireInBuild("relock", Feature.blocking)
+      unlocks.relock()
+    }
 
     // MARK: - Shield interactions
 
     // Read-and-clear the queue the shield Activity writes (one entry per
     // button press, collapsed per target within 2 s).
-    Function("drainShieldInteractions") { unlocks.drainShieldInteractions() }
+    Function("drainShieldInteractions") {
+      requireInBuild("drainShieldInteractions", Feature.blocking)
+      unlocks.drainShieldInteractions()
+    }
 
     // MARK: - Shield Actions
 
-    Function("setShieldActions") { config: Map<String, Any?> -> blocks.setShieldActions(config) }
+    Function("setShieldActions") { config: Map<String, Any?> ->
+      requireInBuild("setShieldActions", Feature.blocking)
+      blocks.setShieldActions(config)
+    }
 
-    Function("setShieldActionsForActivity") { activityName: String, config: Map<String, Any?> -> blocks.setShieldActionsForActivity(activityName, config) }
+    Function("setShieldActionsForActivity") { activityName: String, config: Map<String, Any?> ->
+      requireInBuild("setShieldActionsForActivity", Feature.blocking)
+      blocks.setShieldActionsForActivity(activityName, config)
+    }
 
-    Function("clearShieldActions") { blocks.clearShieldActions() }
+    Function("clearShieldActions") {
+      requireInBuild("clearShieldActions", Feature.blocking)
+      blocks.clearShieldActions()
+    }
 
     // MARK: - Selection Store
 

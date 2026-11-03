@@ -67,8 +67,9 @@ shield, and the user can stop it from the system settings, which
 - **The config plugin** prepares the app: the permissions the engine needs,
   the launcher `<queries>` intent (no `QUERY_ALL_PACKAGES`), the enforcement
   service in its own `:screentime` process, the boot and update receivers and
-  the device-admin receiver. Nothing to configure; one option
-  (`android.parentalControl`) on the [configuration page](./configuration.md#android).
+  the device-admin receiver. Nothing to configure; two options
+  (`android.parentalControl`, and `android.features` to leave out what the
+  app does not use) on the [configuration page](./configuration.md#android).
 
 ## What is off on Android
 

@@ -51,7 +51,7 @@ import expo.modules.screentime.PermissionSteps.StepId
  * Never rejects for a refused permission: a screen that could not be opened
  * is kept as the step's `error`.
  */
-internal class AndroidPermissionRequester(private val appContext: AppContext) {
+internal class AndroidPermissionRequester(private val appContext: AppContext, private val build: () -> BuildManifest) {
   private val context: Context
     get() = requireNotNull(appContext.reactContext) { "React context is not available" }
 
@@ -110,7 +110,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext) {
 
   private fun steps(features: List<PermissionSteps.Feature>, child: Boolean): List<Step> {
     val device = PermissionSteps.Device(Build.VERSION.SDK_INT, VendorAutostart.screens().isNotEmpty())
-    return PermissionSteps.plan(features, child, device).map { plan ->
+    return PermissionSteps.plan(features, child, device, build()).map { plan ->
       val (status, canPrompt) = read(plan.id)
       val error = if (status == Status.granted) null else store.permissionError(plan.id.name)?.let { PermissionSteps.StepError(it.first, it.second) }
       Step(plan.id, status, plan.required, plan.kind, error, canPrompt)

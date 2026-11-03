@@ -222,7 +222,12 @@ usage. What differs:
   `getMonitoredActivities`, `getMonitorEvents`, `clearMonitorEvents` and the
   live `onMonitorEvent` stream (`useMonitorEvents`) behave as on iOS, down
   to `getMonitorEvents` ordering: one activity oldest first, all activities
-  newest first.
+  newest first. In a build the config plugin trimmed
+  ([`android.features`](../configuration.md#android-features)) every
+  monitoring function rejects `UNSUPPORTED` without `monitoring`, and with
+  `monitoring` but not `blocking` a `startMonitoring` that would shield (a
+  `selectionId`, a `blockOnThreshold` event) rejects `UNSUPPORTED` too:
+  such a build records events and thresholds only.
 - **Schedules are a function of time.** Android has no DeviceActivity: the
   engine evaluates `block = f(now, schedules)` at every wake and every
   foreground change, so a schedule starting *now* shields at once and

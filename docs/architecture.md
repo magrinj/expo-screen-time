@@ -331,7 +331,12 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
 - `AndroidManifest.xml` — the static declarations every consumer needs
   (permissions, `<queries>`, the service and receivers), merged by Gradle;
   the plugin's Android mod (`plugin/src/android/`) only writes optional
-  app-level entries.
+  app-level entries: the `IsMonitoringTool` flag and, for `android.features`,
+  the `tools:node="remove"` entries that drop what the app's features do not
+  need. `BuildManifest.kt` reads the merged result back (PackageManager) once
+  per process; the module's entry points gate on it (`blocking` reads `none`
+  without the shield, a removed feature's functions reject `UNSUPPORTED`,
+  `PermissionSteps.plan` skips the steps of removed components).
 
 ## The opaque `selectionId` principle
 

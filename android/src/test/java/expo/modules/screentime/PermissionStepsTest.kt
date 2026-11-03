@@ -74,6 +74,41 @@ class PermissionStepsTest {
     assertFalse(vendor.last().required)
   }
 
+  // The merged manifests of the builds the config plugin's `android.features` produces.
+  private val usageReportsBuild = BuildManifest(engine = false, shield = false, deviceAdmin = false, usageAccess = true, notifications = false)
+  private val monitoringBuild = BuildManifest(engine = true, shield = false, deviceAdmin = false, usageAccess = true, notifications = true)
+  private val appRemovalBuild = BuildManifest(engine = false, shield = false, deviceAdmin = true, usageAccess = false, notifications = false)
+
+  @Test
+  fun `the full build plans as before the option existed`() {
+    for (features in listOf(PermissionSteps.defaultFeatures, listOf(Feature.usageReports), listOf(Feature.monitoring), listOf(Feature.appRemovalProtection))) {
+      assertEquals(PermissionSteps.plan(features, child = false, device = xiaomi), PermissionSteps.plan(features, child = false, device = xiaomi, build = BuildManifest.full))
+    }
+  }
+
+  @Test
+  fun `a usage-reports build asks for usage access only, whatever is requested`() {
+    assertEquals(listOf(StepId.usageAccess), ids(PermissionSteps.plan(listOf(Feature.usageReports), child = false, device = xiaomi, build = usageReportsBuild)))
+    // The module rejects a request for a feature the build lacks first; the plan still never lists a removed step.
+    assertEquals(emptyList<StepId>(), ids(PermissionSteps.plan(PermissionSteps.defaultFeatures, child = true, device = xiaomi, build = usageReportsBuild)))
+  }
+
+  @Test
+  fun `a monitoring-only build asks for the engine steps without the overlay or the device admin`() {
+    val plans = PermissionSteps.plan(listOf(Feature.monitoring), child = false, device = xiaomi, build = monitoringBuild)
+    assertEquals(listOf(StepId.usageAccess, StepId.notifications, StepId.batteryOptimization, StepId.backgroundAutostart), ids(plans))
+    assertEquals(listOf(StepId.usageAccess), required(plans))
+    // A child still requires the notice; the device admin cannot be required without its receiver.
+    assertEquals(listOf(StepId.usageAccess, StepId.notifications), required(PermissionSteps.plan(listOf(Feature.monitoring), child = true, device = xiaomi, build = monitoringBuild)))
+  }
+
+  @Test
+  fun `an app-removal build asks for the device admin only`() {
+    val plans = PermissionSteps.plan(listOf(Feature.appRemovalProtection), child = false, device = stock, build = appRemovalBuild)
+    assertEquals(listOf(StepId.deviceAdmin), ids(plans))
+    assertTrue(plans.single().required)
+  }
+
   @Test
   fun `features parse like iOS - default, unknown names dropped, order kept`() {
     assertEquals(PermissionSteps.defaultFeatures, PermissionSteps.features(null))

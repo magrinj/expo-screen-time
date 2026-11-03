@@ -20,6 +20,12 @@ package expo.modules.screentime
  * - `batteryOptimization` (recommended; the system list, no permission);
  * - `backgroundAutostart` (recommended, vendor screen, only where one exists).
  *
+ * A build the config plugin trimmed (`android.features`, read back as a
+ * [BuildManifest]) never lists a step only a removed component needs: no
+ * `overlay` without the shield, no `deviceAdmin` without its receiver, no
+ * engine steps without the engine. The module rejects a request for a
+ * feature the build lacks before planning ([BuildManifest.missing]).
+ *
  * Pure Kotlin on purpose, unit-tested in `android/src/test`.
  */
 internal object PermissionSteps {
@@ -85,12 +91,17 @@ internal object PermissionSteps {
   // MARK: - Options
 
   /**
-   * `features` from the options: absent, or not a list, is the default;
-   * names this build does not know are ignored (the JS type is the guard).
-   * Order kept, duplicates dropped.
+   * `features` from the options: absent, or not a list, is the default
+   * (`blocking`, `monitoring`) narrowed to what [build] has, so an app on a
+   * trimmed build that does not say what it uses is asked for the steps of
+   * what it can use (the hook with no options works on a monitoring-only
+   * build); with none of the default in the build the default stands, and
+   * the module rejects it naming both. An explicit list is the app's own
+   * statement and is taken as is. Names this build does not know are
+   * ignored (the JS type is the guard). Order kept, duplicates dropped.
    */
-  fun features(from: Any?): List<Feature> {
-    val names = from as? List<*> ?: return defaultFeatures
+  fun features(from: Any?, build: BuildManifest = BuildManifest.full): List<Feature> {
+    val names = from as? List<*> ?: return defaultFeatures.filter(build::has).ifEmpty { defaultFeatures }
     val features = mutableListOf<Feature>()
     for (name in names) {
       val feature = (name as? String)?.let { n -> Feature.values().firstOrNull { it.name == n } } ?: continue
@@ -111,14 +122,19 @@ internal object PermissionSteps {
 
   // MARK: - Steps
 
-  /** The steps `features` need on [device], in onboarding order. */
-  fun plan(features: List<Feature>, child: Boolean, device: Device): List<Plan> {
-    val engine = Feature.blocking in features || Feature.monitoring in features
+  /**
+   * The steps `features` need on [device], in onboarding order, among those
+   * [build] can grant: the overlay is the shield's (a build with the engine
+   * but no shield only records events), the device admin needs its
+   * receiver, the engine steps need the engine.
+   */
+  fun plan(features: List<Feature>, child: Boolean, device: Device, build: BuildManifest = BuildManifest.full): List<Plan> {
+    val engine = build.engine && (Feature.blocking in features || Feature.monitoring in features)
     val plans = mutableListOf<Plan>()
-    if (engine) plans.add(Plan(StepId.overlay, required = true, kind = Kind.settings))
-    if (engine || Feature.usageReports in features) plans.add(Plan(StepId.usageAccess, required = true, kind = Kind.settings))
-    if (engine && device.sdkInt >= 33) plans.add(Plan(StepId.notifications, required = child, kind = Kind.prompt))
-    if (engine || Feature.appRemovalProtection in features) {
+    if (engine && build.shield) plans.add(Plan(StepId.overlay, required = true, kind = Kind.settings))
+    if (build.usageAccess && (engine || Feature.usageReports in features)) plans.add(Plan(StepId.usageAccess, required = true, kind = Kind.settings))
+    if (engine && build.notifications && device.sdkInt >= 33) plans.add(Plan(StepId.notifications, required = child, kind = Kind.prompt))
+    if (build.deviceAdmin && (engine || Feature.appRemovalProtection in features)) {
       plans.add(Plan(StepId.deviceAdmin, required = child || Feature.appRemovalProtection in features, kind = Kind.settings))
     }
     if (engine) plans.add(Plan(StepId.batteryOptimization, required = false, kind = Kind.settings))
