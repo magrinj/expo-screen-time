@@ -220,8 +220,7 @@ ExpoScreenTime.clearShieldActions();
 
 ## Android {#android}
 
-**Preview, not yet enabled** (see [blocking](./blocking.md#android)). On
-Android there is no system shield: the library draws a full-screen Activity
+On Android there is no system shield (see [blocking](./blocking.md#android)): the library draws a full-screen Activity
 over the blocked app and maps the stored `ShieldConfig` onto it with the same
 precedence as iOS (the configuration of the source that owns the shield, else
 the default: a threshold block, else the latest schedule covering the app,

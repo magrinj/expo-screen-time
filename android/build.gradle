@@ -6,27 +6,11 @@ plugins {
 group = 'expo.modules.screentime'
 version = '0.2.0' // x-release-please-version
 
-// Internal preview of the blocking slices of the Android port, OFF by default
-// and not a public option ("Android steps"): every
-// blocking scenario of the conformance suite keys on `getCapabilities().blocking`,
-// so the capability can only flip once monitoring and unlocks exist too
-//, and until then the implemented functions stay behind this
-// switch. A Gradle project property keeps it out of the config plugin, the
-// app config and the JS surface: `-PexpoScreenTime.blockingPreview=true` on
-// the consumer's Gradle invocation, or the same line in its gradle.properties.
-// The default build compiles the constant to `false`, and the module registers
-// exactly the functions it registered before.
-def blockingPreview = (findProperty('expoScreenTime.blockingPreview') ?: 'false').toString().toBoolean()
-
 android {
   namespace "expo.modules.screentime"
   defaultConfig {
     versionCode 1
     versionName "0.2.0" // x-release-please-version
-    buildConfigField "boolean", "BLOCKING_PREVIEW", blockingPreview.toString()
-  }
-  buildFeatures {
-    buildConfig true
   }
   lintOptions {
     abortOnError false

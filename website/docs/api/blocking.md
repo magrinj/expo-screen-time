@@ -6,10 +6,10 @@ sidebar_position: 4
 
 # Blocking
 
-The functions below are iOS today. Their Android implementation exists behind
-an internal switch and is described in the [Android notes](#android) at the
-end of this page; until it is enabled, `getCapabilities().blocking` is
-`"none"` there and every call fails with `UNSUPPORTED`.
+The functions below work on iOS and Android. On iOS the OS enforces the block
+(`getCapabilities().blocking` is `"enforced"`); on Android the library's own
+engine does, and the user can stop it (`"friction"`): the [Android
+notes](#android) at the end of this page say what differs.
 
 ## Apps & Categories
 
@@ -302,12 +302,10 @@ versions before these fields existed (they still drain).
 
 ## Android {#android}
 
-**Preview, not yet enabled:** everything in this section is implemented and
-exercised by the behavioural suite, but ships behind an internal build switch
-with `getCapabilities().blocking` still `"none"`, because the suite's blocking
-flows key on that capability and it can only flip once monitoring and unlocks
-exist too (see [platform support](../platform-support.md)). It documents what
-an app written against the capability will get.
+`getCapabilities().blocking` is `"friction"` on Android: the block holds,
+but the user can lift it through routes the app cannot close, and
+[`getEnforcementGaps()`](./capabilities.md#getenforcementgapssince) reports
+when that happened.
 
 - **`blockSelection`, `unblockAll`, `isBlocked`** keep the iOS contract: the
   same validation order and codes (`SELECTION_NOT_FOUND` before the mode is
@@ -327,7 +325,7 @@ an app written against the capability will get.
   forward (p95 176 ms), and the user sees the app's splash, never its content.
   Nothing is polled with the screen off or without a block. The user can
   still stop the engine (Task Manager, force stop, revoking usage access or
-  the overlay permission); such periods will be reported by
+  the overlay permission); such periods are reported by
   `getEnforcementGaps`, which is why the capability is `"friction"`.
 - **Allowlist = launchable apps.** `{ mode: 'allowlist' }` shields every
   app with a launcher entry except the selection's apps. Apps without a
@@ -343,7 +341,10 @@ an app written against the capability will get.
 - **Picture-in-picture** does not bypass the block on Android 10+: when the
   blocked app's pinned window is found floating over the shield, whether it
   was opened before or after the block, the engine evicts it (one pinned
-  window exists per screen, and the library briefly takes it). Android 7–9
+  window exists per screen, and the library briefly takes it). A window
+  opened in the last 3 seconds before the block starts is evicted once it
+  has been paused that long, so an ordinary app switch is never mistaken
+  for one. Android 7–9
   report no "stopped" event, so a PiP window cannot be told from an app that
   left, and is not evicted there. **Screen pinning** (a Settings toggle)
   keeps every other task from starting, the shield included; the engine

@@ -9,7 +9,7 @@ An Expo module that wraps Apple's Screen Time APIs (FamilyControls, ManagedSetti
 
 📚 **[Full documentation → magrinj.github.io/expo-screen-time](https://magrinj.github.io/expo-screen-time/)**
 
-> **Note:** This module is iOS-only. On Android it installs and builds, but every call fails with `UNSUPPORTED` — see [Platform support](https://magrinj.github.io/expo-screen-time/platform-support).
+> **Note:** iOS is OS-enforced; Android ships the module's own engine (blocking, schedules, thresholds, temporary unlock) as `friction` the user can lift, which `getEnforcementGaps()` reports. Categories, web domains and usage reports are iOS-only — see [Platform support](https://magrinj.github.io/expo-screen-time/platform-support).
 
 ## Features
 

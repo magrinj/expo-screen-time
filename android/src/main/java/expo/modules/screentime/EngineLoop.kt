@@ -2,6 +2,7 @@ package expo.modules.screentime
 
 import android.app.ActivityManager
 import android.app.AlarmManager
+import android.app.AppOpsManager
 import android.app.PendingIntent
 import android.app.usage.UsageEvents
 import android.app.usage.UsageEventsQuery
@@ -14,6 +15,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.PowerManager
+import android.os.Process
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -91,6 +93,17 @@ import java.util.TimeZone
  * runs. The composition honours the grant's [SuspendedSources] and the
  * lifted set (snoozed apps, the shield's unblocks); the grant survives the
  * process (it is read back from the document with its meter).
+ *
+ * **Enforcement gaps.** The loop is the engine's heartbeat for
+ * [EnforcementGapTracker]: one beat every [EnforcementGapTracker.HEARTBEAT_INTERVAL_MS]
+ * on the engine thread (a timer that sleeps with the CPU, which is why a
+ * live process is never judged stale), plus one on every screen on/off and
+ * `USER_PRESENT` (keeps the last beat tight around the periods that
+ * matter), one on `ACTION_SHUTDOWN` (where a reboot's gap starts), and one
+ * whenever an enforcement AppOp changes (`GET_USAGE_STATS`,
+ * `SYSTEM_ALERT_WINDOW`: a revocation is observed at once, not at the next
+ * minute). Every beat carries the engine's own permission check, so a
+ * permission gap opens and closes from here too ([EnforcementGapRecorder]).
  */
 internal class EngineLoop(private val context: Context) {
   private val thread = HandlerThread("expo-st-engine").apply { start() }
@@ -100,6 +113,8 @@ internal class EngineLoop(private val context: Context) {
   private val alarms = context.getSystemService(AlarmManager::class.java)
   private val store = StateStore(context)
   private val selections = SelectionStore(store)
+  private val gaps = EnforcementGapRecorder(context, store)
+  private val appOps = context.getSystemService(AppOpsManager::class.java)
   // ACTIVITY_STOPPED exists from API 29; below, a paused activity is gone.
   private val tracker = ForegroundTracker(tracksStopped = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
 
@@ -184,6 +199,19 @@ internal class EngineLoop(private val context: Context) {
     }
   }
 
+  /** The gap tracker's beat: every minute while the engine runs, and on the events below. */
+  private val heartbeat = object : Runnable {
+    override fun run() {
+      guarded("heartbeat") { beat("timer") }
+      handler.postDelayed(this, EnforcementGapTracker.HEARTBEAT_INTERVAL_MS)
+    }
+  }
+
+  /** An enforcement AppOp changed (usage access, the overlay): observed at once, on the engine thread. */
+  private val appOpsListener = AppOpsManager.OnOpChangedListener { op, packageName ->
+    if (packageName == null || packageName == context.packageName) handler.post { guarded("appops") { beat("appops:$op") } }
+  }
+
   /**
    * The in-process twin of the alarm: while the engine lives, a schedule
    * boundary is evaluated at the instant it falls (a handler callback is
@@ -201,9 +229,12 @@ internal class EngineLoop(private val context: Context) {
         when (intent.action) {
           Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
             handler.removeCallbacks(settleAfterScreenOff)
+            // The beat on its own: the shield step must never wait on the gap bookkeeping.
+            guarded("beat") { beat(intent.action!!.substringAfterLast('.')) }
             step(intent.action!!.substringAfterLast('.'))
           }
           Intent.ACTION_SCREEN_OFF -> {
+            guarded("beat") { beat("SCREEN_OFF") }
             // Nothing is in use behind a dark screen: the in-use stretches
             // close now, on the known power state, so no dark second is charged.
             meter("SCREEN_OFF", interactive = false)
@@ -220,6 +251,7 @@ internal class EngineLoop(private val context: Context) {
             Log.i(TAG, "clock changed by $delta ms (TIME_SET); window restarted")
             restartWindow(OVERLAP_MS)
             if (delta != 0L) shiftClock(delta)
+            if (delta != 0L) guarded("gaps clock") { gaps.clockShifted(delta) }
             // The posted wake was computed on the old clock: re-arm from scratch.
             armedWakeMs = null
             step("TIME_SET")
@@ -230,6 +262,12 @@ internal class EngineLoop(private val context: Context) {
             restartWindow(OVERLAP_MS)
             armedWakeMs = null
             step("TIMEZONE_CHANGED")
+          }
+          // The device is going down: the beat marks where a reboot's gap starts, and the totals are written.
+          Intent.ACTION_SHUTDOWN -> {
+            guarded("beat") { gaps.heartbeat(Process.myPid(), "shutdown", shutdown = true) }
+            persist("shutdown", force = true)
+            persistMeters("shutdown")
           }
           Intent.ACTION_PACKAGE_ADDED, Intent.ACTION_PACKAGE_REMOVED, Intent.ACTION_PACKAGE_CHANGED -> if (sources.isNotEmpty()) reloadSets()
         }
@@ -244,6 +282,7 @@ internal class EngineLoop(private val context: Context) {
       addAction(Intent.ACTION_USER_PRESENT)
       addAction(Intent.ACTION_TIME_CHANGED)
       addAction(Intent.ACTION_TIMEZONE_CHANGED)
+      addAction(Intent.ACTION_SHUTDOWN)
     }
     val packages = IntentFilter().apply {
       addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -255,6 +294,14 @@ internal class EngineLoop(private val context: Context) {
     // 33+ (the flag is required for receivers that also take app broadcasts).
     context.registerReceiver(receiver, filter, null, handler)
     context.registerReceiver(receiver, packages, null, handler)
+    for (op in ENFORCEMENT_OPS) {
+      try {
+        appOps?.startWatchingMode(op, context.packageName, appOpsListener)
+      } catch (e: Exception) {
+        Log.w(TAG, "cannot watch $op: ${e.javaClass.simpleName}: ${e.message}")
+      }
+    }
+    handler.postDelayed(heartbeat, EnforcementGapTracker.HEARTBEAT_INTERVAL_MS)
     ShieldActivity.shownListener = { target -> handler.post { onShieldShown(target) } }
     // A press that lifted its target (unblock, snooze) is read back here,
     // ahead of the next poll, so the app the user is returned to is not
@@ -288,12 +335,13 @@ internal class EngineLoop(private val context: Context) {
         stopPolling("stop")
         handler.removeCallbacks(settleAfterScreenOff)
         handler.removeCallbacks(wake)
+        handler.removeCallbacks(heartbeat)
         persist("stop", force = true)
         persistMeters("stop")
         // The alarm outlives the service only while something is scheduled;
         // it is then one path that brings the engine back (the system may
-        // refuse a background start; a refusal is recorded, step 6's
-        // restart path is the other).
+        // refuse a background start; a refusal is recorded as a gap; the
+        // restart path that does not rely on the sticky restart is still open).
         arm(monitoring.nextWakeMs(System.currentTimeMillis(), zone))
         handler.removeCallbacks(wake)
         ShieldActivity.dismiss()
@@ -308,11 +356,19 @@ internal class EngineLoop(private val context: Context) {
       // not registered: nothing to do
     }
     try {
+      appOps?.stopWatchingMode(appOpsListener)
+    } catch (e: Exception) {
+      // never watched: nothing to do
+    }
+    try {
       thread.join(STOP_JOIN_MS)
     } catch (e: InterruptedException) {
       Thread.currentThread().interrupt()
     }
   }
+
+  /** One beat of the gap tracker from this process, with the engine's own permission check. */
+  private fun beat(reason: String) = gaps.heartbeat(Process.myPid(), reason)
 
   // MARK: - The monitoring step
 
@@ -621,8 +677,8 @@ internal class EngineLoop(private val context: Context) {
    * Without the overlay permission the activity start from this process is
    * refused (no BAL exemption): polling would only burn
    * battery. Checked at every start and before every shield (the permission
-   * can be revoked under a block); recorded once for getEnforcementGaps
-   *.
+   * can be revoked under a block); recorded once in the failures (the gap
+   * itself is the tracker's, from the beat the AppOps watcher triggers).
    */
   private fun hasOverlayPermission(why: String): Boolean {
     if (Settings.canDrawOverlays(context)) {
@@ -661,14 +717,16 @@ internal class EngineLoop(private val context: Context) {
         val kind = UsageEventKind.of(type)
         if (kind != UsageEventKind.OTHER && event.timeStamp > cursor) usage.add(UsageEvent(event.timeStamp, event.packageName, kind, event.className))
       }
-      if (type != UsageEvents.Event.ACTIVITY_RESUMED && type != UsageEvents.Event.ACTIVITY_PAUSED && type != ACTIVITY_STOPPED && type != ACTIVITY_DESTROYED) continue
+      if (type != UsageEvents.Event.ACTIVITY_RESUMED && type != UsageEvents.Event.ACTIVITY_PAUSED && type != ACTIVITY_STOPPED && type != ACTIVITY_DESTROYED &&
+        type != ForegroundTracker.DEVICE_SHUTDOWN && type != ForegroundTracker.DEVICE_STARTUP
+      ) continue
       if (event.timeStamp < trackerBegin) continue
       val key = "${event.timeStamp}|$type|${event.packageName}/${event.className}"
       if (seen.put(key, event.timeStamp) != null) continue
       // A fresh event for a package resets its re-enforcement budget.
       reenforced.remove(event.packageName)
       if (type == UsageEvents.Event.ACTIVITY_RESUMED) evicted.remove(event.packageName)
-      tracker.apply(type, event.packageName, event.className)?.let { cameForward.putIfAbsent(it, event.timeStamp) }
+      tracker.apply(type, event.packageName, event.className, event.timeStamp)?.let { cameForward.putIfAbsent(it, event.timeStamp) }
     }
     lastEnd = now
     if (seen.size > SEEN_CAP) seen.values.removeAll { it < now - 2 * OVERLAP_MS }
@@ -703,7 +761,9 @@ internal class EngineLoop(private val context: Context) {
     // shield goes up; its follow-up evicts a PiP window. Capped per target
     // until a fresh event arrives, so a stale entry never relaunches the
     // shield every second over whatever is really in front.
-    val standing = ShieldPolicy.targets(visibleNow, sources, launchable, exempt, lifted)
+    // A paused app counts only once its pause has settled ([ForegroundTracker.visibleAt]): read
+    // mid-switch, the app leaving looks like a PiP window.
+    val standing = ShieldPolicy.targets(tracker.visibleAt(now, PAUSE_SETTLE_MS), sources, launchable, exempt, lifted)
     val up = SystemClock.uptimeMillis()
     if (standing.isNotEmpty() && ShieldActivity.showing == null && up > evictingUntil && (replay || up - lastShieldAt > REENFORCE_MS)) {
       val target = standing.first()
@@ -741,6 +801,7 @@ internal class EngineLoop(private val context: Context) {
           UsageEvents.Event.KEYGUARD_SHOWN,
           UsageEvents.Event.KEYGUARD_HIDDEN,
           UsageEvents.Event.DEVICE_SHUTDOWN,
+          UsageEvents.Event.DEVICE_STARTUP,
         )
         .build()
       return usage.queryEvents(query)
@@ -758,8 +819,8 @@ internal class EngineLoop(private val context: Context) {
     if (isLockTaskActive()) {
       // Screen pinning: the system refuses every other task while an app is
       // pinned, so the shield cannot start. Recorded once per pinned
-      // session for getEnforcementGaps; the pin ends with the
-      // user's gesture, after which the next event is caught normally.
+      // session in the failures; the pin ends with the user's gesture,
+      // after which the next event is caught normally.
       if (!lockTaskRecorded) {
         lockTaskRecorded = true
         Log.w(TAG, "screen pinning active: the shield cannot start over $target")
@@ -930,6 +991,12 @@ internal class EngineLoop(private val context: Context) {
     const val PERSIST_MS = 30_000L
     const val SEED_MS = 6 * 60 * 60 * 1_000L
     const val REENFORCE_MS = 1_000L
+
+    /**
+     * How old a pause must be before the standing check takes a paused, unstopped app as on screen
+     * (PiP): an app switch's STOPPED lands within about a second, plus the stream's lag ([LAG_MS]).
+     */
+    const val PAUSE_SETTLE_MS = 3_000L
     const val FOLLOW_UP_MS = 800L
     const val CONFIRM_MS = 500L
     const val EVICT_MS = 2_000L
@@ -938,6 +1005,8 @@ internal class EngineLoop(private val context: Context) {
     const val STOP_JOIN_MS = 3_000L
     const val MAX_REENFORCE = 3
     const val MAX_EVICTIONS = 2
+    /** The AppOps behind the enforcement steps (`EnforcementGapTracker.ENFORCEMENT_STEPS`), watched for a revocation under a block. */
+    private val ENFORCEMENT_OPS = listOf(AppOpsManager.OPSTR_GET_USAGE_STATS, AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW)
     private const val SEEN_CAP = 512
 
     // Public since API 29 (`ACTIVITY_STOPPED`); `ACTIVITY_DESTROYED` is

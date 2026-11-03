@@ -93,8 +93,30 @@ internal val NATIVE_FUNCTIONS: List<NativeFunction> = listOf(
   async("clearMonitorEvents", 1)
 )
 
-/** The step-3, step-4 and step-5 surface, behind the preview switch until `blocking` flips with the enforcement gaps. */
-internal val BLOCKING_PREVIEW_FUNCTIONS: Set<String> = setOf(
+/**
+ * Functions with a real Android definition in [ExpoScreenTimeModule]: the
+ * permission steps, the selection store, blocking and
+ * the shield, monitoring, the temporary unlock and the
+ * shield interactions and the enforcement gaps. The
+ * rest (web domains, app control, reporting, `openApplication`, the debug
+ * helper) rejects `UNSUPPORTED` with `getCapabilities()` saying so.
+ */
+internal val IMPLEMENTED: Set<String> = setOf(
+  "getCapabilities",
+  "getScreenTimePermissionsAsync",
+  "requestScreenTimePermissionsAsync",
+  // Selection store
+  "listSelections",
+  "hasSelection",
+  "getSelectionMetadata",
+  "deleteSelection",
+  "getTokens",
+  "removeToken",
+  "mergeSelections",
+  "keepCommonSelections",
+  "subtractSelection",
+  "exportSelection",
+  "importSelection",
   // Blocking
   "blockSelection",
   "unblockAll",
@@ -120,30 +142,6 @@ internal val BLOCKING_PREVIEW_FUNCTIONS: Set<String> = setOf(
   "setShieldActions",
   "setShieldActionsForActivity",
   "clearShieldActions",
+  // Enforcement gaps
+  "getEnforcementGaps",
 )
-
-/**
- * Functions with a real Android definition in [ExpoScreenTimeModule]. The
- * blocking, monitoring and unlock functions
- * join only under the internal preview switch (`BuildConfig.BLOCKING_PREVIEW`,
- * `android/build.gradle`): the default build registers exactly the set it
- * registered before the slices. The switch goes when `getEnforcementGaps`
- * is wired and the preview build passes the whole conformance suite.
- */
-internal val IMPLEMENTED: Set<String> = setOf(
-  "getCapabilities",
-  "getScreenTimePermissionsAsync",
-  "requestScreenTimePermissionsAsync",
-  // Selection store
-  "listSelections",
-  "hasSelection",
-  "getSelectionMetadata",
-  "deleteSelection",
-  "getTokens",
-  "removeToken",
-  "mergeSelections",
-  "keepCommonSelections",
-  "subtractSelection",
-  "exportSelection",
-  "importSelection",
-) + if (BuildConfig.BLOCKING_PREVIEW) BLOCKING_PREVIEW_FUNCTIONS else emptySet()

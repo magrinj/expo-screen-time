@@ -40,7 +40,7 @@ internal object UsageMeter {
    * An interval between two consecutive samples longer than this is not
    * charged, whatever the previous sample said: the engine was not
    * observing (frozen, killed, the device asleep), so that time is
-   * unmeasured — step 6 reports it as an enforcement gap. Below it, a short
+   * unmeasured — `getEnforcementGaps` reports it. Below it, a short
    * stall (a GC pause, a late tick) is charged in full when the target was
    * in use, fail closed. The engine ticks every 100 ms; sixty seconds is
    * far outside any tick jitter.

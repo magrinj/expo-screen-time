@@ -11,9 +11,9 @@ import android.util.Log
  * being set, later), the restart receiver (boot, update) and the service
  * itself.
  *
- * The engine runs only while there is something to enforce. Nothing sets the
- * desired state yet; blocks, schedules and unlocks will, through
- * [setDesired].
+ * The engine runs only while there is something to enforce: the module's
+ * mutations derive the desired state ([StateStore.syncEngineDesired]) and
+ * record a release for `getEnforcementGaps` ([EnforcementGapRecorder]).
  *
  * A `startForegroundService` can be refused (the app is in the background on
  * Android 12+ without an exemption, a stopped app on 15+); the refusal is
@@ -23,11 +23,6 @@ import android.util.Log
  */
 internal object EngineController {
   const val TAG = "ExpoScreenTime"
-
-  fun setDesired(context: Context, desired: Boolean) {
-    StateStore(context).engineDesired = desired
-    sync(context, if (desired) "desired" else "released")
-  }
 
   /**
    * Brings the service in line with the desired state.
@@ -71,7 +66,12 @@ internal object EngineController {
       // in background", or ForegroundServiceStartNotAllowedException, its
       // 31+ subclass) and SecurityException are the documented refusals.
       Log.w(TAG, "engine start refused ($reason): ${e.javaClass.simpleName}: ${e.message}")
-      StateStore(app).recordEngineFailure("start:${e.javaClass.simpleName}", e.message)
+      val store = StateStore(app)
+      store.recordEngineFailure("start:${e.javaClass.simpleName}", e.message)
+      // Wanted and refused: unless the run's process is still alive (a SYNC
+      // refused while the service already runs changes nothing), the engine
+      // is down and a gap opens now (`getEnforcementGaps`).
+      if (desired) EnforcementGapRecorder(app, store).engineRefused("start:${e.javaClass.simpleName}", certain = false)
     }
   }
 }

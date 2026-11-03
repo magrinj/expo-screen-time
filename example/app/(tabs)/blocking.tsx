@@ -5,6 +5,7 @@ import ExpoScreenTime, {
   CategoryLabel,
   isScreenTimeError,
   WebDomainLabel,
+  type EnforcementGap,
   type ShieldInteraction,
   type TokenHandle,
 } from "expo-screen-time";
@@ -28,6 +29,8 @@ export default function BlockingScreen() {
   // The bench for the unlock proofs: any budget (the API floors it at 30 s).
   const [unlockBudget, setUnlockBudget] = useState("300");
   const [interactions, setInteractions] = useState<ShieldInteraction[]>([]);
+  // The bench for the gap proofs: every gap, oldest first; `to` is null while one is open.
+  const [gaps, setGaps] = useState<EnforcementGap[] | null>(null);
 
   useFocusEffect(
     useCallback(() => {
@@ -68,6 +71,17 @@ export default function BlockingScreen() {
   // pressed app's handle and the owning activity.
   const handleDrainInteractions = () => {
     setInteractions(ExpoScreenTime.drainShieldInteractions());
+  };
+
+  // Periods when a block was intended but not enforced (a user stop, a kill,
+  // a reboot, a revoked permission): `to` is null while the gap is open.
+  const handleRefreshGaps = async (sinceNow = false) => {
+    try {
+      setGaps(await ExpoScreenTime.getEnforcementGaps(sinceNow ? Date.now() : undefined));
+    } catch (error) {
+      const code = isScreenTimeError(error) ? error.code : "unknown";
+      Alert.alert("Error", `Could not read the enforcement gaps (${code})`);
+    }
   };
 
   const handleRelock = () => {
@@ -356,6 +370,35 @@ export default function BlockingScreen() {
                   iconColor={colors.warning}
                   title={`${press.button} · ${press.target?.type ?? "no target"} · ${press.activityName ?? "manual block"}`}
                   subtitle={new Date(press.timestamp).toLocaleTimeString()}
+                />
+              ))}
+            </Card>
+          )}
+
+          {/* Enforcement gaps */}
+          <SectionHeader title="Enforcement Gaps" />
+          <ActionButton
+            title="Refresh enforcement gaps"
+            icon="alert-circle-outline"
+            color={colors.primary}
+            onPress={() => handleRefreshGaps()}
+          />
+          <ActionButton
+            title="Gaps still open (since now)"
+            icon="time-outline"
+            color={colors.primary}
+            onPress={() => handleRefreshGaps(true)}
+          />
+          {gaps !== null && (
+            <Card>
+              {gaps.length === 0 && <Text style={styles.hint}>No gap recorded</Text>}
+              {gaps.map((gap, index) => (
+                <Row
+                  key={`gap-${gap.from}-${index}`}
+                  icon={gap.to === null ? "alert-circle" : "alert-circle-outline"}
+                  iconColor={gap.to === null ? colors.danger : colors.warning}
+                  title={`${gap.reason} · ${gap.to === null ? "open" : `${Math.round((gap.to - gap.from) / 1000)} s`}`}
+                  subtitle={`${new Date(gap.from).toLocaleTimeString()} → ${gap.to === null ? "…" : new Date(gap.to).toLocaleTimeString()}`}
                 />
               ))}
             </Card>

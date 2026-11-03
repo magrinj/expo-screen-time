@@ -580,9 +580,166 @@ class EnforcementGapsAndroidTest {
     val skewed = tracker.recordExits(listOf(stopApp(runStart + 20 * minute, 100)), engine, runStart + 11 * minute)
     assertEquals(listOf(Triple(runStart + 11 * minute, null, Reason.stoppedByUser)), skewed.gaps.shapes())
     assertEquals(listOf(Triple(runStart + 11 * minute, runStart + 12 * minute, Reason.stoppedByUser)), skewed.engineStopped(runStart + 12 * minute, engineAlive = false).gaps.shapes())
-    // Inside a start, the skewed record and the stale estimate are still one gap.
+    // Inside a start, the skewed record starts at now and so closes at once: a
+    // zero-length engine gap is under the minimum and is dropped.
     val back = tracker.engineStarted(runStart + 20 * minute, 101, listOf(stopApp(runStart + 25 * minute, 100)), engine, bootTime = null)
-    assertEquals(listOf(Triple(runStart + 20 * minute, runStart + 20 * minute, Reason.stoppedByUser)), back.gaps.shapes())
+    assertTrue(back.gaps.isEmpty())
+  }
+
+  @Test
+  fun `a closed engine gap shorter than the minimum is dropped - a sticky restart in seconds left no hole`() {
+    val tracker = running(runStart, pid = 100, until = runStart + 10 * minute)
+    val killed = runStart + 10 * minute + 30_000
+    val signaled = ExitRecord(ExitReasons.SIGNALED, killed, 100, engine, "signal 9")
+    val quick = tracker.engineStarted(killed + 2_000, 101, listOf(signaled), engine, bootTime = bootBefore)
+    assertTrue(quick.gaps.isEmpty())
+    assertEquals(killed + 2_000, quick.run!!.startedAt)
+    // The record is still seen: the next history will not fold it again.
+    assertTrue(signaled.key in quick.seenExits)
+    val slow = tracker.engineStarted(killed + EnforcementGapTracker.MIN_ENGINE_GAP_MS, 101, listOf(signaled), engine, bootTime = bootBefore)
+    assertEquals(listOf(Triple(killed, killed + EnforcementGapTracker.MIN_ENGINE_GAP_MS, Reason.killedBySystem)), slow.gaps.shapes())
+    // A user stop is reported whatever its length once past the minimum; under it, it is dropped too.
+    val stopped = tracker.engineStarted(killed + 5_000, 101, listOf(stopApp(killed, 100)), engine, bootTime = bootBefore)
+    assertTrue(stopped.gaps.isEmpty())
+    // Open gaps are never subject to the minimum: a death seen one second ago is open.
+    val open = tracker.recordExits(listOf(signaled), engine, killed + 1_000)
+    assertEquals(listOf(Triple(killed, null, Reason.killedBySystem)), open.gaps.shapes())
+  }
+
+  // MARK: - Reboot by boot count, shutdown beat, refused start, the app's look, clock shift
+
+  @Test
+  fun `a reboot is known by the boot count, not the wall clock`() {
+    val lastBeat = runStart + 10 * minute
+    val booted = EnforcementGapTracker().engineStarted(runStart, 100, emptyList(), engine, bootTime = bootBefore, bootCount = 7)
+      .heartbeat(lastBeat, 100)
+    assertEquals(7, booted.run!!.bootCount)
+    // The clock jumped forward by an hour (the boot time, derived from it, now reads after the last beat): same boot, same process, no gap.
+    val jumped = booted.engineStarted(lastBeat + 60 * minute, 100, emptyList(), engine, bootTime = lastBeat + 30 * minute, bootCount = 7)
+    assertTrue(jumped.gaps.isEmpty())
+    assertEquals(runStart, jumped.run!!.startedAt)
+    // A new process in the same boot with a stale heartbeat is a kill, not a reboot.
+    val killed = booted.engineStarted(lastBeat + 60 * minute, 101, emptyList(), engine, bootTime = lastBeat + 30 * minute, bootCount = 7)
+    assertEquals(listOf(Triple(lastBeat + minute, lastBeat + 60 * minute, Reason.killedBySystem)), killed.gaps.shapes())
+    // Another boot count is a reboot even when the boot time reads before the last beat (a clock set back after the boot).
+    val rebooted = booted.engineStarted(lastBeat + 60 * minute, 101, emptyList(), engine, bootTime = lastBeat - 5 * minute, bootCount = 8)
+    assertEquals(listOf(Triple(lastBeat - 5 * minute, lastBeat + 60 * minute, Reason.unknown)), rebooted.gaps.shapes())
+    assertTrue(rebooted.gaps.single().detail.startsWith("reboot: boot 8"))
+    assertEquals(8, rebooted.run!!.bootCount)
+    // A run stored without a count (an older document) falls back to the boot time.
+    val legacy = running(runStart, pid = 100, until = lastBeat + 1)
+    assertNull(legacy.run!!.bootCount)
+    val legacyReboot = legacy.engineStarted(lastBeat + 60 * minute, 101, emptyList(), engine, bootTime = lastBeat + 30 * minute, bootCount = 8)
+    assertEquals(listOf(Triple(lastBeat + 30 * minute, lastBeat + 60 * minute, Reason.unknown)), legacyReboot.gaps.shapes())
+  }
+
+  @Test
+  fun `a single reboot's gap starts at the boot, not at the shutdown (a phone off overnight is not a gap)`() {
+    val tracker = EnforcementGapTracker().engineStarted(runStart, 100, emptyList(), engine, bootTime = bootBefore, bootCount = 7)
+    val shutdown = runStart + 10 * minute + 20_000
+    val off = tracker.heartbeat(runStart + 10 * minute, 100).heartbeat(shutdown, 100, shutdown = true)
+    assertEquals(shutdown, off.run!!.shutdownAt)
+    assertEquals(shutdown, off.run!!.heartbeatAt)
+    val boot = shutdown + 8 * 60 * minute
+    val back = off.engineStarted(boot + minute, 101, emptyList(), engine, bootTime = boot, bootCount = 8)
+    assertEquals(listOf(Triple(boot, boot + minute, Reason.unknown)), back.gaps.shapes())
+    assertTrue(back.gaps.single().detail.contains("shutdown at $shutdown"))
+    assertFalse(back.gaps.single().detail.contains("without the engine"))
+    // Without a shutdown beat, the same.
+    val silent = tracker.heartbeat(runStart + 10 * minute, 100).engineStarted(boot + minute, 101, emptyList(), engine, bootTime = boot, bootCount = 8)
+    assertEquals(listOf(Triple(boot, boot + minute, Reason.unknown)), silent.gaps.shapes())
+  }
+
+  @Test
+  fun `a boot the engine missed (safe mode) starts the gap at the shutdown beat, which later beats keep, else at the last heartbeat`() {
+    val tracker = EnforcementGapTracker().engineStarted(runStart, 100, emptyList(), engine, bootTime = bootBefore, bootCount = 7)
+    val lastBeat = runStart + 10 * minute
+    val shutdown = lastBeat + 20_000
+    val off = tracker.heartbeat(lastBeat, 100).heartbeat(shutdown, 100, shutdown = true)
+    // Boot 8 ran without the engine (safe mode: no third-party app starts), boot 9 brings it back.
+    val boot = shutdown + 40 * minute
+    val back = off.engineStarted(boot + minute, 101, emptyList(), engine, bootTime = boot, bootCount = 9)
+    assertEquals(listOf(Triple(shutdown, boot + minute, Reason.unknown)), back.gaps.shapes())
+    assertTrue(back.gaps.single().detail.endsWith("1 boot(s) without the engine"))
+    // The shutdown sequence lasts seconds and other beats land inside it (SCREEN_OFF, the timer): the mark stays.
+    val later = off.heartbeat(shutdown + 3_000, 100)
+    assertEquals(shutdown, later.run!!.shutdownAt)
+    assertEquals(listOf(Triple(shutdown, boot + minute, Reason.unknown)), later.engineStarted(boot + minute, 101, emptyList(), engine, bootTime = boot, bootCount = 9).gaps.shapes())
+    // A new run (any process, any boot) starts without one.
+    assertNull(off.engineStarted(shutdown + minute, 101, emptyList(), engine, bootTime = bootBefore, bootCount = 7).run!!.shutdownAt)
+    // No shutdown beat (a forced power-off): from the last heartbeat, where the engine was last seen.
+    val silent = tracker.heartbeat(lastBeat, 100).engineStarted(boot + minute, 101, emptyList(), engine, bootTime = boot, bootCount = 9)
+    assertEquals(listOf(Triple(lastBeat, boot + minute, Reason.unknown)), silent.gaps.shapes())
+  }
+
+  @Test
+  fun `a refused start opens a gap at once, closed by the next successful start`() {
+    val lastBeat = runStart + 10 * minute
+    val tracker = running(runStart, pid = 100, until = lastBeat + 1)
+    // The system refused the promotion 30 s after the last beat: the heartbeat is fresh, the engine is down all the same.
+    val refused = tracker.engineRefused(lastBeat + 30_000, "ForegroundServiceStartNotAllowedException")
+    assertEquals(listOf(Triple(lastBeat + 30_000, null, Reason.killedBySystem)), refused.gaps.shapes())
+    assertTrue(refused.gaps.single().detail.startsWith("start refused"))
+    assertEquals(runStart, refused.run!!.startedAt)
+    // Refused again: still the one gap.
+    assertEquals(1, refused.engineRefused(lastBeat + 60_000, "again").gaps.size)
+    // The same process starting the engine later is a new run (the open gap says it was down), and closes the gap.
+    val back = refused.engineStarted(lastBeat + 20 * minute, 100, emptyList(), engine, bootTime = bootBefore)
+    assertEquals(listOf(Triple(lastBeat + 30_000, lastBeat + 20 * minute, Reason.killedBySystem)), back.gaps.shapes())
+    assertEquals(lastBeat + 20 * minute, back.run!!.startedAt)
+    // A first start refused before any run: a run with no process holds the gap; any process closes it.
+    val first = EnforcementGapTracker().engineRefused(runStart, "background start")
+    assertNull(first.run!!.pid)
+    assertEquals(listOf(Triple(runStart, null, Reason.killedBySystem)), first.gaps.shapes())
+    val started = first.engineStarted(runStart + 5 * minute, 100, emptyList(), engine, bootTime = bootBefore)
+    assertEquals(listOf(Triple(runStart, runStart + 5 * minute, Reason.killedBySystem)), started.gaps.shapes())
+    assertEquals(100, started.run!!.pid)
+    // A release closes it too.
+    assertEquals(listOf(Triple(runStart, runStart + minute, Reason.killedBySystem)), first.engineStopped(runStart + minute, engineAlive = false).gaps.shapes())
+    // After a release there is nothing to enforce: a refusal is not a gap (the run is not live), the caller does not fold one.
+    assertTrue(tracker.engineStopped(lastBeat + minute, engineAlive = true).engineRefused(lastBeat + 2 * minute, "x").run!!.isLive.not())
+  }
+
+  @Test
+  fun `the app looking at a dead engine folds an open gap, at an alive or fresh one nothing`() {
+    val lastBeat = runStart + 10 * minute
+    val tracker = running(runStart, pid = 100, until = lastBeat + 1)
+    // Fresh heartbeat, process gone: ambiguous, nothing yet (the stale rule).
+    assertTrue(tracker.observeEngine(lastBeat + minute, engineAlive = false, bootTime = bootBefore, bootCount = 7).gaps.isEmpty())
+    // Stale heartbeat, process alive: asleep, nothing.
+    assertTrue(tracker.observeEngine(lastBeat + 60 * minute, engineAlive = true, bootTime = bootBefore, bootCount = 7).gaps.isEmpty())
+    // Stale heartbeat, process gone: an open gap from the missed tick.
+    val dead = tracker.observeEngine(lastBeat + 60 * minute, engineAlive = false, bootTime = bootBefore, bootCount = 7)
+    assertEquals(listOf(Triple(lastBeat + minute, null, Reason.killedBySystem)), dead.gaps.shapes())
+    // Looking again changes nothing; the next start closes it and the exit record, when it shows up, leads.
+    assertEquals(dead.gaps, dead.observeEngine(lastBeat + 70 * minute, engineAlive = false, bootTime = bootBefore, bootCount = 7).gaps)
+    val back = dead.engineStarted(lastBeat + 80 * minute, 101, listOf(stopApp(lastBeat + 30_000, 100)), engine, bootTime = bootBefore, bootCount = 7)
+    assertEquals(listOf(Triple(lastBeat + 30_000, lastBeat + 80 * minute, Reason.stoppedByUser)), back.gaps.shapes())
+    // A run from a previous boot observed by the app before the engine is back: open from the boot.
+    val booted = EnforcementGapTracker().engineStarted(runStart, 100, emptyList(), engine, bootTime = bootBefore, bootCount = 7).heartbeat(lastBeat, 100)
+    val boot = lastBeat + 30 * minute
+    val afterBoot = booted.observeEngine(boot + minute, engineAlive = false, bootTime = boot, bootCount = 8)
+    assertEquals(listOf(Triple(boot, null, Reason.unknown)), afterBoot.gaps.shapes())
+    // Without a live run (released), nothing.
+    assertTrue(tracker.engineStopped(lastBeat + minute, engineAlive = true).observeEngine(lastBeat + 60 * minute, engineAlive = false, bootTime = bootBefore).gaps.isEmpty())
+  }
+
+  @Test
+  fun `a clock shift moves the run's instants and the last grant, never the recorded gaps`() {
+    val tracker = running(runStart, pid = 100, until = death, permissionsApproved = true)
+      .recordExits(listOf(stopApp(death, 100)), engine, death + minute)
+    val shifted = tracker.clockShifted(3_600_000)
+    assertEquals(runStart + 3_600_000, shifted.run!!.startedAt)
+    assertEquals(tracker.run!!.heartbeatAt + 3_600_000, shifted.run!!.heartbeatAt)
+    assertEquals(tracker.lastApprovedAt!! + 3_600_000, shifted.lastApprovedAt)
+    assertEquals(tracker.gaps.shapes(), shifted.gaps.shapes())
+    // The gap still belongs to its run: a later estimate of the same run merges with it.
+    assertEquals(runStart + 3_600_000, shifted.gaps.single().run)
+    val back = shifted.engineStarted(death + 3_600_000 + 20 * minute, 101, emptyList(), engine, bootTime = null)
+    assertEquals(1, back.gaps.size)
+    assertEquals(Reason.stoppedByUser, back.gaps.single().reason)
+    assertEquals(tracker, tracker.clockShifted(0))
+    assertEquals(tracker.copy(lastApprovedAt = tracker.lastApprovedAt!! - 5), tracker.copy(run = null).clockShifted(-5).copy(run = tracker.run))
   }
 
   // MARK: - Codec and the state-store seam
@@ -596,6 +753,18 @@ class EnforcementGapsAndroidTest {
     assertEquals(2, tracker.gaps.size)
     val json = JSONObject(tracker.toJson().toString())
     assertEquals(tracker, EnforcementGapTracker.fromJson(json))
+    val settled = tracker.settle(restart + minute, EnforcementIntent.ALWAYS)
+    assertEquals(settled, EnforcementGapTracker.fromJson(JSONObject(settled.toJson().toString())))
+    val first = JSONObject(settled.toJson().toString()).getJSONArray("entries").getJSONObject(0)
+    assertEquals(first.getLong("from"), first.getLong("origin"))
+    // The settled open record moved on; its origin (the piece's too) is where the observation began.
+    val open = settled.gaps.single { it.isOpen }
+    assertEquals(restart + minute, open.from)
+    assertTrue(open.origin < open.from)
+    assertEquals(open.origin, settled.gaps.single { !it.isOpen && !it.isEngineFamily }.origin)
+    val booted = tracker.copy(run = tracker.run!!.copy(bootCount = 42, shutdownAt = restart + 5))
+    assertEquals(booted, EnforcementGapTracker.fromJson(JSONObject(booted.toJson().toString())))
+    assertEquals(42, JSONObject(booted.toJson().toString()).getJSONObject("run").getInt("bootCount"))
     assertTrue(json.getJSONArray("entries").getJSONObject(0).isNull("to"))
     assertEquals(death, json.getJSONArray("seenExits").getJSONObject(0).getLong("timestamp"))
     assertEquals(101, json.getJSONObject("run").getInt("pid"))
@@ -649,5 +818,239 @@ class EnforcementGapsAndroidTest {
     // The rest of the document is untouched.
     assertFalse(appProcess.engineDesired)
     assertEquals(runStart + minute, appProcess.read { it.getJSONObject(EnforcementGapTracker.DOCUMENT_KEY).getLong("lastApprovedAt") })
+  }
+}
+
+/**
+ * The intent the document describes ([EnforcementIntent.of]) and how the
+ * tracker clips its gaps to it: a gap is reported only for the periods a
+ * source would have shielded something.
+ */
+class EnforcementIntentTest {
+  private val engine = "com.example.app:screentime"
+  private val zone = MonitoringTestClock.utc
+  private val apps = Selection(applications = setOf("com.a", "com.b"))
+  private val selections: (String) -> Selection? = { id -> if (id == "APPS") apps else null }
+  private val minute = EnforcementGapTracker.HEARTBEAT_INTERVAL_MS
+
+  // Monday 2026-11-02.
+  private fun at(day: Int, hour: Int, minute: Int = 0) = MonitoringTestClock.date(2026, 11, day, hour, minute, zone = zone)
+
+  private fun components(hour: Int, minute: Int = 0): Map<String, Any> =
+    LinkedHashMap<String, Any>().apply { put("hour", hour.toDouble()); put("minute", minute.toDouble()) }
+
+  private fun config(name: String, startHour: Int, endHour: Int, selectionId: String? = "APPS", events: List<Map<String, Any?>>? = null, weekdays: List<Int>? = null): MonitoringConfig {
+    val schedule = LinkedHashMap<String, Any?>().apply { put("intervalStart", components(startHour)); put("intervalEnd", components(endHour)); put("repeats", true) }
+    val raw = LinkedHashMap<String, Any?>().apply {
+      put("activityName", name); put("schedule", schedule)
+      if (selectionId != null) put("selectionId", selectionId)
+      if (events != null) put("events", events)
+      if (weekdays != null) put("weekdays", weekdays.map { it.toDouble() })
+    }
+    return MonitoringValidation.validate(raw, selections, emptySet())
+  }
+
+  private fun threshold(block: Boolean) = LinkedHashMap<String, Any?>().apply {
+    put("eventName", "limit"); put("selectionId", "APPS"); put("threshold", 600.0); put("blockOnThreshold", block)
+  }
+
+  /** A 09:00–17:00 daily schedule registered at [registeredAt]. */
+  private fun workHours(registeredAt: Long, events: List<Map<String, Any?>>? = null, selectionId: String? = "APPS"): MonitoringState =
+    MonitoringState().start(config("work", 9, 17, selectionId, events), registeredAt, zone, selections).state
+
+  private fun List<EnforcementGap>.shapes() = map { Triple(it.from, it.to, it.reason) }
+  private fun List<Occurrence>.pairs() = map { it.startMs to it.endMs }
+
+  @Test
+  fun `a manual block is intended at every instant, nothing without a source`() {
+    val manual = ManualBlock("s", BlockMode.blocklist, setOf("com.a"))
+    assertEquals(listOf(at(2, 20) to at(3, 10)), EnforcementIntent.of(manual, MonitoringState(), zone).windows(at(2, 20), at(3, 10)).pairs())
+    // A blocklist over nothing shields nothing; an allowlist always does.
+    assertTrue(EnforcementIntent.of(ManualBlock("s", BlockMode.blocklist, emptySet()), MonitoringState(), zone).windows(at(2, 20), at(3, 10)).isEmpty())
+    assertEquals(1, EnforcementIntent.of(ManualBlock("s", BlockMode.allowlist, emptySet()), MonitoringState(), zone).windows(at(2, 20), at(3, 10)).size)
+    assertTrue(EnforcementIntent.of(null, MonitoringState(), zone).windows(at(2, 20), at(3, 10)).isEmpty())
+    assertTrue(EnforcementIntent.ALWAYS.windows(5, 5).isEmpty())
+    assertEquals(listOf(5L to 6L), EnforcementIntent.ALWAYS.windows(5, 6).pairs())
+  }
+
+  @Test
+  fun `a schedule is intended inside its occurrences only, over any range`() {
+    val intent = EnforcementIntent.of(null, workHours(at(2, 8)), zone)
+    // Monday 20:00 to Wednesday 10:00: Tuesday's whole occurrence and Wednesday's first hour.
+    assertEquals(listOf(at(3, 9) to at(3, 17), at(4, 9) to at(4, 10)), intent.windows(at(2, 20), at(4, 10)).pairs())
+    // A range inside an occurrence is the range.
+    assertEquals(listOf(at(2, 10) to at(2, 11)), intent.windows(at(2, 10), at(2, 11)).pairs())
+    // A range between occurrences is empty.
+    assertTrue(intent.windows(at(2, 18), at(3, 8)).isEmpty())
+    // Weekdays: a Tuesday-only schedule has no Wednesday window.
+    val tuesdays = MonitoringState().start(config("tue", 9, 17, weekdays = listOf(3)), at(2, 8), zone, selections).state
+    assertEquals(listOf(at(3, 9) to at(3, 17)), EnforcementIntent.of(null, tuesdays, zone).windows(at(2, 0), at(5, 0)).pairs())
+  }
+
+  @Test
+  fun `a lifted interval is not intended, a threshold block is for its interval, a meter-only activity is not`() {
+    val lifted = workHours(at(2, 10)).lift()
+    assertTrue(lifted.intervals.getValue("work").lifted)
+    // Monday's occurrence (lifted) is out; Tuesday's is in.
+    assertEquals(listOf(at(3, 9) to at(3, 17)), EnforcementIntent.of(null, lifted, zone).windows(at(2, 10), at(3, 20)).pairs())
+    val thresholdBlock = workHours(at(2, 8), events = listOf(threshold(block = true)), selectionId = null)
+    assertEquals(listOf(at(2, 9) to at(2, 17)), EnforcementIntent.of(null, thresholdBlock, zone).windows(at(2, 0), at(2, 20)).pairs())
+    val meterOnly = workHours(at(2, 8), events = listOf(threshold(block = false)), selectionId = null)
+    assertTrue(EnforcementIntent.of(null, meterOnly, zone).windows(at(2, 0), at(2, 20)).isEmpty())
+  }
+
+  @Test
+  fun `two schedules' windows are merged`() {
+    val state = MonitoringState().start(config("morning", 8, 12), at(2, 7), zone, selections).state
+      .start(config("afternoon", 11, 15), at(2, 7), zone, selections).state
+    assertEquals(listOf(at(2, 8) to at(2, 15)), EnforcementIntent.of(null, state, zone).windows(at(2, 0), at(2, 20)).pairs())
+    assertEquals(listOf(1L to 5L, 7L to 9L), EnforcementIntent.normalize(listOf(Occurrence(7, 9), Occurrence(1, 3), Occurrence(3, 5), Occurrence(4, 4))).pairs())
+  }
+
+  @Test
+  fun `an engine gap is clipped to the schedule's occurrences when it closes`() {
+    val intent = EnforcementIntent.of(null, workHours(at(2, 8)), zone)
+    val stop = at(2, 20)
+    var tracker = EnforcementGapTracker().engineStarted(at(2, 8), 100, emptyList(), engine, bootTime = null, intent = intent)
+    tracker = tracker.heartbeat(stop - minute, 100)
+    val record = ExitRecord(ExitReasons.USER_REQUESTED, stop, 100, engine, "stop")
+    // Back at 10:00 the next day: only the hour of Tuesday's occurrence was unenforced.
+    val back = tracker.engineStarted(at(3, 10), 101, listOf(record), engine, bootTime = null, intent = intent)
+    assertEquals(listOf(Triple(at(3, 9), at(3, 10), EnforcementGap.Reason.stoppedByUser)), back.gaps.shapes())
+    // Back at 08:00 the next day: nothing was unenforced, the record is still seen.
+    val early = tracker.engineStarted(at(3, 8), 101, listOf(record), engine, bootTime = null, intent = intent)
+    assertTrue(early.gaps.isEmpty())
+    assertTrue(record.key in early.seenExits)
+    // Dead over two occurrences: two gaps, same reason.
+    val late = tracker.engineStarted(at(4, 10), 101, listOf(record), engine, bootTime = null, intent = intent)
+    assertEquals(
+      listOf(Triple(at(3, 9), at(3, 17), EnforcementGap.Reason.stoppedByUser), Triple(at(4, 9), at(4, 10), EnforcementGap.Reason.stoppedByUser)),
+      late.gaps.shapes(),
+    )
+    // A stale heartbeat (no record) is clipped the same way.
+    val silent = tracker.engineStarted(at(3, 10), 101, emptyList(), engine, bootTime = null, intent = intent)
+    assertEquals(listOf(Triple(at(3, 9), at(3, 10), EnforcementGap.Reason.killedBySystem)), silent.gaps.shapes())
+  }
+
+  @Test
+  fun `an open gap is read clipped - nothing before the window, open inside it, closed after it`() {
+    val intent = EnforcementIntent.of(null, workHours(at(2, 8)), zone)
+    val stop = at(2, 20)
+    val dead = EnforcementGapTracker().engineStarted(at(2, 8), 100, emptyList(), engine, bootTime = null, intent = intent)
+      .recordExits(listOf(ExitRecord(ExitReasons.USER_REQUESTED, stop, 100, engine, "stop")), engine, stop + minute, intent)
+    // Stored open from the stop.
+    assertEquals(listOf(Triple(stop, null, EnforcementGap.Reason.stoppedByUser)), dead.gaps.shapes())
+    assertTrue(dead.gaps(since = null, now = at(3, 8), intent = intent).isEmpty())
+    assertEquals(listOf(Triple(at(3, 9), null, EnforcementGap.Reason.stoppedByUser)), dead.gaps(since = null, now = at(3, 10), intent = intent).shapes())
+    assertEquals(listOf(Triple(at(3, 9), at(3, 17), EnforcementGap.Reason.stoppedByUser)), dead.gaps(since = null, now = at(3, 18), intent = intent).shapes())
+    // At the very end of the occurrence the gap is closed (end is exclusive); one ms before, open.
+    assertEquals(at(3, 17), dead.gaps(since = null, now = at(3, 17), intent = intent).single().to)
+    assertNull(dead.gaps(since = null, now = at(3, 17) - 1, intent = intent).single().to)
+    // `since` applies after the clipping: the closed piece is before a later `since`, the open piece is kept at any `since` (C09).
+    assertTrue(dead.gaps(since = at(3, 18), now = at(3, 18), intent = intent).isEmpty())
+    assertEquals(1, dead.gaps(since = at(3, 10), now = at(3, 10), intent = intent).size)
+    assertEquals(1, dead.gaps(since = at(3, 10) + 5_000, now = at(3, 10), intent = intent).size)
+    // With the manual block, the whole dead period, open.
+    assertEquals(listOf(Triple(stop, null, EnforcementGap.Reason.stoppedByUser)), dead.gaps(since = null, now = at(3, 10), intent = EnforcementIntent.ALWAYS).shapes())
+  }
+
+  @Test
+  fun `a permission gap open across stopMonitoring of one of two activities keeps the stopped activity's hours`() {
+    // A (09:00–17:00) and B (20:00–22:00) monitored; usage access revoked at 10:00; A stopped at 12:00; access back at 13:00.
+    val both = MonitoringState().start(config("a", 9, 17), at(2, 8), zone, selections).state.start(config("b", 20, 22), at(2, 8), zone, selections).state
+    val intentBoth = EnforcementIntent.of(null, both, zone)
+    val revoked = EnforcementGapTracker().engineStarted(at(2, 8), 100, emptyList(), engine, bootTime = null, intent = intentBoth)
+      .observePermissions(true, at(2, 10) - minute, intent = intentBoth)
+      .observePermissions(false, at(2, 10), listOf("usageAccess"), intentBoth)
+    // The mutation settles with the intent before it: the 10:00–12:00 hole is committed, the open record goes on from 12:00.
+    val settled = revoked.settle(at(2, 12), intentBoth)
+    assertEquals(
+      listOf(Triple(at(2, 10) - minute, at(2, 12), EnforcementGap.Reason.permissionRevoked), Triple(at(2, 12), null, EnforcementGap.Reason.permissionRevoked)),
+      settled.gaps.shapes(),
+    )
+    val onlyB = EnforcementIntent.of(null, both.stop("a", at(2, 12)).state, zone)
+    val granted = settled.observePermissions(true, at(2, 13), intent = onlyB)
+    // Nothing of B's between 12:00 and 13:00: the hole is A's hours only, one gap (the pieces share an origin).
+    assertEquals(listOf(Triple(at(2, 10) - minute, at(2, 12), EnforcementGap.Reason.permissionRevoked)), granted.gaps.shapes())
+    // Read before the grant: the settled piece and the open record merge into one open gap under the manual intent, none under B's.
+    assertEquals(listOf(Triple(at(2, 10) - minute, null, EnforcementGap.Reason.permissionRevoked)), settled.gaps(since = null, now = at(2, 12) + minute, intent = EnforcementIntent.ALWAYS).shapes())
+    assertEquals(listOf(Triple(at(2, 10) - minute, at(2, 12), EnforcementGap.Reason.permissionRevoked)), settled.gaps(since = null, now = at(2, 12) + minute, intent = onlyB).shapes())
+    // Without the settlement the hole would have been judged by the later intent and lost.
+    assertTrue(revoked.observePermissions(true, at(2, 13), intent = onlyB).gaps.isEmpty())
+  }
+
+  @Test
+  fun `unblockAll with activities left keeps the lifted occurrence's hours before the lift`() {
+    // Registered at 08:00; the engine recorded Monday's start at 09:00 (the marker `unblockAll` lifts).
+    val running = workHours(at(2, 8)).schedulesAt(at(2, 9), zone, selections)
+    assertTrue(running.intervals.containsKey("work"))
+    val intent = EnforcementIntent.of(null, running, zone)
+    val stop = at(2, 10)
+    val dead = EnforcementGapTracker().engineStarted(at(2, 8), 100, emptyList(), engine, bootTime = null, intent = intent)
+      .recordExits(listOf(ExitRecord(ExitReasons.USER_REQUESTED, stop, 100, engine, "stop")), engine, stop + minute, intent)
+    // unblockAll at 12:00 lifts Monday's occurrence; the engine comes back at 14:00 under the lifted intent.
+    val lifted = EnforcementIntent.of(null, running.lift(), zone)
+    val back = dead.settle(at(2, 12), intent).engineStarted(at(2, 14), 101, emptyList(), engine, bootTime = null, intent = lifted)
+    assertEquals(listOf(Triple(stop, at(2, 12), EnforcementGap.Reason.stoppedByUser)), back.gaps.shapes())
+    // An engine gap settled in two pieces is one gap again when the pieces touch.
+    val back2 = dead.settle(at(2, 12), intent).engineStarted(at(2, 14), 101, emptyList(), engine, bootTime = null, intent = intent)
+    assertEquals(listOf(Triple(stop, at(2, 14), EnforcementGap.Reason.stoppedByUser)), back2.gaps.shapes())
+  }
+
+  @Test
+  fun `an activity registered while a gap is open adds nothing before its registration`() {
+    val stop = at(2, 10)
+    var dead = EnforcementGapTracker().engineStarted(at(2, 7), 100, emptyList(), engine, bootTime = null)
+      .recordExits(listOf(ExitRecord(ExitReasons.USER_REQUESTED, stop, 100, engine, "stop")), engine, stop + minute, EnforcementIntent.NEVER)
+    // Registered at 12:00 (the mutation settles with the intent before: nothing), the engine starts at 13:00 under the new intent.
+    dead = dead.settle(at(2, 12), EnforcementIntent.NEVER)
+    val registered = EnforcementIntent.of(null, workHours(at(2, 12)), zone)
+    assertEquals(listOf(at(2, 12) to at(2, 17)), registered.windows(at(2, 0), at(2, 20)).pairs())
+    val back = dead.engineStarted(at(2, 13), 101, emptyList(), engine, bootTime = null, intent = registered)
+    assertEquals(listOf(Triple(at(2, 12), at(2, 13), EnforcementGap.Reason.stoppedByUser)), back.gaps.shapes())
+    // A permission gap from 08:00 with the activity registered at 12:00: the hole starts at the registration.
+    val revoked = EnforcementGapTracker().engineStarted(at(2, 7), 100, emptyList(), engine, bootTime = null)
+      .observePermissions(true, at(2, 8) - minute).observePermissions(false, at(2, 8), listOf("overlay"))
+    assertEquals(listOf(Triple(at(2, 12), at(2, 13), EnforcementGap.Reason.permissionRevoked)), revoked.observePermissions(true, at(2, 13), intent = registered).gaps.shapes())
+  }
+
+  @Test
+  fun `an exit before the release, folded only at the release, closes at the release with the intent before it`() {
+    val manual = EnforcementIntent.of(ManualBlock("s", BlockMode.blocklist, setOf("com.a")), MonitoringState(), zone)
+    val died = at(2, 10)
+    // Beating until 30 s before the death: at the release the heartbeat is not stale yet.
+    val tracker = EnforcementGapTracker().engineStarted(at(2, 9), 100, emptyList(), engine, bootTime = null, intent = manual).heartbeat(died - 30_000, 100)
+    val record = ExitRecord(ExitReasons.LOW_MEMORY, died, 100, engine, "lmk")
+    // unblockAll 90 s later: the heartbeat is not stale, so only the record can tell; folded in the same update, before the stop.
+    val released = tracker.recordExits(listOf(record), engine, died + 90_000, manual).engineStopped(died + 90_000, engineAlive = false, intent = manual)
+    assertEquals(listOf(Triple(died, died + 90_000, EnforcementGap.Reason.killedBySystem)), released.gaps.shapes())
+    assertFalse(released.run!!.isLive)
+    // Folded after the release under an empty intent, the record would be clipped to nothing: the wiring folds it before.
+    val late = tracker.engineStopped(died + 90_000, engineAlive = false, intent = manual).recordExits(listOf(record), engine, died + 2 * minute, EnforcementIntent.NEVER)
+    assertTrue(late.gaps.isEmpty())
+  }
+
+  @Test
+  fun `a release clips with the intent that held before it, and a permission gap is clipped too`() {
+    val intent = EnforcementIntent.of(null, workHours(at(2, 8)), zone)
+    val stop = at(2, 16)
+    val dead = EnforcementGapTracker().engineStarted(at(2, 8), 100, emptyList(), engine, bootTime = null, intent = intent)
+      .recordExits(listOf(ExitRecord(ExitReasons.USER_REQUESTED, stop, 100, engine, "stop")), engine, stop + minute, intent)
+    // Released at 20:00 (the schedule stopped): the gap is the hour left of the occurrence.
+    val released = dead.engineStopped(at(2, 20), engineAlive = false, intent = intent)
+    assertEquals(listOf(Triple(stop, at(2, 17), EnforcementGap.Reason.stoppedByUser)), released.gaps.shapes())
+    assertFalse(released.run!!.isLive)
+    // A permission revoked at 19:00 Monday, seen back at 10:00 Tuesday: the hour of Tuesday's occurrence.
+    val revoked = EnforcementGapTracker().engineStarted(at(2, 8), 100, emptyList(), engine, bootTime = null, intent = intent)
+      .observePermissions(true, at(2, 19), intent = intent)
+      .observePermissions(false, at(2, 19) + minute, listOf("usageAccess"), intent)
+    assertEquals(listOf(Triple(at(2, 19), null, EnforcementGap.Reason.permissionRevoked)), revoked.gaps.shapes())
+    assertTrue(revoked.gaps(since = null, now = at(3, 8), intent = intent).isEmpty())
+    val granted = revoked.observePermissions(true, at(3, 10), intent = intent)
+    assertEquals(listOf(Triple(at(3, 9), at(3, 10), EnforcementGap.Reason.permissionRevoked)), granted.gaps.shapes())
+    assertFalse(granted.hasOpenPermissionGap)
+    // The step-set overload clips the same way.
+    val stepped = revoked.observePermissions(setOf(PermissionSteps.StepId.usageAccess, PermissionSteps.StepId.overlay), at(3, 10), intent)
+    assertEquals(granted.gaps, stepped.gaps)
   }
 }

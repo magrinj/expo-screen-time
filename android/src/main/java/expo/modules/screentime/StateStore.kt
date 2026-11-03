@@ -94,7 +94,8 @@ internal class StateStore(private val directory: File) {
   /**
    * Records why the engine could not start or stay in the foreground (the
    * system refusing `startForeground`, a `startForegroundService` from the
-   * background). Kept for `getEnforcementGaps`; capped.
+   * background). Diagnostic, capped; the gaps themselves are the tracker's
+   * (`gaps`, [EnforcementGapTracker]).
    */
   fun recordEngineFailure(kind: String, message: String?) = update { document ->
     val failures = engine(document).optJSONArray(FAILURES) ?: JSONArray().also { engine(document).put(FAILURES, it) }

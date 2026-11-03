@@ -143,21 +143,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext) {
     else -> Status.undetermined to true
   }
 
-  private fun hasUsageAccess(): Boolean {
-    val appOps = context.getSystemService(AppOpsManager::class.java) ?: return false
-    val uid = context.applicationInfo.uid
-    @Suppress("DEPRECATION")
-    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-      appOps.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, uid, context.packageName)
-    } else {
-      appOps.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, uid, context.packageName)
-    }
-    return when (mode) {
-      AppOpsManager.MODE_ALLOWED -> true
-      AppOpsManager.MODE_DEFAULT -> ContextCompat.checkSelfPermission(context, Manifest.permission.PACKAGE_USAGE_STATS) == PackageManager.PERMISSION_GRANTED
-      else -> false
-    }
-  }
+  private fun hasUsageAccess(): Boolean = EnforcementPermissions.hasUsageAccess(context)
 
   /**
    * "Restricted settings": Android 13 keeps sideloaded apps out of the

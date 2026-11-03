@@ -15,21 +15,26 @@ import java.util.TimeZone
  * a process the store cannot wake).
  */
 internal class BlockController(private val context: Context, private val store: StateStore, private val selections: SelectionStore) {
+  private val gaps = EnforcementGapRecorder(context, store)
+
   /**
    * `blockSelection(selectionId, { mode })`: validated in the iOS order
    * ([BlockValidation]), then the manual block is replaced (one source; a
    * second call replaces the first, it does not stack) and the engine is
    * wanted. Block and desire land in one `update`, so the engine never
-   * starts for a block that is not there yet.
+   * starts for a block that is not there yet. The desire is derived through
+   * [EnforcementGapRecorder.syncDesired], which also records a release for
+   * `getEnforcementGaps` when the engine stops being wanted.
    */
   fun blockSelection(selectionId: String, options: Map<String, Any?>?) {
     val block = store.update { document ->
+      val intentBefore = gaps.intent(document)
       val validated = BlockValidation.manualBlock(selectionId, selections.get(selectionId), options?.get("mode"))
       // An explicit block supersedes any temporary unlock in progress, every
       // snooze and the shield's unblocks, as on iOS.
       UnlockController.clearUnlockState(document)
       store.manualBlock = validated
-      store.syncEngineDesired(document)
+      gaps.syncDesired(document, intentBefore)
       validated
     }
     EngineController.sync(context, "block:${block.mode.name}")
@@ -46,10 +51,12 @@ internal class BlockController(private val context: Context, private val store: 
    */
   fun unblockAll() {
     store.update { document ->
+      // The intent until now, for the release fold: the block being lifted.
+      val intentBefore = gaps.intent(document)
       UnlockController.clearUnlockState(document)
       store.manualBlock = null
       MonitoringDocument.write(document, MonitoringDocument.read(document).lift())
-      store.syncEngineDesired(document)
+      gaps.syncDesired(document, intentBefore)
     }
     EngineController.sync(context, "released")
   }

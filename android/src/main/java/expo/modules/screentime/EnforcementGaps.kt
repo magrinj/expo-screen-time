@@ -26,6 +26,13 @@ internal data class EnforcementGap(
    * an earlier run's gap. Null for permission gaps.
    */
   val run: Long? = null,
+  /**
+   * The `from` of the observation this gap descends from: the pieces an
+   * open gap is settled into ([EnforcementGapTracker.settle]) carry their
+   * origin, so they merge back together (a permission gap never merges
+   * with another revocation, only with its own pieces).
+   */
+  val origin: Long = from,
 ) {
   /** The contract's `EnforcementGap.reason`. `authorizationRevoked` is iOS-only; Android never records it. */
   enum class Reason { stoppedByUser, permissionRevoked, killedBySystem, authorizationRevoked, unknown }
@@ -45,6 +52,10 @@ internal data class EnforcementGap(
   val isEngineFamily: Boolean
     get() = source != Source.permission
 
+  /** What merging keys on: the run for engine-family gaps, the origin for permission gaps. */
+  val mergeKey: Long?
+    get() = if (isEngineFamily) run else origin
+
   /** The JS shape: `{ from, to: number | null, reason }`. */
   fun toMap(): Map<String, Any?> = mapOf("from" to from, "to" to to, "reason" to reason.name)
 
@@ -55,6 +66,7 @@ internal data class EnforcementGap(
     .put(SOURCE, source.name)
     .put(DETAIL, detail)
     .put(RUN, run ?: JSONObject.NULL)
+    .put(ORIGIN, origin)
 
   companion object {
     private const val FROM = "from"
@@ -63,6 +75,7 @@ internal data class EnforcementGap(
     private const val SOURCE = "source"
     private const val DETAIL = "detail"
     private const val RUN = "run"
+    private const val ORIGIN = "origin"
 
     /**
      * The gap a stored entry holds, or null when it is malformed (dropped,
@@ -76,7 +89,10 @@ internal data class EnforcementGap(
       if (to != null && to < from) return null
       val reason = Reason.values().firstOrNull { it.name == json.optString(REASON) } ?: return null
       val source = Source.values().firstOrNull { it.name == json.optString(SOURCE) } ?: return null
-      return EnforcementGap(from, to, reason, source, json.optString(DETAIL), json.optLongOrNull(RUN))
+      return EnforcementGap(
+        from, to, reason, source, json.optString(DETAIL), json.optLongOrNull(RUN),
+        origin = json.optLongOrNull(ORIGIN) ?: from,
+      )
     }
   }
 }
@@ -183,10 +199,110 @@ internal object ExitReasons {
 }
 
 /**
+ * When a block is meant to be enforced, as a function of time: the periods
+ * inside `[fromMs, toMs]` during which some source would shield something.
+ * The engine is wanted (`engine.desired`) while a manual block is in force
+ * or anything is monitored, but a schedule shields only inside its
+ * occurrences: a dead engine on a Tuesday night, with one 09:00–17:00
+ * schedule registered, left nothing unenforced until 09:00. Every gap the
+ * tracker reports is clipped to these windows ([EnforcementIntent.of]),
+ * which is what makes "desired" and "intended" agree.
+ *
+ * The windows are half-open occurrences (`start ≤ t < end`), sorted and
+ * disjoint ([EnforcementIntent.normalize]). [ALWAYS] is the whole range,
+ * what a tracker fed by tests or by a build without schedules uses.
+ */
+internal fun interface EnforcementIntent {
+  fun windows(fromMs: Long, toMs: Long): List<Occurrence>
+
+  companion object {
+    /** A block intended at every instant: the manual block, or no clipping at all. */
+    val ALWAYS = EnforcementIntent { from, to -> if (from < to) listOf(Occurrence(from, to)) else emptyList() }
+
+    /** Nothing intended: every gap clips to nothing. */
+    val NEVER = EnforcementIntent { _, _ -> emptyList() }
+
+    /** Transitions walked per activity before the rest of a range counts as intended (a daily schedule over 30 days is 60). */
+    const val MAX_TRANSITIONS = 4_096
+
+    /**
+     * The intent the document describes: everything while a manual block
+     * shields something (an allowlist always does; a blocklist with apps);
+     * otherwise each monitored activity's occurrences inside the range,
+     * when the activity blocks (a schedule block with a `selectionId`, or a
+     * `blockOnThreshold` event: the interval is the honest bound of a block
+     * the threshold may impose at any point in it), minus an occurrence
+     * `unblockAll` lifted (its marker says so; the shields are back at the
+     * next start). Evaluated in [zone], the one current when the gap is
+     * folded, as the engine evaluates the schedules.
+     */
+    fun of(manual: ManualBlock?, monitoring: MonitoringState, zone: java.util.TimeZone): EnforcementIntent = EnforcementIntent { from, to ->
+      if (from >= to) return@EnforcementIntent emptyList()
+      if (manual != null && manual.source.shieldsSomething) return@EnforcementIntent listOf(Occurrence(from, to))
+      val windows = ArrayList<Occurrence>()
+      for ((name, activity) in monitoring.activities) {
+        val blocks = activity.config.selectionId != null || activity.config.events.any { it.blockOnThreshold }
+        if (!blocks) continue
+        val lifted = monitoring.intervals[name]?.takeIf { it.lifted }
+        // Nothing was intended before the activity existed.
+        var cursor = maxOf(from, activity.registeredAtMs)
+        var steps = 0
+        while (cursor < to) {
+          if (steps++ >= MAX_TRANSITIONS) {
+            // Too old a range to walk: the rest counts as intended (over-report, never a silent hole).
+            windows.add(Occurrence(cursor, to))
+            break
+          }
+          val occurrence = activity.occurrenceAt(cursor, zone)
+          if (occurrence != null) {
+            if (lifted == null || !lifted.belongsTo(occurrence)) windows.add(Occurrence(maxOf(occurrence.startMs, cursor), minOf(occurrence.endMs, to)))
+            cursor = occurrence.endMs
+          } else {
+            val next = activity.nextTransition(cursor, zone) ?: break
+            if (next <= cursor) break
+            cursor = next
+          }
+        }
+      }
+      normalize(windows)
+    }
+
+    /** Sorted, merged (touching or overlapping windows become one), empty ones dropped. */
+    fun normalize(windows: List<Occurrence>): List<Occurrence> {
+      val merged = ArrayList<Occurrence>()
+      for (window in windows.filter { it.startMs < it.endMs }.sortedBy { it.startMs }) {
+        val last = merged.lastOrNull()
+        if (last != null && window.startMs <= last.endMs) {
+          merged[merged.size - 1] = Occurrence(last.startMs, maxOf(last.endMs, window.endMs))
+        } else {
+          merged.add(window)
+        }
+      }
+      return merged
+    }
+  }
+}
+
+/**
+ * What the wiring knows about the boot the engine is starting in. The count
+ * (`Settings.Global.BOOT_COUNT`, API 24+) is what tells a reboot from a
+ * clock change: it is stored with the run, and a run whose count differs
+ * from the current one ran in a previous boot, whatever the wall clock
+ * says. The time (`currentTimeMillis - elapsedRealtime`) is where a single
+ * reboot's gap starts, and the fallback for a run stored without a count.
+ */
+internal data class Boot(val timeMs: Long?, val count: Int?) {
+  companion object {
+    val UNKNOWN = Boot(null, null)
+  }
+}
+
+/**
  * The enforcement-gap log, folded from what Android lets the module observe.
  * A gap is "a block was intended but not enforced"; on Android the intent
- * is the engine's **run** ([engineStarted] to [engineStopped]), and every
- * gap is bounded by it.
+ * is the engine's **run** ([engineStarted] to [engineStopped]), clipped to
+ * the periods a source would have shielded something ([EnforcementIntent]),
+ * and every gap is bounded by it.
  *
  * - **Exit records** (`ApplicationExitInfo`): a death of the run's process
  *   opens a gap at the death, closed by the next engine start or by the
@@ -195,18 +311,24 @@ internal object ExitReasons {
  *   returns), because the system hands the whole history back on every
  *   call and the wall clock can step backwards.
  * - **Heartbeats**: the engine records one every [HEARTBEAT_INTERVAL_MS]
- *   while it runs. When a new process starts the engine, or the app
- *   releases it, a live run whose last heartbeat is older than
+ *   while it runs, and on screen on/off, `USER_PRESENT` and
+ *   `ACTION_SHUTDOWN` (the shutdown beat is remembered for the rest of the
+ *   boot: it is where a reboot's gap starts). When a new process starts
+ *   the engine, or the app releases it or finds its process gone
+ *   ([observeEngine]), a live run whose last heartbeat is older than
  *   [STALE_AFTER_MS] means the process was gone with nothing to show for
  *   it (an OEM killer, a record lost from the history): the gap runs from
  *   the last heartbeat plus the interval. That start is an upper bound: a
- *   heartbeat timer stops with the CPU (screen off, Doze), so the wiring
- *   should also beat on screen-on/off, on `USER_PRESENT` and on
- *   `ACTION_SHUTDOWN`, which keeps the bound tight when it matters. A boot
- *   after the last heartbeat is a reboot: the device was off, so the gap
- *   starts at the boot, a lower bound when the engine had already died
- *   before the shutdown. An exit record covering the same period wins over
- *   either estimate (see [mergeEngineGap]).
+ *   heartbeat timer stops with the CPU (screen off, Doze), which is why a
+ *   live process is never judged stale. A run from a previous boot
+ *   ([Boot.count]) is a reboot: the gap runs from the boot to the engine's
+ *   return, or from the shutdown beat (else the last heartbeat) when a boot
+ *   ran without the engine in between, e.g. safe mode ([rebootGapStart]). An exit record
+ *   covering the same period wins over either estimate (see [mergeGap]).
+ * - **A refused start** ([engineRefused]): the service could not be
+ *   promoted to the foreground (the Pixel refused the sticky
+ *   restart hours after the app was last visible): the engine is down for
+ *   certain, so a gap opens at once, whatever the heartbeat says.
  * - **Permission checks**: the port of iOS `AuthorizationGapTracker`, with
  *   "approved" meaning every step enforcement needs is granted
  *   ([ENFORCEMENT_STEPS]). A revocation is only visible at the next check,
@@ -215,11 +337,32 @@ internal object ExitReasons {
  *   whether a block was intended, Android can), and closes at the first
  *   check that sees access back, or at the release.
  *
+ * **Clipping and settling.** A gap is stored as observed, open, and is
+ * **settled** ([settle]) at every later look of the app and before every
+ * mutation of the block or the activities (with the intent that held
+ * **before** the mutation): the part observed so far is clipped to the
+ * intent and committed as closed pieces, and the open record moves its
+ * `from` to now, so a change of intent can never rewrite what was already
+ * observed. The gap's end (a start, a release, a grant) settles the last
+ * part the same way and drops the open record; a read ([gaps]) clips the
+ * open record up to now without committing it. Pieces of one observation
+ * carry its [EnforcementGap.origin] and merge back together (same run for
+ * engine-family gaps, same origin for permission gaps). A closed
+ * engine-family piece shorter than [MIN_ENGINE_GAP_MS] is dropped: the
+ * engine's start re-shields what is on screen, so a death the system undid
+ * within seconds (a sticky restart) left no hole a user could use. The
+ * engine's own interval markers are not a settlement point: an occurrence
+ * `unblockAll` lifted stays excluded only until the next occurrence
+ * replaces its marker, unless the app looked in between (bounded drift,
+ * accepted).
+ *
  * **Merge rule.** Engine-family gaps (exit, heartbeat) of one run that
- * overlap or touch are one gap: an exit record's `from` and reason win over a heartbeat's
- * estimate; between two records, the earlier one leads; open wins over
- * closed. Permission gaps are never merged with anything, as on iOS, where a
- * grant and a revocation at the same instant are two gaps.
+ * overlap or touch are one gap: an exit record's `from` and reason win over
+ * a heartbeat's estimate; between two records, the earlier one leads; open
+ * wins over closed. Permission gaps merge only with their own pieces, as
+ * on iOS, where a grant and a revocation at the same instant are two gaps.
+ * A closed piece never merges into a stored open gap (the open record is
+ * what the pieces are settled from; a read merges them for the answer).
  *
  * **Retention.** Closed gaps older than [MAX_AGE_MS] are dropped, then the
  * oldest closed ones past [MAX_GAPS]. Open gaps are never dropped (at most
@@ -230,10 +373,10 @@ internal object ExitReasons {
  * release) and the `:screentime` process (start, heartbeat) both fold it,
  * so each fold must be one `StateStore.update`: [load] the document's
  * tracker, fold, [store] it back, under the exclusive lock ([update] is
- * that read-fold-write). `now`, the boot time, the permission reads and the
- * exit records are inputs, and the wiring must take them **inside** the
- * update block, so two processes' observations land in lock order. Nothing
- * here touches time or the OS.
+ * that read-fold-write). `now`, the boot, the permission reads, the exit
+ * records and the intent are inputs, and the wiring must take them
+ * **inside** the update block, so two processes' observations land in lock
+ * order. Nothing here touches time or the OS.
  */
 internal data class EnforcementGapTracker(
   /** Oldest first (by `from`). */
@@ -260,6 +403,10 @@ internal data class EnforcementGapTracker(
     val heartbeatAt: Long,
     /** Set by an orderly release; null while the engine is meant to run. */
     val stoppedAt: Long?,
+    /** `Settings.Global.BOOT_COUNT` when the run started; null for a run stored before it was recorded. */
+    val bootCount: Int? = null,
+    /** The `ACTION_SHUTDOWN` beat, kept for the rest of the boot (a shutdown is not cancelled): where a reboot's gap starts when a boot ran without the engine. */
+    val shutdownAt: Long? = null,
   ) {
     val isLive: Boolean
       get() = stoppedAt == null
@@ -278,11 +425,49 @@ internal data class EnforcementGapTracker(
 
   /**
    * The gaps still in progress at, or ending after, `since` (Unix ms); every
-   * gap when `since` is null. Oldest first.
+   * gap when `since` is null. Oldest first. As stored: open gaps unclipped.
    */
   fun gaps(since: Long?): List<EnforcementGap> {
     if (since == null) return gaps
     return gaps.filter { (it.to ?: Long.MAX_VALUE) >= since }
+  }
+
+  /**
+   * What `getEnforcementGaps(since)` answers at `now`: the stored gaps, the
+   * open ones clipped to [intent] up to now (a window in force at now keeps
+   * the gap open; a window that ended closes it there; no window since the
+   * last settlement reports nothing more), pieces of one observation
+   * merged, then the `since` filter.
+   */
+  fun gaps(since: Long?, now: Long, intent: EnforcementIntent): List<EnforcementGap> {
+    var report: List<EnforcementGap> = gaps.filterNot { it.isOpen }
+    for (open in gaps.filter { it.isOpen }) {
+      for (piece in clip(open, now, intent)) report = mergeGap(report, piece, reporting = true)
+    }
+    val sorted = sorted(report)
+    if (since == null) return sorted
+    return sorted.filter { (it.to ?: Long.MAX_VALUE) >= since }
+  }
+
+  // MARK: - Settling
+
+  /**
+   * An observation at `now` under [intent], the intent that held since the
+   * last one: every open gap's part observed so far, `[from, now]`, is
+   * clipped and committed as closed pieces (its origin kept), and the open
+   * record goes on from now. Call before a mutation changes the intent
+   * (with the intent read before it) and at every look of the app, so the
+   * drift between an open gap and the intent it is judged by stays bounded.
+   */
+  fun settle(now: Long, intent: EnforcementIntent): EnforcementGapTracker {
+    if (gaps.none { it.isOpen && it.from < now }) return this
+    var folded = gaps
+    for (open in gaps.filter { it.isOpen && it.from < now }) {
+      folded = folded - open
+      for (piece in clip(open.copy(to = now), now, intent)) folded = mergeGap(folded, piece)
+      folded = sorted(folded + open.copy(from = now))
+    }
+    return copy(gaps = retain(folded, now))
   }
 
   // MARK: - Permission checks (the iOS tracker)
@@ -294,13 +479,17 @@ internal data class EnforcementGapTracker(
    * its permissions (launch, foreground, `getEnforcementGaps`). Without a
    * live run there is nothing to enforce, so a revocation opens no gap
    * (the grant is still noted); the gap opens at the later of the last
-   * grant and the run's start.
+   * grant and the run's start. A grant closes the open gap, its unsettled
+   * part clipped to [intent].
    */
-  fun observePermissions(approved: Boolean, now: Long, missing: Collection<String> = emptyList()): EnforcementGapTracker {
+  fun observePermissions(
+    approved: Boolean,
+    now: Long,
+    missing: Collection<String> = emptyList(),
+    intent: EnforcementIntent = EnforcementIntent.ALWAYS,
+  ): EnforcementGapTracker {
     if (approved) {
-      val closed = gaps.map { gap ->
-        if (!gap.isEngineFamily && gap.isOpen) gap.copy(to = maxOf(now, gap.from)) else gap
-      }
+      val closed = closeGaps(gaps, now, intent) { !it.isEngineFamily }
       return copy(gaps = retain(closed, now), lastApprovedAt = now)
     }
     val since = lastApprovedAt ?: return this
@@ -317,9 +506,9 @@ internal data class EnforcementGapTracker(
   }
 
   /** [observePermissions] from the granted step ids: approved when [ENFORCEMENT_STEPS] are all in. */
-  fun observePermissions(granted: Set<PermissionSteps.StepId>, now: Long): EnforcementGapTracker {
+  fun observePermissions(granted: Set<PermissionSteps.StepId>, now: Long, intent: EnforcementIntent = EnforcementIntent.ALWAYS): EnforcementGapTracker {
     val missing = ENFORCEMENT_STEPS - granted
-    return observePermissions(approved = missing.isEmpty(), now = now, missing = missing.map { it.name })
+    return observePermissions(approved = missing.isEmpty(), now = now, missing = missing.map { it.name }, intent = intent)
   }
 
   // MARK: - Exit records
@@ -330,11 +519,12 @@ internal data class EnforcementGapTracker(
    * [engineProcess] not folded before, in time order. One counts as a gap
    * when it falls inside the known run (after its start, by the run's
    * process, before any orderly stop); the gap closes at the stop when
-   * there was one, else it stays open until the next [engineStarted] or
-   * [engineStopped]. Call from the app process whenever it looks at the
-   * gaps, and from the engine at start (through [engineStarted]).
+   * there was one (clipped to [intent]), else it stays open until the next
+   * [engineStarted] or [engineStopped]. Call from the app process whenever
+   * it looks at the gaps, and from the engine at start (through
+   * [engineStarted]).
    */
-  fun recordExits(exits: List<ExitRecord>, engineProcess: String, now: Long): EnforcementGapTracker {
+  fun recordExits(exits: List<ExitRecord>, engineProcess: String, now: Long, intent: EnforcementIntent = EnforcementIntent.ALWAYS): EnforcementGapTracker {
     val history = exits.filter { it.processName == engineProcess }
     var folded = gaps
     val fresh = history.filter { it.key !in seenExits }.sortedWith(compareBy({ it.timestamp }, { it.pid }))
@@ -359,7 +549,7 @@ internal data class EnforcementGapTracker(
         detail = ExitReasons.detail(record),
         run = current.startedAt,
       )
-      folded = mergeEngineGap(folded, gap)
+      folded = if (gap.isOpen) mergeGap(folded, gap) else clip(gap, now, intent).fold(folded) { acc, piece -> mergeGap(acc, piece) }
     }
     // An empty history (nothing to read, or a failed read the wiring should
     // rather skip) must not forget what was folded: the next full list
@@ -373,60 +563,131 @@ internal data class EnforcementGapTracker(
   /**
    * The engine service is up and promoted, at `now`, in process `pid`.
    * Folds the exit history first; then, if a **new** process takes over a
-   * live run, the previous process's last heartbeat (stale, or older than
-   * a boot at `bootTime`), closes every open engine gap at `now` and opens
-   * the new run. The same process starting again (every `startForegroundService`
-   * reaches `onStartCommand`: a launch, a redelivered intent) only refreshes
-   * the heartbeat, so a timer that slept with the CPU is not a gap; a pid
-   * is "the same process" only within one boot and while no gap says it
-   * died. One
-   * `StateStore.update`, in the same block that re-checks the desired
-   * state: fold nothing when the engine is not wanted.
+   * live run, the previous process's last heartbeat (stale, or from a
+   * previous boot), closes every open engine gap at `now` (clipped to
+   * [intent]) and opens the new run. The same process starting again
+   * (every `startForegroundService` reaches `onStartCommand`: a launch, a
+   * redelivered intent) only refreshes the heartbeat, so a timer that
+   * slept with the CPU is not a gap; a pid is "the same process" only
+   * within one boot and while no gap says it died. One `StateStore.update`,
+   * in the same block that re-checks the desired state: fold nothing when
+   * the engine is not wanted.
    *
    * `bootTime` is `System.currentTimeMillis() - SystemClock.elapsedRealtime()`,
-   * Unix ms; null when unknown. It follows the wall clock, so a forward
-   * clock correction after the last heartbeat reads as a reboot; storing
-   * `Settings.Global.BOOT_COUNT` with the run would be exact (later).
+   * Unix ms, and `bootCount` is `Settings.Global.BOOT_COUNT`; null when
+   * unknown. The count decides whether the run is from a previous boot; the
+   * time only stands in for a run stored without one (it follows the wall
+   * clock, so a forward correction after the last heartbeat would read as a
+   * reboot).
    */
-  fun engineStarted(now: Long, pid: Int, exits: List<ExitRecord>, engineProcess: String, bootTime: Long?): EnforcementGapTracker {
-    val withExits = recordExits(exits, engineProcess, now)
+  fun engineStarted(
+    now: Long,
+    pid: Int,
+    exits: List<ExitRecord>,
+    engineProcess: String,
+    bootTime: Long?,
+    bootCount: Int? = null,
+    intent: EnforcementIntent = EnforcementIntent.ALWAYS,
+  ): EnforcementGapTracker {
+    val boot = Boot(bootTime, bootCount)
+    val withExits = recordExits(exits, engineProcess, now, intent)
     val previous = withExits.run
-    if (previous != null && previous.isLive && previous.pid == pid && !withExits.hasOpenEngineGap && !rebootedSince(previous, bootTime)) {
+    if (previous != null && previous.isLive && previous.pid == pid && !withExits.hasOpenEngineGap && !rebootedSince(previous, boot)) {
       return withExits.copy(run = previous.copy(heartbeatAt = maxOf(now, previous.heartbeatAt)))
     }
     var folded = withExits.gaps
     if (previous != null && previous.isLive) {
-      staleEstimate(previous, now, bootTime)?.let { folded = mergeEngineGap(folded, it) }
+      staleEstimate(previous, now, boot)?.let { estimate -> clip(estimate, now, intent).forEach { folded = mergeGap(folded, it) } }
     }
-    folded = closeEngineGaps(folded, now)
-    return withExits.copy(gaps = retain(folded, now), run = EngineRun(startedAt = now, pid = pid, heartbeatAt = now, stoppedAt = null))
+    folded = closeGaps(folded, now, intent) { it.isEngineFamily }
+    return withExits.copy(
+      gaps = retain(folded, now),
+      run = EngineRun(startedAt = now, pid = pid, heartbeatAt = now, stoppedAt = null, bootCount = bootCount),
+    )
+  }
+
+  /**
+   * The service could not be promoted to the foreground at `now`
+   * (`startForeground` refused: the system's sticky restart hours after the
+   * app was last visible), or the start intent itself was
+   * refused from the background: the engine is down for certain, whatever
+   * the heartbeat says, so an engine gap opens now (`killedBySystem`, the
+   * system's decision) unless one is open already. Without a run (a first
+   * start refused), a run with no process is opened so the gap has one to
+   * belong to; the next successful start, from any process, closes it.
+   * Only while the engine is wanted: after a release there is nothing to
+   * enforce and the fold is a no-op.
+   */
+  fun engineRefused(now: Long, detail: String): EnforcementGapTracker {
+    val stored = run
+    if (stored != null && !stored.isLive) return this
+    val current = stored ?: EngineRun(startedAt = now, pid = null, heartbeatAt = now, stoppedAt = null)
+    if (hasOpenEngineGap) return copy(run = current)
+    val gap = EnforcementGap(
+      from = now,
+      to = null,
+      reason = EnforcementGap.Reason.killedBySystem,
+      source = EnforcementGap.Source.heartbeat,
+      detail = "start refused: $detail",
+      run = current.startedAt,
+    )
+    return copy(gaps = retain(mergeGap(gaps, gap), now), run = current)
   }
 
   /**
    * One heartbeat at `now` from process `pid`, with the engine's own
    * permission check when it made one (`permissionsApproved`, `missing` as
    * in [observePermissions]). Only the run's process moves the heartbeat:
-   * a beat that lands after a release, or from a process whose start was
-   * refused, changes nothing about the run.
+   * a beat that lands after a
+   * release, or from a process whose start was refused, changes nothing
+   * about the run. A `shutdown` beat (`ACTION_SHUTDOWN`) is remembered as
+   * the instant the device went off, for the rest of the boot.
    */
-  fun heartbeat(now: Long, pid: Int, permissionsApproved: Boolean? = null, missing: Collection<String> = emptyList()): EnforcementGapTracker {
+  fun heartbeat(
+    now: Long,
+    pid: Int,
+    permissionsApproved: Boolean? = null,
+    missing: Collection<String> = emptyList(),
+    shutdown: Boolean = false,
+    intent: EnforcementIntent = EnforcementIntent.ALWAYS,
+  ): EnforcementGapTracker {
     val current = run
     val beat = if (current != null && current.isLive && (current.pid == null || current.pid == pid)) {
-      copy(run = current.copy(heartbeatAt = maxOf(now, current.heartbeatAt)), gaps = retain(gaps, now))
+      copy(run = current.copy(heartbeatAt = maxOf(now, current.heartbeatAt), shutdownAt = if (shutdown) now else current.shutdownAt), gaps = retain(gaps, now))
     } else {
       copy(gaps = retain(gaps, now))
     }
-    return if (permissionsApproved == null) beat else beat.observePermissions(permissionsApproved, now, missing)
+    return if (permissionsApproved == null) beat else beat.observePermissions(permissionsApproved, now, missing, intent)
+  }
+
+  /**
+   * The app looked at the engine at `now` without starting it: whether its
+   * process is alive (`ActivityManager.runningAppProcesses` lists the run's
+   * pid) and in which boot. A live run whose process is gone and whose
+   * heartbeat is stale, or which ran in a previous boot, is dead with
+   * nothing to show for it: its estimate is folded as an **open** gap (the
+   * engine is still down; the next [engineStarted] closes it, or a
+   * [engineStopped]). An alive process with a stale heartbeat slept with
+   * the CPU and is no gap. Call with [recordExits] from launch, foreground
+   * and `getEnforcementGaps`, inside one update.
+   */
+  fun observeEngine(now: Long, engineAlive: Boolean, bootTime: Long?, bootCount: Int? = null): EnforcementGapTracker {
+    val current = run?.takeIf { it.isLive } ?: return this
+    if (engineAlive || hasOpenEngineGap) return this
+    val estimate = staleEstimate(current, now, Boot(bootTime, bootCount)) ?: return this
+    return copy(gaps = retain(mergeGap(gaps, estimate.copy(to = null)), now))
   }
 
   /**
    * The engine was released (nothing left to enforce) at `now`: the run
    * ends and every open gap closes, since no block is intended past this
-   * point. When the engine process is **not** alive (`engineAlive`: in
-   * `:screentime`, `Process.myPid() == run.pid`, since a process whose
-   * start was refused can handle the stop while the run's process is dead;
-   * from the app, whether `ActivityManager.runningAppProcesses` lists the
-   * run's pid), a live run
+   * point (each clipped to [intent], which must describe what was intended
+   * **before** the release: the caller takes it from the document before
+   * clearing the block or the activities). When the engine process is
+   * **not** alive (`engineAlive`: in `:screentime`, `Process.myPid() ==
+   * run.pid`, since a process whose start was refused can handle the stop
+   * while the run's process is dead; from the app, whether
+   * `ActivityManager.runningAppProcesses` lists the run's pid), a live run
    * whose heartbeat is stale was dead before the release (a kill with no
    * record), so its estimate is folded first, as at a start. An alive
    * engine with a stale heartbeat only slept with the CPU (a schedule
@@ -434,27 +695,58 @@ internal data class EnforcementGapTracker(
    * releases the engine, in the same `StateStore.update` that clears the
    * desired state.
    */
-  fun engineStopped(now: Long, engineAlive: Boolean, bootTime: Long? = null): EnforcementGapTracker {
+  fun engineStopped(
+    now: Long,
+    engineAlive: Boolean,
+    bootTime: Long? = null,
+    bootCount: Int? = null,
+    intent: EnforcementIntent = EnforcementIntent.ALWAYS,
+  ): EnforcementGapTracker {
     val current = run
     var folded = gaps
     if (current != null && current.isLive && !engineAlive) {
-      staleEstimate(current, now, bootTime)?.let { folded = mergeEngineGap(folded, it) }
+      staleEstimate(current, now, Boot(bootTime, bootCount))?.let { estimate -> clip(estimate, now, intent).forEach { folded = mergeGap(folded, it) } }
     }
-    folded = folded.map { gap -> if (gap.isOpen) gap.copy(to = maxOf(now, gap.from)) else gap }
+    folded = closeGaps(folded, now, intent) { true }
     val ended = current?.let { if (it.isLive) it.copy(stoppedAt = now) else it }
     return copy(gaps = retain(folded, now), run = ended)
+  }
+
+  /**
+   * The wall clock was set by [deltaMs] (`TIME_SET`): the run's instants
+   * and the last grant move with it, so the staleness and "last seen"
+   * arithmetic stays in the clock the next observation is made in. The
+   * recorded gaps are history and stay where they were stamped; their run
+   * tags follow the run they belong to.
+   */
+  fun clockShifted(deltaMs: Long): EnforcementGapTracker {
+    if (deltaMs == 0L) return this
+    val current = run ?: return copy(lastApprovedAt = lastApprovedAt?.plus(deltaMs))
+    val shifted = current.copy(
+      startedAt = current.startedAt + deltaMs,
+      heartbeatAt = current.heartbeatAt + deltaMs,
+      stoppedAt = current.stoppedAt?.plus(deltaMs),
+      shutdownAt = current.shutdownAt?.plus(deltaMs),
+    )
+    return copy(
+      run = shifted,
+      gaps = gaps.map { gap -> if (gap.run == current.startedAt) gap.copy(run = shifted.startedAt) else gap },
+      lastApprovedAt = lastApprovedAt?.plus(deltaMs),
+    )
   }
 
   // MARK: - Folding
 
   /** What a live run's silence since its last heartbeat says at `now`, if anything. */
-  private fun staleEstimate(live: EngineRun, now: Long, bootTime: Long?): EnforcementGap? = when {
-    rebootedSince(live, bootTime) -> EnforcementGap(
-      from = minOf(bootTime!!, now),
+  private fun staleEstimate(live: EngineRun, now: Long, boot: Boot): EnforcementGap? = when {
+    rebootedSince(live, boot) -> EnforcementGap(
+      from = maxOf(live.startedAt, minOf(rebootGapStart(live, boot, now), now)),
       to = now,
       reason = EnforcementGap.Reason.unknown,
       source = EnforcementGap.Source.heartbeat,
-      detail = "reboot: booted at $bootTime, last heartbeat at ${live.heartbeatAt}",
+      detail = "reboot: boot ${boot.count ?: "?"} at ${boot.timeMs ?: "?"}, run in boot ${live.bootCount ?: "?"}, " +
+        (live.shutdownAt?.let { "shutdown at $it" } ?: "no shutdown seen") + ", last heartbeat at ${live.heartbeatAt}" +
+        (bootsMissed(live, boot)?.takeIf { it > 0 }?.let { ", $it boot(s) without the engine" } ?: ""),
       run = live.startedAt,
     )
     now - live.heartbeatAt > STALE_AFTER_MS -> EnforcementGap(
@@ -468,21 +760,92 @@ internal data class EnforcementGapTracker(
     else -> null
   }
 
-  /** A boot after the run's last heartbeat: the device was off in between. */
-  private fun rebootedSince(live: EngineRun, bootTime: Long?): Boolean = bootTime != null && bootTime > live.heartbeatAt
+  /**
+   * Where a reboot's gap starts. A single reboot (the boot count moved by
+   * one) starts at the boot: the phone was off before it and nothing could
+   * be used, so a phone switched off overnight under a block does not report
+   * the night. A count that moved by more than one means a boot ran without
+   * the engine (safe mode, the classic bypass: third-party apps do not run
+   * there), so the gap starts where the engine was last seen: the shutdown
+   * beat, else the last heartbeat. Unknown counts keep the older bounds: the
+   * shutdown beat, else the boot.
+   */
+  private fun rebootGapStart(live: EngineRun, boot: Boot, now: Long): Long {
+    val missed = bootsMissed(live, boot)
+    return when {
+      missed == 0 -> boot.timeMs ?: live.shutdownAt ?: now
+      missed != null && missed > 0 -> live.shutdownAt ?: live.heartbeatAt
+      else -> live.shutdownAt ?: boot.timeMs ?: now
+    }
+  }
 
-  private fun closeEngineGaps(gaps: List<EnforcementGap>, at: Long): List<EnforcementGap> =
-    gaps.map { gap -> if (gap.isEngineFamily && gap.isOpen) gap.copy(to = maxOf(at, gap.from)) else gap }
+  /** Boots between the run's and the current one; null when either count is unknown. */
+  private fun bootsMissed(live: EngineRun, boot: Boot): Int? =
+    if (boot.count != null && live.bootCount != null) boot.count - live.bootCount - 1 else null
 
   /**
-   * Adds an engine-family gap, merging it with the engine-family gaps of
-   * the same run it overlaps or touches: exit records lead over heartbeat
-   * estimates, the earlier record leads among records, open wins over
-   * closed. Gaps of different runs never merge, even when a clock step
-   * makes them overlap.
+   * Whether the run belongs to a previous boot: the boot counts differ when
+   * both are known; else a boot after the run's last heartbeat (the wall
+   * clock, for runs stored before the count was).
    */
-  private fun mergeEngineGap(gaps: List<EnforcementGap>, gap: EnforcementGap): List<EnforcementGap> {
-    val touching = gaps.filter { it.isEngineFamily && it.run == gap.run && touches(it, gap) }
+  private fun rebootedSince(live: EngineRun, boot: Boot): Boolean {
+    if (boot.count != null && live.bootCount != null) return boot.count != live.bootCount
+    return boot.timeMs != null && boot.timeMs > live.heartbeatAt
+  }
+
+  /**
+   * Ends every open gap [which] selects at [at]: what it still holds is
+   * clipped to [intent] and committed, the open record goes.
+   */
+  private fun closeGaps(gaps: List<EnforcementGap>, at: Long, intent: EnforcementIntent, which: (EnforcementGap) -> Boolean): List<EnforcementGap> {
+    var folded = gaps
+    for (open in gaps.filter { it.isOpen && which(it) }) {
+      folded = folded - open
+      for (piece in clip(open.copy(to = maxOf(at, open.from)), at, intent)) folded = mergeGap(folded, piece)
+    }
+    return folded
+  }
+
+  /**
+   * The pieces of [gap] inside the intent windows up to [now]: a closed gap
+   * yields closed pieces (engine-family ones under [MIN_ENGINE_GAP_MS]
+   * dropped); an open gap yields closed pieces for the windows that ended
+   * and one open piece when a window is in force at now. A piece of no
+   * length is kept only when the gap itself has none (a grant and a
+   * revocation at the same instant, as on iOS).
+   */
+  private fun clip(gap: EnforcementGap, now: Long, intent: EnforcementIntent): List<EnforcementGap> {
+    val end = gap.to ?: now
+    if (end < gap.from) return emptyList()
+    // One past the end: whether a window is still in force at `end` is what keeps an open gap open.
+    val windows = EnforcementIntent.normalize(intent.windows(gap.from, end + 1))
+    val pieces = ArrayList<EnforcementGap>()
+    for (window in windows) {
+      val from = maxOf(gap.from, window.startMs)
+      val to = minOf(end, window.endMs)
+      if (to < from) continue
+      val open = gap.isOpen && now in window
+      if (!open && to == from && end != gap.from) continue
+      if (!open && gap.isEngineFamily && to - from < MIN_ENGINE_GAP_MS) continue
+      pieces.add(gap.copy(from = from, to = if (open) null else to))
+    }
+    return pieces
+  }
+
+  /**
+   * Adds a gap, merging it with the gaps of the same family and key it
+   * overlaps or touches (engine family: the run; permission: the origin):
+   * exit records lead over heartbeat estimates, the earlier record leads
+   * among records, open wins over closed. A closed piece never merges into
+   * the stored open gap of its own origin (that record is what the pieces
+   * are settled from); when [reporting], the open piece of a read merges
+   * with the closed ones so the answer is one gap.
+   */
+  private fun mergeGap(gaps: List<EnforcementGap>, gap: EnforcementGap, reporting: Boolean = false): List<EnforcementGap> {
+    val touching = gaps.filter {
+      it.isEngineFamily == gap.isEngineFamily && it.mergeKey == gap.mergeKey && touches(it, gap) &&
+        (reporting || gap.isOpen || !it.isOpen || it.origin != gap.origin)
+    }
     if (touching.isEmpty()) return sorted(gaps + gap)
     val all = touching + gap
     val records = all.filter { it.source == EnforcementGap.Source.exit }
@@ -495,7 +858,7 @@ internal data class EnforcementGapTracker(
   private fun touches(a: EnforcementGap, b: EnforcementGap): Boolean =
     a.from <= (b.to ?: Long.MAX_VALUE) && b.from <= (a.to ?: Long.MAX_VALUE)
 
-  private fun sorted(gaps: List<EnforcementGap>): List<EnforcementGap> = gaps.sortedBy { it.from }
+  private fun sorted(gaps: List<EnforcementGap>): List<EnforcementGap> = gaps.sortedWith(compareBy({ it.from }, { it.to ?: Long.MAX_VALUE }))
 
   private fun retain(gaps: List<EnforcementGap>, now: Long): List<EnforcementGap> {
     val oldest = now - MAX_AGE_MS
@@ -519,7 +882,9 @@ internal data class EnforcementGapTracker(
           .put(STARTED_AT, it.startedAt)
           .put(PID, it.pid ?: JSONObject.NULL)
           .put(HEARTBEAT_AT, it.heartbeatAt)
-          .put(STOPPED_AT, it.stoppedAt ?: JSONObject.NULL),
+          .put(STOPPED_AT, it.stoppedAt ?: JSONObject.NULL)
+          .put(BOOT_COUNT, it.bootCount ?: JSONObject.NULL)
+          .put(SHUTDOWN_AT, it.shutdownAt ?: JSONObject.NULL),
       )
     }
     json.put(
@@ -553,6 +918,16 @@ internal data class EnforcementGapTracker(
      */
     const val STALE_AFTER_MS = 150_000L
 
+    /**
+     * A closed engine-family piece shorter than this is dropped when it is
+     * settled or closed: the engine's start replays the foreground history
+     * and shields the app on screen, so a death undone within seconds (the
+     * system's sticky restart lands in about 2 s on the emulator) left no
+     * hole a user could use. A user stop followed by a relaunch takes
+     * longer than this; one that does not is treated the same.
+     */
+    const val MIN_ENGINE_GAP_MS = 10_000L
+
     /** As iOS (`AuthorizationGapTracker.maxGaps`). */
     const val MAX_GAPS = 50
 
@@ -575,6 +950,8 @@ internal data class EnforcementGapTracker(
     private const val PID = "pid"
     private const val HEARTBEAT_AT = "heartbeatAt"
     private const val STOPPED_AT = "stoppedAt"
+    private const val BOOT_COUNT = "bootCount"
+    private const val SHUTDOWN_AT = "shutdownAt"
     private const val SEEN_EXITS = "seenExits"
     private const val TIMESTAMP = "timestamp"
     private const val LAST_APPROVED_AT = "lastApprovedAt"
@@ -597,6 +974,8 @@ internal data class EnforcementGapTracker(
           pid = r.optLongOrNull(PID)?.toInt(),
           heartbeatAt = r.optLongOrNull(HEARTBEAT_AT) ?: startedAt,
           stoppedAt = r.optLongOrNull(STOPPED_AT),
+          bootCount = r.optLongOrNull(BOOT_COUNT)?.toInt(),
+          shutdownAt = r.optLongOrNull(SHUTDOWN_AT),
         )
       }
       val seen = LinkedHashSet<ExitKey>()
@@ -609,7 +988,7 @@ internal data class EnforcementGapTracker(
         }
       }
       return EnforcementGapTracker(
-        gaps = gaps.sortedBy { it.from },
+        gaps = gaps.sortedWith(compareBy({ it.from }, { it.to ?: Long.MAX_VALUE })),
         run = run,
         seenExits = seen,
         lastApprovedAt = json.optLongOrNull(LAST_APPROVED_AT),

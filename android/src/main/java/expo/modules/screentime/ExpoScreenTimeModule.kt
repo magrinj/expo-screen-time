@@ -11,15 +11,13 @@ import expo.modules.kotlin.modules.ModuleDefinitionBuilder
  * Stage 3 of the Android port. Step 1: the
  * permission steps are real, the engine service and its state store exist.
  * Step 2: the selection store, the handles, the picker and the token label.
- * Step 3: the manual block, the shield and its configuration, behind the
- * internal preview switch (`BuildConfig.BLOCKING_PREVIEW`): off, the build
- * behaves exactly as before the step. Step 4: monitoring (schedules,
- * thresholds, the event history and the live events), under the same
- * switch. Step 5: the temporary unlock (whole block and targeted), the
- * shield actions and the interaction queue, under the same switch again —
- * it goes once `getEnforcementGaps` is wired and the preview build passes
- * the whole conformance suite. Every function not yet implemented fails
- * with a coded `UNSUPPORTED` error.
+ * Step 3: the manual block, the shield and its configuration. Step 4:
+ * monitoring (schedules, thresholds, the event history and the live
+ * events). Step 5: the temporary unlock (whole block and targeted), the
+ * shield actions and the interaction queue. Step 6: the enforcement gaps,
+ * which is where `blocking` became `"friction"` for real and the internal
+ * preview switch the steps 3–5 shipped behind went away. Every function
+ * not implemented fails with a coded `UNSUPPORTED` error.
  */
 class ExpoScreenTimeModule : Module() {
   private val permissionRequester by lazy { AndroidPermissionRequester(appContext) }
@@ -30,28 +28,51 @@ class ExpoScreenTimeModule : Module() {
   private val blocks by lazy { BlockController(context, store, selections) }
   private val monitoring by lazy { MonitoringController(context, store, selections) { payload -> sendEvent("onMonitorEvent", payload) } }
   private val unlocks by lazy { UnlockController(context, store, selections) { monitoring.notifyListeners() } }
+  private val gaps by lazy { EnforcementGapRecorder(context, store) }
+  /** The gap observations: binder calls under the cross-process lock, kept off the main thread, in order. */
+  private val observer = java.util.concurrent.Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "expo-st-gaps") }
+
+  /** [EnforcementGapRecorder.observe] on the observer thread, for the lifecycle hooks and `getEnforcementGaps`; waits when [sync]. */
+  internal fun observe(reason: String, sync: Boolean) {
+    val task = observer.submit {
+      try {
+        gaps.observe(reason)
+      } catch (e: Exception) {
+        android.util.Log.w(EngineController.TAG, "enforcement gaps not observed ($reason): ${e.javaClass.simpleName}: ${e.message}")
+      }
+    }
+    if (sync) task.get()
+  }
 
   override fun definition() = ModuleDefinition {
     Name("ExpoScreenTime")
 
-    // Emitted by the monitoring layer under the preview switch (below);
-    // declared either way, for parity with iOS.
     Events("onMonitorEvent")
 
     OnCreate {
-      // The recovery path that does not depend on the system's sticky
-      // restart: every launch brings the engine in line with the stored
-      // desired state (and stops a stray one).
-      appContext.reactContext?.let { EngineController.sync(it, "launch") }
+      appContext.reactContext?.let { context ->
+        // The enforcement gaps are observed at launch, as the iOS module
+        // observes its authorization: the exit history (a user stop, a
+        // kill), the engine's liveness and the permissions. Off the main
+        // thread; whichever of this and the engine's start lands first in
+        // the store, the gap is reported the same.
+        observe("launch", sync = false)
+        // The recovery path that does not depend on the system's sticky
+        // restart: every launch brings the engine in line with the stored
+        // desired state (and stops a stray one).
+        EngineController.sync(context, "launch")
+      }
     }
 
     OnActivityEntersForeground {
       permissionRequester.onForeground()
+      observe("foreground", sync = false)
     }
 
     OnDestroy {
       permissionRequester.dispose()
-      if (BuildConfig.BLOCKING_PREVIEW) monitoring.stopObserving()
+      monitoring.stopObserving()
+      observer.shutdown()
     }
 
     NATIVE_FUNCTIONS.filterNot { it.name in IMPLEMENTED }.forEach { unsupported(it) }
@@ -103,15 +124,13 @@ class ExpoScreenTimeModule : Module() {
     // turned `selectableKinds.applications` on (the picker lists apps, the
     // store holds them); categories and web domains stay off in v1 (review
     // R10: `ApplicationInfo.category` is mostly unset; no web blocking).
-    // `blocking` is "friction" (review R2: a user can stop the engine) only
-    // under the preview switch; it flips for real once every scenario that
-    // keys on it (C03–C10) has its behaviour — `getEnforcementGaps` (C09)
-    // is the last one. The limits are
-    // the cross-platform ones (the contract enforces the iOS values on both
-    // platforms).
+    // `blocking` is "friction" (review R2): the engine shields, and a user
+    // can stop it from the Task Manager or Settings, which
+    // `getEnforcementGaps` reports. The limits are the cross-platform ones
+    // (the contract enforces the iOS values on both platforms).
     Function("getCapabilities") {
       mapOf(
-        "blocking" to if (BuildConfig.BLOCKING_PREVIEW) "friction" else "none",
+        "blocking" to "friction",
         "selectableKinds" to mapOf("applications" to true, "categories" to false, "webDomains" to false),
         "webDomainBlocking" to false,
         "appRemovalProtection" to "none",
@@ -127,97 +146,108 @@ class ExpoScreenTimeModule : Module() {
       )
     }
 
+    // MARK: - Enforcement gaps
+
+    // Periods when a block was intended but not enforced, oldest first
+    // (EnforcementGapRecorder): the exit history (`stoppedByUser` for a
+    // Task Manager stop or a force stop, `killedBySystem`), a stale
+    // heartbeat, a reboot, a refused start, and the enforcement permissions
+    // revoked (`permissionRevoked`, open while they are). Observed here as
+    // iOS observes its authorization in this function.
+    AsyncFunction("getEnforcementGaps") { since: Double?, promise: Promise ->
+      observe("getEnforcementGaps", sync = true)
+      promise.resolve(gaps.gaps(since?.toLong()))
+    }
+
     // MARK: - Blocking
 
-    if (BuildConfig.BLOCKING_PREVIEW) {
-      // Same validation order, codes and semantics as the Swift `blockSelection`
-      // (BlockValidation): one manual block that a second call replaces; the
-      // engine process is told to look again.
-      Function("blockSelection") { selectionId: String, options: Map<String, Any?>? -> blocks.blockSelection(selectionId, options) }
+    // Same validation order, codes and semantics as the Swift `blockSelection`
+    // (BlockValidation): one manual block that a second call replaces; the
+    // engine process is told to look again.
+    Function("blockSelection") { selectionId: String, options: Map<String, Any?>? -> blocks.blockSelection(selectionId, options) }
 
-      // Lifts every active block — manual, schedule, threshold — as iOS does;
-      // monitoring keeps running (BlockController.unblockAll).
-      Function("unblockAll") { blocks.unblockAll() }
+    // Lifts every active block — manual, schedule, threshold — as iOS does;
+    // monitoring keeps running (BlockController.unblockAll).
+    Function("unblockAll") { blocks.unblockAll() }
 
-      Function("isBlocked") { blocks.isBlocked() }
+    Function("isBlocked") { blocks.isBlocked() }
 
-      // MARK: - Shield Configuration
+    // MARK: - Shield Configuration
 
-      Function("setShieldConfig") { config: Map<String, Any?> -> blocks.setShieldConfig(config) }
+    Function("setShieldConfig") { config: Map<String, Any?> -> blocks.setShieldConfig(config) }
 
-      Function("setShieldConfigForActivity") { activityName: String, config: Map<String, Any?> -> blocks.setShieldConfigForActivity(activityName, config) }
+    Function("setShieldConfigForActivity") { activityName: String, config: Map<String, Any?> -> blocks.setShieldConfigForActivity(activityName, config) }
 
-      Function("clearShieldConfig") { blocks.clearShieldConfig() }
+    Function("clearShieldConfig") { blocks.clearShieldConfig() }
 
-      // MARK: - Monitoring
+    // MARK: - Monitoring
 
-      // Same validation order, codes and semantics as the Swift
-      // `startMonitoring` (MonitoringValidation); review R7: inside the
-      // interval the block applies at once and one intervalDidStart is
-      // recorded. The engine process is told to look again.
-      AsyncFunction("startMonitoring") { config: Map<String, Any?>, promise: Promise ->
-        monitoring.start(config)
-        promise.resolve(null)
-      }
-
-      AsyncFunction("stopMonitoring") { activityName: String, promise: Promise ->
-        monitoring.stop(activityName)
-        promise.resolve(null)
-      }
-
-      AsyncFunction("stopAllMonitoring") { promise: Promise ->
-        monitoring.stopAll()
-        promise.resolve(null)
-      }
-
-      AsyncFunction("getMonitoredActivities") { monitoring.monitoredActivities() }
-
-      // MARK: - Event History
-
-      AsyncFunction("getMonitorEvents") { activityName: String?, limit: Int? -> monitoring.events(activityName, limit) }
-
-      AsyncFunction("clearMonitorEvents") { activityName: String?, promise: Promise ->
-        monitoring.clearEvents(activityName)
-        promise.resolve(null)
-      }
-
-      // MARK: - Real-time Event Listening
-
-      OnStartObserving("onMonitorEvent") { monitoring.startObserving() }
-
-      OnStopObserving("onMonitorEvent") { monitoring.stopObserving() }
-
-      // MARK: - Temporary unlock
-
-      // Same judge order, codes and messages as the Swift `temporaryUnlock`
-      // (UnlockController): the whole block (every active source suspended,
-      // the budget metered over their apps by the engine) or one target (a
-      // shield snooze granted from the app). `budgetSeconds` is taken as it
-      // arrives so a non-number is INVALID_CONFIG, not a bridge error.
-      AsyncFunction("temporaryUnlock") { budgetSeconds: Any?, options: Map<String, Any?>?, promise: Promise ->
-        promise.resolve(unlocks.temporaryUnlock(budgetSeconds, options))
-      }
-
-      Function("isTemporarilyUnlocked") { unlocks.isTemporarilyUnlocked() }
-
-      Function("getRemainingUnlockSeconds") { unlocks.getRemainingUnlockSeconds() }
-
-      Function("relock") { unlocks.relock() }
-
-      // MARK: - Shield interactions
-
-      // Read-and-clear the queue the shield Activity writes (one entry per
-      // button press, collapsed per target within 2 s).
-      Function("drainShieldInteractions") { unlocks.drainShieldInteractions() }
-
-      // MARK: - Shield Actions
-
-      Function("setShieldActions") { config: Map<String, Any?> -> blocks.setShieldActions(config) }
-
-      Function("setShieldActionsForActivity") { activityName: String, config: Map<String, Any?> -> blocks.setShieldActionsForActivity(activityName, config) }
-
-      Function("clearShieldActions") { blocks.clearShieldActions() }
+    // Same validation order, codes and semantics as the Swift
+    // `startMonitoring` (MonitoringValidation); review R7: inside the
+    // interval the block applies at once and one intervalDidStart is
+    // recorded. The engine process is told to look again.
+    AsyncFunction("startMonitoring") { config: Map<String, Any?>, promise: Promise ->
+      monitoring.start(config)
+      promise.resolve(null)
     }
+
+    AsyncFunction("stopMonitoring") { activityName: String, promise: Promise ->
+      monitoring.stop(activityName)
+      promise.resolve(null)
+    }
+
+    AsyncFunction("stopAllMonitoring") { promise: Promise ->
+      monitoring.stopAll()
+      promise.resolve(null)
+    }
+
+    AsyncFunction("getMonitoredActivities") { monitoring.monitoredActivities() }
+
+    // MARK: - Event History
+
+    AsyncFunction("getMonitorEvents") { activityName: String?, limit: Int? -> monitoring.events(activityName, limit) }
+
+    AsyncFunction("clearMonitorEvents") { activityName: String?, promise: Promise ->
+      monitoring.clearEvents(activityName)
+      promise.resolve(null)
+    }
+
+    // MARK: - Real-time Event Listening
+
+    OnStartObserving("onMonitorEvent") { monitoring.startObserving() }
+
+    OnStopObserving("onMonitorEvent") { monitoring.stopObserving() }
+
+    // MARK: - Temporary unlock
+
+    // Same judge order, codes and messages as the Swift `temporaryUnlock`
+    // (UnlockController): the whole block (every active source suspended,
+    // the budget metered over their apps by the engine) or one target (a
+    // shield snooze granted from the app). `budgetSeconds` is taken as it
+    // arrives so a non-number is INVALID_CONFIG, not a bridge error.
+    AsyncFunction("temporaryUnlock") { budgetSeconds: Any?, options: Map<String, Any?>?, promise: Promise ->
+      promise.resolve(unlocks.temporaryUnlock(budgetSeconds, options))
+    }
+
+    Function("isTemporarilyUnlocked") { unlocks.isTemporarilyUnlocked() }
+
+    Function("getRemainingUnlockSeconds") { unlocks.getRemainingUnlockSeconds() }
+
+    Function("relock") { unlocks.relock() }
+
+    // MARK: - Shield interactions
+
+    // Read-and-clear the queue the shield Activity writes (one entry per
+    // button press, collapsed per target within 2 s).
+    Function("drainShieldInteractions") { unlocks.drainShieldInteractions() }
+
+    // MARK: - Shield Actions
+
+    Function("setShieldActions") { config: Map<String, Any?> -> blocks.setShieldActions(config) }
+
+    Function("setShieldActionsForActivity") { activityName: String, config: Map<String, Any?> -> blocks.setShieldActionsForActivity(activityName, config) }
+
+    Function("clearShieldActions") { blocks.clearShieldActions() }
 
     // MARK: - Selection Store
 

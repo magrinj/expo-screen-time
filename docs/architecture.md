@@ -117,11 +117,13 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   `FileChannel` lock on a sidecar file (exclusive for `update`, shared for
   `read`, re-entrant in-process), replaced by atomic rename. Engine desired
   state and failures, permission requests, the install secret, the
-  selections, the manual block, the shield configs and the monitoring
+  selections, the manual block, the shield configs, the monitoring
   layer (`monitoring`: activities, intervals in progress, the event log,
-  the usage-stream cursor). `syncEngineDesired` derives the engine's
-  desired state from the document in the same `update` as the mutation:
-  a manual block in force or any monitored activity.
+  the usage-stream cursor) and the enforcement-gap tracker (`gaps`).
+  `syncEngineDesired` derives the engine's desired state from the document
+  in the same `update` as the mutation: a manual block in force or any
+  monitored activity (the controllers call it through
+  `EnforcementGapRecorder.syncDesired`, which also records the release).
 - `SelectionStore.kt` — the twin of `ios/SelectionStore.swift` over the
   state store: `selections.<id>` holds package-name sets (`Selection.kt`,
   pure: the set algebra and the document codec; categories and web domains
@@ -227,8 +229,8 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   on whichever state is current; `TIMEZONE_CHANGED` re-evaluates in the
   new zone. `isBlocked()` reads `MonitoringState.schedulesAt`: the
   boundaries at now, the thresholds as the engine persisted them.
-- **Temporary unlock and shield interactions (step 5, behind the same
-  switch).** `UnlockController.kt` is the module-process half (the twin of
+- **Temporary unlock and shield interactions.**
+  `UnlockController.kt` is the module-process half (the twin of
   the Swift `temporaryUnlock`, `isTemporarilyUnlocked`,
   `getRemainingUnlockSeconds`, `relock` and `drainShieldInteractions`): the
   judge (`TemporaryUnlockRequest.judge`, the iOS order and codes), the
@@ -253,7 +255,11 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   the module made meanwhile is kept), and recomposes the sources when a
   budget is spent or expired (the wake alarm covers midnight): the app
   still on screen is re-shielded by the standing check, with the host app
-  never running. The shield Activity records every press
+  never running. The standing check reads `ForegroundTracker.visibleAt`:
+  a paused, unstopped app counts as on screen (PiP) only once its pause is
+  `PAUSE_SETTLE_MS` (3 s) old, because an app switch pauses the app that
+  leaves before stopping it; and `DEVICE_SHUTDOWN` / `DEVICE_STARTUP`
+  clear the tracker, since nothing stays on screen across a boot. The shield Activity records every press
   (`ShieldInteractionQueue`, the app's handle derived like `getTokens`
   derives it, the owner's activity name) and applies the configured action
   (`ShieldAction.configured` over `StateStore.shieldActions(owner)`, the
@@ -281,6 +287,45 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   alone. Split-screen: a background-started task cannot be placed into a
   pane (measured), so the shield covers the screen; `LAUNCH_ADJACENT`
   keeps the split pair alive underneath instead of dismissing it.
+- **Enforcement gaps.** `EnforcementGaps.kt` is the pure core
+  (the twin of `ios/EnforcementGaps.swift`, wider: Android has more ways to
+  lose enforcement): `EnforcementGapTracker` folds the exit history
+  (`ExitRecord` reduced from `ApplicationExitInfo`, `ExitReasons` mapping
+  `USER_REQUESTED` → `stoppedByUser` and the kills → `killedBySystem`),
+  the engine's run (`engineStarted` / `heartbeat` / `engineStopped`, a
+  stale heartbeat = a kill with no record, a run from another
+  `BOOT_COUNT` = a reboot, whose gap starts at the boot, or at the
+  `ACTION_SHUTDOWN` beat when a boot ran without the engine, e.g. safe mode),
+  a refused start (`engineRefused`), the app's look at a dead engine
+  process (`observeEngine`) and the permission checks (`observePermissions`,
+  the iOS tracker over `usageAccess` + `overlay`). **Intent** is
+  `EnforcementIntent.of(manual, monitoring, zone)`: the periods a source
+  would shield something (the manual block's whole span; each schedule's
+  occurrences, a `blockOnThreshold` activity for its interval, a lifted
+  occurrence excluded). A gap is stored as observed and **settled** against
+  the intent at every look of the app and before every mutation of the
+  block or the activities (`settle`, with the intent read **before** the
+  mutation: what was observed under the previous intent is committed as
+  closed pieces carrying the gap's `origin`, and the open record goes on
+  from now, so a later change of intent cannot rewrite it); its end (a
+  start, a release, a grant) settles the last part the same way, and a
+  read clips the open record up to now; pieces of one observation merge
+  back on read. A closed engine gap under 10 s is dropped (the engine's
+  start re-shields what is on screen). `EnforcementGapRecorder.kt` is the Android wiring, from either
+  process, every fold one `StateStore.update` with the inputs (`now`, the
+  boot, the exit history, the permission reads, the intent) taken inside
+  it: the service folds `engineStarted` in the same update that re-checks
+  `engine.desired` and `engineRefused` when `startForeground` is refused
+  (`EngineController.sync` does the same for a refused start intent); the
+  loop beats every 60 s and on screen on/off, `USER_PRESENT`,
+  `ACTION_SHUTDOWN` and every change of the two enforcement AppOps
+  (`startWatchingMode`, so a revocation is seen at once); the module's
+  mutations go through `syncDesired`, which derives `engine.desired` and
+  folds the release with the intent read **before** the mutation; the app
+  observes at launch (before the SYNC that revives the engine, so a dead
+  engine is a gap first and a closed one next), on every foreground and in
+  `getEnforcementGaps`, which answers `gaps(since, now, intent)`. The
+  document key is `gaps`.
 - `ScreenTimeDeviceAdminReceiver.kt` — a no-policy device admin (force-stop
   and uninstall friction).
 - `AndroidManifest.xml` — the static declarations every consumer needs

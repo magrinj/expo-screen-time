@@ -19,7 +19,9 @@ import java.util.TimeZone
  * ([EngineController.sync], a stateless start intent) and delivers the
  * events this process recorded to JS. The engine process answers history
  * requests and advances usage; this side only ever calls `start`, `stop`,
- * `stopAll` and `clearEvents`, as the seam prescribes.
+ * `stopAll` and `clearEvents`, as the seam prescribes. The desire to run
+ * is derived through [EnforcementGapRecorder.syncDesired], which records
+ * a release for `getEnforcementGaps` when the last activity goes.
  */
 internal class MonitoringController(
   private val context: Context,
@@ -28,6 +30,7 @@ internal class MonitoringController(
   private val emit: (Map<String, Any?>) -> Unit,
 ) {
   private val main = Handler(Looper.getMainLooper())
+  private val gaps = EnforcementGapRecorder(context, store)
 
   /**
    * `startMonitoring(config)`: validated in the iOS order with the iOS
@@ -38,11 +41,12 @@ internal class MonitoringController(
    */
   fun start(config: Map<String, Any?>) {
     val recorded = store.update { document ->
+      val intentBefore = gaps.intent(document)
       val state = MonitoringDocument.read(document)
       val validated = MonitoringValidation.validate(config, selections::get, state.activities.keys)
       val result = state.start(validated, System.currentTimeMillis(), TimeZone.getDefault(), selections::get)
       MonitoringDocument.write(document, result.state)
-      store.syncEngineDesired(document)
+      gaps.syncDesired(document, intentBefore)
       result.recorded
     }
     EngineController.sync(context, "monitoring:start")
@@ -53,9 +57,10 @@ internal class MonitoringController(
   fun stop(activityName: String) {
     MonitoringValidation.validateActivityName(activityName)
     val recorded = store.update { document ->
+      val intentBefore = gaps.intent(document)
       val result = MonitoringDocument.read(document).stop(activityName, System.currentTimeMillis())
       MonitoringDocument.write(document, result.state)
-      store.syncEngineDesired(document)
+      gaps.syncDesired(document, intentBefore)
       result.recorded
     }
     EngineController.sync(context, "monitoring:stop")
@@ -65,9 +70,10 @@ internal class MonitoringController(
   /** `stopAllMonitoring()`: every activity; the manual block stays, as on iOS. */
   fun stopAll() {
     val recorded = store.update { document ->
+      val intentBefore = gaps.intent(document)
       val result = MonitoringDocument.read(document).stopAll(System.currentTimeMillis())
       MonitoringDocument.write(document, result.state)
-      store.syncEngineDesired(document)
+      gaps.syncDesired(document, intentBefore)
       result.recorded
     }
     EngineController.sync(context, "monitoring:stopAll")

@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.Process
 import android.util.Log
 
 /**
@@ -18,7 +19,13 @@ import android.util.Log
  * engine is wanted, and leaves otherwise; while it runs, [EngineLoop]
  * detects the foreground app and launches the [ShieldActivity],
  * evaluates the schedules and usage thresholds and records their events
+ *, meters the unlocks and beats for the gap tracker
  *.
+ *
+ * The engine's run is recorded for `getEnforcementGaps`
+ * ([EnforcementGapRecorder]): its start (in the update that re-checks the
+ * desired state), a refused promotion, and its release (`onDestroy` after
+ * the module cleared the desired state).
  *
  * Two lessons from the survival run are built in:
  * - `startForeground` can throw `ForegroundServiceStartNotAllowedException`
@@ -42,7 +49,12 @@ class ScreenTimeEngineService : Service() {
       // sends them. The app sends SYNC (EngineController), which carries no
       // state: the store decides.
       ACTION_START -> store.engineDesired = true
-      ACTION_STOP -> store.engineDesired = false
+      ACTION_STOP -> store.update { document ->
+        val recorder = EnforcementGapRecorder(this, store)
+        val before = recorder.intent(document)
+        store.engineDesired = false
+        recorder.released(document, before)
+      }
     }
     // Promote FIRST, whatever the store says: a `startForegroundService`
     // must be answered by `startForeground`, or the system kills the process
@@ -51,10 +63,27 @@ class ScreenTimeEngineService : Service() {
     // `blockSelection` within a millisecond (the stop arrived before the
     // start was honoured). A refused promotion is recorded by `promote`.
     val promoted = promote()
+    // The desired state is re-checked and the engine's run is recorded in
+    // ONE update (EnforcementGapRecorder.engineStarted: the exit history is
+    // folded, a previous process's death or a reboot becomes a gap that
+    // closes now, and this process's run opens), so a release landing in
+    // between can never leave a run that nothing stops.
+    val gaps = EnforcementGapRecorder(this, store)
+    val desired = try {
+      store.update { document ->
+        val desired = store.engineDesired
+        if (desired && promoted) gaps.engineStarted(document, Process.myPid())
+        desired
+      }
+    } catch (e: Exception) {
+      // The run's bookkeeping must never keep the engine from running.
+      Log.w(EngineController.TAG, "run not recorded at start: ${e.javaClass.simpleName}: ${e.message}")
+      store.engineDesired
+    }
     // stopSelf(startId): a start queued behind this one (released, then
     // wanted again at once) keeps the service alive instead of being dropped.
-    if (!store.engineDesired || !promoted) {
-      if (!store.engineDesired) Log.i(EngineController.TAG, "engine not wanted; stopping (intent=${intent?.action ?: "redelivered"})")
+    if (!desired || !promoted) {
+      if (!desired) Log.i(EngineController.TAG, "engine not wanted; stopping (intent=${intent?.action ?: "redelivered"})")
       if (promoted) stopForeground(STOP_FOREGROUND_REMOVE)
       stopSelf(startId)
       return START_NOT_STICKY
@@ -65,10 +94,7 @@ class ScreenTimeEngineService : Service() {
     // Every start intent is also the "look again" signal from the module
     // process, the restart receiver and the alarm: the manual block, the
     // monitoring state (and the sets they need) are re-read from the store.
-    // The loop exists only under the preview switch: a default build has
-    // no way to write a block, and must not enforce one a preview build
-    // left behind.
-    if (BuildConfig.BLOCKING_PREVIEW) (loop ?: EngineLoop(this).also { loop = it }).refresh(reason)
+    (loop ?: EngineLoop(this).also { loop = it }).refresh(reason)
     // Sticky: the system may restart a killed engine; if it then refuses the
     // promotion, `promote` records it and the service leaves.
     return START_STICKY
@@ -77,7 +103,18 @@ class ScreenTimeEngineService : Service() {
   override fun onDestroy() {
     loop?.stop()
     loop = null
-    StateStore(this).engineRunning = false
+    val store = StateStore(this)
+    try {
+      store.update { document ->
+        store.engineRunning = false
+        // A release the module folded already finds the run ended (idempotent);
+        // a service destroyed while the engine is still wanted is not a release.
+        val recorder = EnforcementGapRecorder(this, store)
+        if (!store.engineDesired) recorder.released(document, recorder.intent(document))
+      }
+    } catch (e: Exception) {
+      Log.w(EngineController.TAG, "release not recorded at destroy: ${e.javaClass.simpleName}: ${e.message}")
+    }
     super.onDestroy()
   }
 
@@ -96,7 +133,12 @@ class ScreenTimeEngineService : Service() {
       // IllegalStateException; SecurityException covers a missing FGS
       // permission. Caught by base class so the catch verifies on every API.
       Log.w(EngineController.TAG, "startForeground refused: ${e.javaClass.simpleName}: ${e.message}")
-      StateStore(this).recordEngineFailure("foreground:${e.javaClass.simpleName}", e.message)
+      val store = StateStore(this)
+      store.recordEngineFailure("foreground:${e.javaClass.simpleName}", e.message)
+      // The engine is down for certain while it is wanted: a gap opens now
+      // (the Pixel refused the sticky restart hours after the app
+      // was last visible; the next launch or boot brings the engine back).
+      EnforcementGapRecorder(this, store).engineRefused("foreground:${e.javaClass.simpleName}", certain = true)
       false
     }
   }

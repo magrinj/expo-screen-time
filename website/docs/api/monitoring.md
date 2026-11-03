@@ -208,13 +208,9 @@ exactly at the scheduled time.
 
 ## Android {#android}
 
-**Preview, not yet enabled:** monitoring is implemented on Android and
-exercised by the behavioural suite (C06, C07), but ships behind the same
-internal build switch as [blocking](./blocking.md#android), with
-`getCapabilities().blocking` still `"none"` and every function on this page
-failing with `UNSUPPORTED` in a published build (see
-[platform support](../platform-support.md)). It documents what an app written
-against the capability will get.
+Monitoring works on Android with the same API; the engine behind
+[blocking](./blocking.md#android) evaluates the schedules and measures the
+usage. What differs:
 
 - **The same API, the same codes.** `startMonitoring` validates in the iOS
   order with the iOS codes: `INVALID_CONFIG` (no `activityName`, a reserved
