@@ -20,8 +20,26 @@ internal data class LaunchableApp(val packageName: String, val label: String)
  * The host app is left out: blocking the app that holds the blocker's
  * controls would lock the user out of lifting the block, and iOS cannot
  * shield the host either (`ActivityCategoryPolicy.all(except:)` never does).
+ * The picker goes further ([selectable]): it leaves out every app the engine
+ * exempts ([SystemExemptions]: the launchers, the dialer, the emergency app,
+ * the keyboard, Settings, SystemUI), so it never offers an app a block would
+ * silently skip. The engine's own universe ([packages]) keeps them: there the
+ * exemptions are applied by [ShieldPolicy] itself.
  */
 internal object LaunchableApps {
+  /**
+   * The apps the picker offers: [apps] minus the [exempt] ones, in order. One
+   * source of truth for "never blocked": the exemption set the engine reads,
+   * never a second list. A stored selection that already holds an exempt
+   * package (picked before this rule, or imported from a device where that
+   * package is an ordinary app) is left as it is: the picker has no row for
+   * it, the engine ignores it, `getTokens` still lists it and `removeToken`
+   * drops it — pruning on load would silently alter an imported selection,
+   * and the set is device-specific.
+   */
+  fun selectable(apps: List<LaunchableApp>, exempt: Set<String>): List<LaunchableApp> =
+    if (exempt.isEmpty()) apps else apps.filter { it.packageName !in exempt }
+
   fun query(context: Context): List<LaunchableApp> {
     val pm = context.packageManager
     val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)

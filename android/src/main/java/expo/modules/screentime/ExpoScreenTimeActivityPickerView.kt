@@ -13,6 +13,8 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewTreeObserver
+import android.view.WindowInsets
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.inputmethod.EditorInfo
 import android.widget.BaseAdapter
@@ -23,6 +25,8 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ListView
 import android.widget.TextView
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import expo.modules.kotlin.AppContext
 import expo.modules.kotlin.viewevent.EventDispatcher
 import expo.modules.kotlin.views.ExpoView
@@ -33,13 +37,31 @@ import java.util.concurrent.Executors
  *
  * iOS embeds the system `FamilyActivityPicker`; Android has no system
  * picker, so the library draws one: a searchable, multi-select list of the
- * launchable apps ([LaunchableApps]) with their icons, on its own background
- * in the system's light or dark scheme (as the iOS picker is on
- * `.systemBackground`, whatever the RN style behind it). Apps only in v1
- * (`selectableKinds`): no categories, no web domains. Classic views rather
- * than Compose, as Expo's own native views (expo-video, expo-camera): no
- * extra dependency for a consumer that does not use Compose, and `ListView`
- * recycles its rows for free.
+ * launchable apps ([LaunchableApps]) minus the ones the engine never shields
+ * ([SystemExemptions], read once with the list: offering Settings or the
+ * launcher would promise a block that never comes), with their icons, on
+ * its own background in the app's light or dark scheme (as the iOS picker
+ * is on `.systemBackground`, whatever the RN style behind it). Apps only in
+ * v1 (`selectableKinds`): no categories, no web domains. Classic views
+ * rather than Compose, as Expo's own native views (expo-video,
+ * expo-camera): no extra dependency for a consumer that does not use
+ * Compose, and `ListView` recycles its rows for free.
+ *
+ * Edge to edge: the window is drawn under the system bars (the default from
+ * targetSdk 35), and React Native lays this view out wherever the app puts
+ * it, so the part of the status bar, the navigation bar (gesture or three
+ * buttons) and a display cutout that the view runs under becomes the
+ * content's padding ([InsetOverlap], from the root window insets and the
+ * view's position in the window), the way the iOS hosting view keeps its
+ * content inside the safe area. The root insets rather than the dispatched
+ * ones: an ancestor that consumes or shrinks them (a `fitsSystemWindows`
+ * container, a screen that pads itself) would leave this view with none,
+ * while the root's are always window-relative, as the position is. The
+ * overlap is re-checked after this view's own layout and after every
+ * global layout, so an ancestor that slides or resizes (a modal's
+ * transition, a resized header) moves the padding with it. The background
+ * still covers the bars' region; only the rows and the footer move out
+ * from under them.
  *
  * Same contract as iOS: mounting with a `selectionId` loads (and creates,
  * when missing) the selection and emits `onSelectionChange` with it, as the
@@ -71,6 +93,12 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
   private val selected = LinkedHashSet<String>()
   private val icons = HashMap<String, Drawable?>()
   private var palette = ViewPalette.of(context)
+
+  /** The part of the system bars the content is padded for right now. */
+  private var padded = InsetOverlap.Edges(0, 0, 0, 0)
+
+  /** An ancestor moved or resized without this view re-laying out: look again. */
+  private val globalLayout = ViewTreeObserver.OnGlobalLayoutListener { if (overlap() != padded) applyInsets() }
 
   /** Set on detach: the icon pass stops (rows load the rest on demand). */
   @Volatile
@@ -139,8 +167,15 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
     applyPalette()
 
     iconIo.execute {
+      val exempt = try {
+        SystemExemptions.read(context)
+      } catch (e: Exception) {
+        // Better every app than none: the engine still skips what it exempts.
+        Log.w(TAG, "Cannot read the system exemptions", e)
+        emptySet()
+      }
       val found = try {
-        LaunchableApps.query(context)
+        LaunchableApps.selectable(LaunchableApps.query(context), exempt)
       } catch (e: Exception) {
         Log.w(TAG, "Cannot list the launchable apps", e)
         emptyList()
@@ -207,12 +242,55 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
   override fun onAttachedToWindow() {
     super.onAttachedToWindow()
     detached = false
+    viewTreeObserver.addOnGlobalLayoutListener(globalLayout)
     onOpen(Unit)
+  }
+
+  // MARK: - Insets
+
+  override fun onApplyWindowInsets(insets: WindowInsets): WindowInsets {
+    // The bars changed (a navigation-mode switch, a rotation): the signal
+    // only; the values are read from the root in overlap().
+    applyInsets()
+    // Not consumed: the siblings React Native lays out around this view read them too.
+    return super.onApplyWindowInsets(insets)
+  }
+
+  override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+    super.onLayout(changed, l, t, r, b)
+    // The position in the window is known now; a padding change must not
+    // request a layout from inside this pass.
+    if (overlap() != padded) post { applyInsets() }
+  }
+
+  /** The part of the bars this view runs under, from the root insets and its position in the window; zero while unattached. */
+  private fun overlap(): InsetOverlap.Edges {
+    if (!isAttachedToWindow || width == 0 || height == 0) return InsetOverlap.Edges(0, 0, 0, 0)
+    val bars = ViewCompat.getRootWindowInsets(this)
+      ?.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+      ?: return InsetOverlap.Edges(0, 0, 0, 0)
+    val decor = rootView
+    val location = IntArray(2)
+    getLocationInWindow(location)
+    return InsetOverlap.of(
+      InsetOverlap.Rect(location[0], location[1], location[0] + width, location[1] + height),
+      InsetOverlap.Rect(0, 0, decor.width, decor.height),
+      InsetOverlap.Edges(bars.left, bars.top, bars.right, bars.bottom),
+    )
+  }
+
+  /** Pads the content by the overlap when it changed; the background keeps covering the bars' region. */
+  private fun applyInsets() {
+    val pad = overlap()
+    if (pad == padded) return
+    padded = pad
+    content.setPadding(pad.left, pad.top, pad.right, pad.bottom)
   }
 
   override fun onDetachedFromWindow() {
     super.onDetachedFromWindow()
     detached = true
+    viewTreeObserver.removeOnGlobalLayoutListener(globalLayout)
     onClose(Unit)
   }
 

@@ -20,7 +20,9 @@ shield, and the user can stop it from the system settings, which
 ## What works on Android now
 
 - **Selections.** `<ActivityPicker />` lists the apps the user can launch
-  (icon and name, searchable, multi-select) and stores the choice natively
+  and the engine can block (icon and name, searchable, multi-select; the
+  launcher, dialer, Settings and the other always-reachable apps are left
+  out) and stores the choice natively
   under its `selectionId`; `listSelections`, `getSelectionMetadata`,
   `getTokens`, `removeToken`, the set operations and `exportSelection` /
   `importSelection` work as on iOS. `<ApplicationLabel />` renders an app's

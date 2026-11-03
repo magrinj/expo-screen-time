@@ -74,6 +74,32 @@ class ShieldTextColorsTest {
     assertEquals(ShieldTextColors.WHITE, light.primaryButton)
     assertNull(ShieldTextColors.resolve(ShieldAppearance.from(JSONObject("""{"backgroundColor":"#F5F5F5","primaryButton":{"text":"OK"}}"""))).primaryButton)
   }
+
+  @Test
+  fun `the default button's label is chosen against the palette's accent, and clears 4,5 to 1 in both modes`() {
+    val none = ShieldAppearance.from(JSONObject("""{"primaryButton":{"text":"OK"}}"""))
+    for (dark in listOf(false, true)) {
+      val accent = ViewPalette(dark).accent
+      val label = ShieldTextColors.resolve(none, defaultPrimaryButtonBackground = accent).primaryButton
+      assertTrue("dark=$dark label on accent", ShieldTextColors.contrast(label!!, accent) >= ShieldTextColors.TITLE_MIN_CONTRAST)
+      // The secondary button is text-only in the accent over the shield background: AA too.
+      assertTrue("dark=$dark accent on background", ShieldTextColors.contrast(accent, ViewPalette(dark).background) >= ShieldTextColors.TITLE_MIN_CONTRAST)
+    }
+    // Light: white on the blue; dark: black on the light blue (white would be about 2.1:1 there).
+    assertEquals(ShieldTextColors.WHITE, ShieldTextColors.resolve(none, defaultPrimaryButtonBackground = ViewPalette(false).accent).primaryButton)
+    assertEquals(ShieldTextColors.BLACK, ShieldTextColors.resolve(none, defaultPrimaryButtonBackground = ViewPalette(true).accent).primaryButton)
+    assertTrue(ShieldTextColors.contrast(ShieldTextColors.WHITE, ViewPalette(true).accent) < 3.0)
+  }
+
+  @Test
+  fun `a configured button background still beats the default one, and an explicit label beats both`() {
+    val configured = ShieldAppearance.from(JSONObject("""{"primaryButton":{"text":"OK","backgroundColor":"#FFD54F"}}"""))
+    assertEquals(ShieldTextColors.BLACK, ShieldTextColors.resolve(configured, defaultPrimaryButtonBackground = 0xFF000000.toInt()).primaryButton)
+    val explicit = ShieldAppearance.from(JSONObject("""{"primaryButton":{"text":"OK","color":"#101010"}}"""))
+    assertEquals(0xFF101010.toInt(), ShieldTextColors.resolve(explicit, defaultPrimaryButtonBackground = ViewPalette(true).accent).primaryButton)
+    // The parity signature is untouched: no default means the fixture's null.
+    assertNull(ShieldTextColors.resolve(ShieldAppearance.from(JSONObject("""{"primaryButton":{"text":"OK"}}"""))).primaryButton)
+  }
 }
 
 /**

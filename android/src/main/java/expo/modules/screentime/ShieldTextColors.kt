@@ -26,7 +26,13 @@ import kotlin.math.pow
  *   the floor always holds.
  * - **Primary button label**: against the button's own background when the
  *   config sets one (the shield background is irrelevant to a label on a
- *   button), with or without a shield background.
+ *   button), with or without a shield background. On Android the button
+ *   the config leaves unpainted is still painted by the library, in the
+ *   palette's accent, so the same rule runs against that colour
+ *   ([resolve] with `defaultPrimaryButtonBackground`: white used to be
+ *   drawn on the dark-mode light blue, about 2.1:1). The iOS extension
+ *   cannot read the colour the system paints its button in, and the
+ *   system's own default label is white, so it keeps `.white` there.
  * - **Secondary button label**: a text-only button over the shield background,
  *   so the title's colour.
  * - A colour the config sets is always kept, readable or not; a text colour
@@ -51,12 +57,18 @@ internal object ShieldTextColors {
   /** The colours the view draws with; null keeps the platform default for that element. */
   data class Resolved(val title: Int?, val subtitle: Int?, val primaryButton: Int?, val secondaryButton: Int?)
 
-  /** The rule applied to a parsed config (see the class comment). */
-  fun resolve(appearance: ShieldAppearance): Resolved = resolve(
+  /**
+   * The rule applied to a parsed config (see the class comment).
+   * [defaultPrimaryButtonBackground] is the colour the view paints the
+   * primary button in when the config sets none ([ViewPalette.accent]):
+   * the label is chosen against the background the button really has.
+   * Null (the parity fixture's case) keeps the label null.
+   */
+  fun resolve(appearance: ShieldAppearance, defaultPrimaryButtonBackground: Int? = null): Resolved = resolve(
     background = appearance.backgroundColor,
     title = appearance.title?.color,
     subtitle = appearance.subtitle?.color,
-    primaryButtonBackground = appearance.primaryButtonBackgroundColor,
+    primaryButtonBackground = appearance.primaryButtonBackgroundColor ?: defaultPrimaryButtonBackground,
     primaryButton = appearance.primaryButton?.color,
     secondaryButton = appearance.secondaryButton?.color,
   )

@@ -152,9 +152,20 @@ a category handle, so pass each handle to the label of its own
 picker): a searchable, multi-select list of the apps the user can launch —
 the ones with a launcher icon, which the library's `<queries>` declaration
 makes visible without `QUERY_ALL_PACKAGES` — with their icons and names, in
-the system's light or dark scheme. The app embedding the picker is not
-listed (it cannot be blocked, as on iOS). Apps only: there are no category or
+the app's light or dark scheme. The apps the engine never blocks are not
+listed either: the app embedding the picker (it cannot be blocked, as on
+iOS), the launchers, the dialer, the emergency app, the keyboard, Settings
+and the system UI, which stay reachable under every block (see
+[blocking](./api/blocking.md#android)). A stored selection that already
+holds one of them (picked with an older version, or imported from a device
+where that package is an ordinary app) keeps it: the selection round-trip
+is untouched, `getTokens` lists it and a label renders it, the engine
+ignores it, and `removeToken` drops it; the picker simply has no row for
+it. Apps only: there are no category or
 web-domain rows while `getCapabilities().selectableKinds` reports them off.
+The list pads itself for the system bars it is drawn under (the gesture or
+button navigation bar, the status bar, a display cutout), so the footer and
+the last rows stay visible in an edge-to-edge app.
 Same props and events as iOS: `headerText` and `footerText` frame the list,
 `onSelectionChange` fires on every tap with the counts and the handles,
 `onOpen` / `onClose` when the view is attached and detached. Package names
@@ -166,3 +177,12 @@ since shows a generic icon with "Unavailable app"; a handle this install does
 not know shows the same placeholder text as iOS. `CategoryLabel` and
 `WebDomainLabel` always show their placeholder on Android (no such handles
 exist there).
+
+**Light and dark.** The picker's background and the labels' text colours
+follow the activity's effective appearance — what `useColorScheme()`
+reports — as the iOS views follow their trait collection. An app that fixes
+`userInterfaceStyle` in `app.json` needs
+[`expo-system-ui`](https://docs.expo.dev/versions/latest/sdk/system-ui/)
+installed for that setting to apply on Android; without it the activity
+follows the system, and a label in a hard-coded light layout turns light
+grey when the device is in dark mode.

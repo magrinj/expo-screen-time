@@ -49,8 +49,10 @@ whether the element sits on a background you chose:
   mapped `icon` is tinted with the title colour too.
 - **The primary button** label is chosen against the button's own
   `backgroundColor` when you set one (white or black, as for the title),
-  whether or not the shield has a background; without one it stays white on
-  the platform's default button.
+  whether or not the shield has a background. Without one, iOS keeps the
+  system's white label on its own button; Android applies the same rule to
+  its default button colour, so the label is white on the blue light-mode
+  button and black on the light-blue dark-mode button.
 
 These defaults colour the elements your config gives a `text` to. On iOS an
 element you leave out entirely (no `title`, say) is drawn by the system with
@@ -274,7 +276,9 @@ else the manual block).
   screen. Colours are `#RRGGBB` or `#RRGGBBAA`. What the config leaves out
   follows the system light or dark setting — except the text colours over a
   `backgroundColor` you set, chosen for contrast against it like on iOS
-  ([default text colours](#default-text-colours)) — and the title defaults to
+  ([default text colours](#default-text-colours)), and the primary button's
+  label, chosen the same way against whatever the button is painted in,
+  the library's default blue included — and the title defaults to
   the blocked app's name with its icon, as the default iOS shield does.
 - **`icon`** is an SF Symbol name on both platforms; Android maps this set to
   the equivalent Material Symbol and falls back to the blocked app's icon for

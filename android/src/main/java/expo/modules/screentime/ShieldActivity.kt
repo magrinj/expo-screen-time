@@ -46,7 +46,9 @@ import java.util.UUID
  *   open follows the system light/dark setting ([ViewPalette]) and the
  *   blocked app's own label and icon, as the default iOS shield does —
  *   except the text colours over a configured background, chosen for
- *   contrast against it ([ShieldTextColors], the same rule as iOS).
+ *   contrast against it ([ShieldTextColors], the same rule as iOS), and
+ *   the primary button's label, chosen the same way against the colour the
+ *   button is painted in, the default accent included.
  * - **Buttons**: every press is recorded for
  *   `drainShieldInteractions` ([ShieldInteractionQueue]: the pressed app's
  *   handle and the owning activity) and does what `setShieldActions` /
@@ -134,8 +136,10 @@ class ShieldActivity : Activity() {
     val appearance = ShieldAppearance.from(StateStore(this).shieldConfig(intent.getStringExtra(EXTRA_OWNER)))
     val palette = ViewPalette.of(this)
     // The text colours the config leaves open: for contrast against a configured
-    // background, else null and the system-adaptive palette below.
-    val colors = ShieldTextColors.resolve(appearance)
+    // background, else null and the system-adaptive palette below. The primary
+    // button is always painted (the config's colour or the accent), so its
+    // label is always chosen against what it is painted in.
+    val colors = ShieldTextColors.resolve(appearance, defaultPrimaryButtonBackground = palette.accent)
     val backgroundColor = appearance.backgroundColor ?: palette.background
     window.setBackgroundDrawable(ColorDrawable(backgroundColor))
     WindowCompat.getInsetsController(window, window.decorView).apply {
@@ -177,7 +181,8 @@ class ShieldActivity : Activity() {
     }
     val primary = TextView(this).apply {
       text = appearance.primaryButton?.text ?: getString(R.string.expo_st_shield_close)
-      setTextColor(colors.primaryButton ?: ShieldTextColors.WHITE)
+      // Never null (the default background is passed above); a fallback rather than a crash on the user's screen.
+      setTextColor(colors.primaryButton ?: palette.text)
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
       typeface = Typeface.DEFAULT_BOLD
       gravity = Gravity.CENTER
