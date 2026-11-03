@@ -224,8 +224,8 @@ ExpoScreenTime.clearShieldActions();
 Android there is no system shield: the library draws a full-screen Activity
 over the blocked app and maps the stored `ShieldConfig` onto it with the same
 precedence as iOS (the configuration of the source that owns the shield, else
-the default). Today the manual block is the only source, so `setShieldConfig`
-decides and `setShieldConfigForActivity` is stored for the schedules to come.
+the default: a threshold block, else the latest schedule covering the app,
+else the manual block).
 
 - **Fields.** `title`, `subtitle`, `primaryButton` (text, colour, background
   colour) and `secondaryButton` map one to one; `backgroundColor` fills the
@@ -240,11 +240,29 @@ decides and `setShieldConfigForActivity` is stored for the schedules to come.
   the title colour.
 - **`backgroundBlurStyle`** is accepted and ignored: the shield is opaque,
   there is nothing behind it to blur.
-- **Buttons and Back** currently all do the iOS default, `close`: the user is
-  sent to the Home screen and the blocked app does not come back on its own.
-  `setShieldActions` (unblock, defer, snooze, openApp) and
-  `drainShieldInteractions` arrive with the unlock slice; `openApp` will be a
-  direct launch (`shieldOpenApp: "direct"`), no notification needed.
+- **Buttons** do what `setShieldActions` / `setShieldActionsForActivity`
+  configured for the owner, with the same precedence; the default, and Back,
+  is `close` (Home first, so the blocked app does not come back on its own).
+  Every press is recorded for
+  [`drainShieldInteractions()`](./blocking.md#shield-interactions) with the
+  app's handle as `target` and the owning activity as `activityName`
+  (`null` for the manual block), collapsed per app within 2 s. Where the
+  platforms differ:
+  - `'unblock'` lifts the app from every source shielding it, an allowlist
+    included, and the shield simply goes: the user is in the app (iOS has to
+    close it, a shield can only close or stay). The lift lasts until a block
+    is applied again — `blockSelection()`, `relock()`, `unblockAll()`, a
+    whole-block `temporaryUnlock`, a schedule starting or ending, a
+    threshold firing, an unlock ending. A snooze on another app does not end
+    it.
+  - `{ type: 'snooze', duration }` lifts the app for `duration` seconds of
+    its use, metered by the engine one second at a time (the 30 s floor and
+    the midnight expiry hold), and the shield goes; the app is shielded
+    again by itself once the budget is spent. Snoozes need no DeviceActivity
+    slot: there is no limit on their number.
+  - `{ type: 'openApp' }` launches your app directly over the blocked one
+    (`shieldOpenApp: "direct"`), no notification and no permission needed.
+  - `'defer'` keeps the shield up; the press is recorded.
 - **Behaviour.** The shield is not in Recents, appears without animation and
   without a system splash (its first frame is already in the configured
   colour). In split-screen it covers the whole screen and keeps the split

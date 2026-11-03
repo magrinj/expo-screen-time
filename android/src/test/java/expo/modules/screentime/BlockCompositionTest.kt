@@ -1,5 +1,6 @@
 package expo.modules.screentime
 
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -18,15 +19,15 @@ import org.junit.Test
  * which app is shielded, by which owner — through [ShieldPolicy.shields]
  * and [BlockSource.covers], the Android reading of the same rules.
  *
- * Deferred to step 5 (temporary unlock and shield snooze), not ported
- * here: "SuspendedSources — what temporaryUnlock suspends", "SuspendedSources
- * — threshold suspension is per occurrence", "storeShields — a snooze lifts
- * the pressed target", "storeShields — snoozes under an allowlist",
- * "targetedUnlockVerdict". iOS-structural, not applicable: "BlockStore.activity
- * — store names", "owner(preferring:)" and "handoffTargets" (the two
- * extensions agreeing on one owner; the Android shield resolves it once),
- * "ShieldOwnerMap", and the "a threshold list without its interval" case
- * (thresholds live inside the interval here).
+ * Step 5 ports the unlock and snooze sections: "SuspendedSources — what
+ * temporaryUnlock suspends", "SuspendedSources — threshold suspension is
+ * per occurrence", "storeShields — a snooze lifts the pressed target",
+ * "storeShields — snoozes under an allowlist" and "targetedUnlockVerdict"
+ * (the snooze projection is the policy's lifted set here). iOS-structural,
+ * not applicable: "BlockStore.activity — store names", "owner(preferring:)"
+ * and "handoffTargets" (the two extensions agreeing on one owner; the
+ * Android shield resolves it once), "ShieldOwnerMap", and the "a threshold
+ * list without its interval" case (thresholds live inside the interval here).
  */
 class BlockCompositionTest {
   private fun manual(vararg apps: String, mode: BlockMode = BlockMode.blocklist, startedAt: Long = 0) =
@@ -224,5 +225,171 @@ class BlockCompositionTest {
   fun `union and containsAllowlist - what a temporary unlock may meter`() {
     assertEquals("the union holds the blocklist tokens only — an allowlist's shielded set cannot be named", setOf("calendar"), BlockComposition.union(listOf(allowManual, scheduleBlock)))
     assertTrue("containsAllowlist flags the sources an unlock must refuse", BlockComposition.containsAllowlist(listOf(allowManual, scheduleBlock)) && !BlockComposition.containsAllowlist(listOf(manual, scheduleA)))
+  }
+
+  // MARK: - The unlock suspension (fixes 5, 7 of the contract; review findings 5 and 11)
+
+  /** The Swift `records`: S1 manual, A in progress since 1 000 over S2 with the fired threshold "limit" over S3. */
+  private val manualS1 = ManualBlock("S1", BlockMode.blocklist, setOf("insta"))
+  private val records = monitoring(fired = listOf("limit" to "S3"))
+
+  /** [base] with activity [name] in progress since [startedAt] over [selectionId] with the fired [fired] events. */
+  private fun plus(base: MonitoringState, name: String, startedAt: Long, selectionId: String?, fired: List<Pair<String, String>> = emptyList()): MonitoringState {
+    val other = monitoring(name, startedAt, selectionId, fired = fired)
+    return base.copy(activities = base.activities + other.activities, intervals = base.intervals + other.intervals)
+  }
+
+  @Test
+  fun `SuspendedSources - what temporaryUnlock suspends`() {
+    val grant = SuspendedSources.capturing(manualS1, records)
+    assertTrue(
+      "a grant captures the manual block, the occurrence in progress and the fired thresholds (with their occurrence)",
+      grant.manual && grant.schedules == mapOf("A" to 1_000L) && grant.thresholds == mapOf("A" to SuspendedSources.Thresholds(1_000, listOf("S3"))),
+    )
+    assertTrue("every captured source is excluded from the composition ⇒ nothing shields", BlockComposition.sources(manualS1, records, resolve, grant).isEmpty())
+    assertFalse("isBlocked() reads false under the grant (C08)", BlockComposition.shieldsSomething(BlockComposition.sources(manualS1, records, resolve, grant)))
+
+    // A schedule that starts DURING the grant is not suspended and applies normally.
+    val during = plus(records, "B", 5_000, "S3")
+    val duringSources = BlockComposition.sources(manualS1, during, resolve, grant)
+    assertEquals("a schedule starting during the grant is the only live source", listOf(BlockSourceKind.Schedule("B")), duringSources.map { it.kind })
+    assertEquals("only B shields; the suspended sources stay lifted", setOf("games"), BlockComposition.union(duringSources))
+
+    // A threshold that fires during the grant shields its own selection only.
+    val thresholdDuring = monitoring(fired = listOf("limit" to "S3", "more" to "S2"))
+    val thresholdSources = BlockComposition.sources(manualS1, thresholdDuring, resolve, grant)
+    assertTrue("a new threshold during the grant shields its selection, not the suspended one", thresholdSources.map { it.kind } == listOf(BlockSourceKind.Threshold("A")) && thresholdSources[0].applications == setOf("youtube"))
+
+    // The next occurrence of A is a different source.
+    val nextDay = monitoring(startedAt = 90_000)
+    assertEquals("A's next occurrence (new startedAt) is not suspended", listOf(BlockSourceKind.Schedule("A")), BlockComposition.sources(null, nextDay, resolve, grant).map { it.kind })
+    assertTrue("suspension is by occurrence, not by name", !grant.suspendsSchedule("A", 90_000) && grant.suspendsSchedule("A", 1_000))
+    assertTrue("threshold suspension is per selection", !grant.suspendsThreshold("A", 1_000, "S2") && grant.suspendsThreshold("A", 1_000, "S3"))
+
+    // Renewal (finding 11): everything active — suspended or not — is restorable and captured again.
+    assertEquals(
+      "renewal meters the union of suspended and live sources (never NO_ACTIVE_BLOCK while something is restorable)",
+      setOf("insta", "youtube", "games"),
+      BlockComposition.union(BlockComposition.sources(manualS1, during, resolve)),
+    )
+    val renewed = SuspendedSources.capturing(manualS1, during)
+    assertTrue("the renewed grant suspends B too", renewed.schedules == mapOf("A" to 1_000L, "B" to 5_000L) && renewed.manual)
+    assertTrue("after renewal nothing shields again", BlockComposition.sources(manualS1, during, resolve, renewed).isEmpty())
+    assertTrue("nothing active ⇒ empty suspension", SuspendedSources.capturing(null, MonitoringState()).isEmpty)
+    assertTrue("a lifted interval is not captured", SuspendedSources.capturing(null, monitoring(lifted = true)).schedules.isEmpty())
+    assertTrue("a lifted threshold is not captured", SuspendedSources.capturing(null, monitoring(fired = listOf("limit" to "S3"), liftedThresholds = setOf("limit"))).thresholds.isEmpty())
+
+    // Document round trip (numbers come back as the writer's type, or as doubles from another process).
+    val json = grant.toJson()
+    assertEquals("document round trip", grant, SuspendedSources.fromJson(JSONObject(json.toString())))
+    val doubles = JSONObject(json.toString()).put("schedules", JSONObject().put("A", 1000.0))
+    assertEquals("double start times are read back", grant, SuspendedSources.fromJson(doubles))
+    assertNull("a document without `manual` is not a suspension", SuspendedSources.fromJson(JSONObject()))
+    assertEquals("the grant carries its suspension through the document", grant, UnlockGrant.fromJson(JSONObject(UnlockGrant.grant(60, 1_000, "g", grant).toJson().toString()))?.suspended)
+  }
+
+  @Test
+  fun `SuspendedSources - threshold suspension is per occurrence`() {
+    val grant = SuspendedSources.capturing(manualS1, records)
+    // Reproduced on iOS: suspend A's threshold on S3, stop and restart A during the grant (a new occurrence), S3 fires again.
+    val restarted = monitoring(startedAt = 5_000, fired = listOf("limit" to "S3"))
+    val afterRestart = BlockComposition.sources(manualS1, restarted, resolve, grant)
+    assertEquals("after a stop/restart during the grant, a threshold that fires again shields (new occurrence, not suspended)", listOf(BlockSourceKind.Schedule("A"), BlockSourceKind.Threshold("A")), afterRestart.map { it.kind })
+    assertEquals("…its own selection", setOf("games"), afterRestart.last().applications)
+    assertTrue("the suspension is bound to the occurrence it was captured in", !grant.suspendsThreshold("A", 5_000, "S3") && grant.suspendsThreshold("A", 1_000, "S3"))
+    // Re-registering A in place (same occurrence) re-arms its thresholds: a re-fire stays suspended.
+    assertTrue("a threshold re-firing in the SAME occurrence stays suspended", BlockComposition.sources(manualS1, records, resolve, grant).isEmpty())
+    val persisted = grant.toJson()
+    assertTrue("persisted under `thresholds`, with the occurrence", persisted.getJSONObject("thresholds").keys().asSequence().toList() == listOf("A") && !persisted.has("thresholdSelectionIds"))
+    val byNameOnly = JSONObject().put("manual", true).put("schedules", JSONObject().put("A", 1000)).put("thresholdSelectionIds", JSONObject().put("A", org.json.JSONArray(listOf("S3"))))
+    val read = SuspendedSources.fromJson(byNameOnly)
+    assertTrue("a grant persisted by name only (previous layout) suspends no threshold — fail closed, the shields come back", read?.thresholds?.isEmpty() == true && read.manual)
+  }
+
+  // MARK: - Shield snooze (fix 1, spike S1): the lifted set is the Android reading of `storeShields(of:snoozed:)`
+
+  private fun shielded(app: String, sources: List<BlockSource>, lifted: Set<String>) = ShieldPolicy.shields(app, sources, launchable, exempt, lifted)
+
+  @Test
+  fun `storeShields - a snooze lifts the pressed target in every store, nothing else`() {
+    // Instagram is in the manual selection and in schedule B; A shields YouTube and TikTok (the Swift category and domain, as apps).
+    val snoozeManual = manual("insta", "tiktok")
+    val snoozeA = schedule("A", 2_000, "youtube", "safari")
+    val snoozeB = schedule("B", 3_000, "insta")
+    val sources = listOf(snoozeManual, snoozeA, snoozeB)
+    assertTrue("no snooze ⇒ the plain contents", shielded("insta", sources, emptySet()) && shielded("tiktok", sources, emptySet()) && shielded("youtube", sources, emptySet()))
+    val insta = setOf("insta")
+    assertFalse("the app is taken out of the manual store…", shielded("insta", sources, insta))
+    assertTrue("…the other app stays", shielded("tiktok", sources, insta))
+    assertFalse("a store the snooze emptied is absent (B shielded only the app)", shielded("insta", listOf(snoozeB), insta))
+    assertTrue("a store that does not cover the app is unchanged", shielded("youtube", sources, insta) && shielded("safari", sources, insta))
+    assertEquals("the sources covering the snoozed target stay active and own its configuration", BlockSourceKind.Schedule("B"), BlockComposition.owner("insta", sources)?.kind)
+    val two = setOf("insta", "tiktok")
+    assertFalse("two concurrent snoozes subtract both; the stores they empty are absent", shielded("insta", sources, two) || shielded("tiktok", sources, two))
+    assertFalse("…isBlocked() over the manual block alone reads false then", BlockComposition.shieldsSomething(listOf(snoozeManual), two))
+    assertTrue("…but true while A still shields something", BlockComposition.shieldsSomething(sources, two))
+    assertTrue("a snoozed target nothing shields changes no store", shielded("insta", sources, setOf("unknown")) && shielded("tiktok", sources, setOf("unknown")))
+    assertTrue("no sources ⇒ nothing, snoozes or not", ShieldPolicy.targets(setOf("insta"), emptyList(), launchable, exempt, insta).isEmpty())
+    // Composition with the unlock suspension: the snooze is applied to whatever the suspension leaves.
+    val grant = SuspendedSources.capturing(manualS1, records)
+    val unlockedView = BlockComposition.sources(manualS1, plus(records, "B", 5_000, "S3"), resolve, grant)
+    assertFalse("a snooze on the one app a schedule started during the unlock shields ⇒ nothing shields", BlockComposition.shieldsSomething(unlockedView, setOf("games")))
+  }
+
+  @Test
+  fun `storeShields - snoozes under an allowlist`() {
+    assertFalse("a snoozed app joins the except list — the only way to lift one app from \"every other app\"", shielded("music", listOf(allowManual), setOf("music")))
+    assertTrue("the store stays an allowlist store", shielded("insta", listOf(allowManual), setOf("music")) && BlockComposition.shieldsSomething(listOf(allowManual), setOf("music")))
+    assertFalse("a snooze on an app the blocklist shields inside an allowlist store lifts it from both", shielded("slack", listOf(allowA, thresholdInA), setOf("slack")))
+    assertTrue("…the other apps are as before", shielded("music", listOf(allowA, thresholdInA), setOf("slack")) && !shielded("mail", listOf(allowA, thresholdInA), setOf("slack")))
+    assertFalse("a snooze still subtracts from the blocklist stores as before", shielded("calendar", listOf(allowManual, scheduleBlock), setOf("calendar")))
+    assertTrue("an allowlist always shields something, whatever is snoozed", BlockComposition.shieldsSomething(listOf(allowNothing), setOf("music", "insta")))
+  }
+
+  @Test
+  fun `targetedUnlockVerdict - what temporaryUnlock(target) may lift`() {
+    val verdictManual = manual("insta", "safari")
+    val verdictAllow = schedule("F", 1, "mail", mode = BlockMode.allowlist)
+    fun verdict(type: String, token: String, sources: List<BlockSource>) = BlockComposition.targetedUnlockVerdict(type, token, sources)
+    assertEquals("an app a blocklist lists is liftable", BlockComposition.TargetVerdict.LIFTABLE, verdict(TokenHandles.APPLICATION, "insta", listOf(verdictManual)))
+    assertTrue(
+      "a token no source lists is not shielded",
+      verdict(TokenHandles.APPLICATION, "tiktok", listOf(verdictManual)) == BlockComposition.TargetVerdict.NOT_SHIELDED &&
+        verdict(TokenHandles.APPLICATION, "insta", emptyList()) == BlockComposition.TargetVerdict.NOT_SHIELDED,
+    )
+    assertEquals("an app an allowlist shields is liftable (the projection excepts it)", BlockComposition.TargetVerdict.LIFTABLE, verdict(TokenHandles.APPLICATION, "insta", listOf(verdictAllow)))
+    assertEquals("an app the allowlist allows is not shielded", BlockComposition.TargetVerdict.NOT_SHIELDED, verdict(TokenHandles.APPLICATION, "mail", listOf(verdictAllow)))
+    assertEquals("a category cannot be lifted while an allowlist is in force", BlockComposition.TargetVerdict.CATEGORY_UNDER_ALLOWLIST, verdict(TokenHandles.CATEGORY, "social", listOf(verdictAllow)))
+    assertEquals("…even with a blocklist beside it", BlockComposition.TargetVerdict.CATEGORY_UNDER_ALLOWLIST, verdict(TokenHandles.CATEGORY, "social", listOf(verdictAllow, verdictManual)))
+    assertEquals("a category nothing shields (categories are not selectable here) is not shielded", BlockComposition.TargetVerdict.NOT_SHIELDED, verdict(TokenHandles.CATEGORY, "social", listOf(verdictManual)))
+    assertEquals("a web domain is never shielded on Android", BlockComposition.TargetVerdict.NOT_SHIELDED, verdict(TokenHandles.WEB_DOMAIN, "reddit.com", listOf(verdictManual, verdictAllow)))
+    assertFalse("(the projection confirms it: a liftable app comes out of every store, the allowlist's included)", shielded("insta", listOf(verdictAllow, verdictManual), setOf("insta")))
+    // A grant in progress suspends the manual block: the target is still liftable from the sources with the suspension NOT honoured (renewable).
+    val suspended = BlockComposition.sources(manualS1, MonitoringState(), resolve, SuspendedSources(manual = true))
+    assertTrue("a suspended block shields nothing…", suspended.isEmpty())
+    assertEquals("…but still counts as a block for a targeted unlock", BlockComposition.TargetVerdict.LIFTABLE, verdict(TokenHandles.APPLICATION, "insta", BlockComposition.sources(manualS1, MonitoringState(), resolve)))
+  }
+
+  @Test
+  fun `ShieldLifts - an unblock lasts exactly while the composition it was pressed under is in force`() {
+    val sources = listOf(manual, scheduleA)
+    val key = BlockComposition.fingerprint(sources)
+    val lifts = ShieldLifts.NONE.plus(key, "insta").plus(key, "youtube")
+    assertEquals("in force under the same sources", setOf("insta", "youtube"), lifts.under(sources))
+    assertEquals("the same sources composed in another process give the same key", key, BlockComposition.fingerprint(listOf(manual("insta"), schedule("A", 2_000, "youtube"))))
+    assertTrue("a schedule starting voids it (review finding: an engine restarted after the change too)", lifts.under(listOf(manual, scheduleA, scheduleB)).isEmpty())
+    assertTrue("a source ending voids it", lifts.under(listOf(manual)).isEmpty())
+    assertTrue("a source's apps changing voids it", lifts.under(listOf(manual("insta", "safari"), scheduleA)).isEmpty())
+    assertTrue("an unlock ending (the suspension lifting) voids it", lifts.under(emptyList()).isEmpty())
+    assertEquals("a press under another composition replaces what was lifted before", setOf("tiktok"), lifts.plus("other", "tiktok").apps)
+    assertEquals("…and is in force under its own", setOf("tiktok"), lifts.plus(BlockComposition.fingerprint(listOf(manual)), "tiktok").under(listOf(manual)))
+
+    val document = JSONObject()
+    ShieldLifts.write(document, lifts)
+    assertEquals("round trip through the document", lifts, ShieldLifts.read(JSONObject(document.toString())))
+    ShieldLifts.write(document, ShieldLifts.NONE)
+    assertFalse("no lifted app leaves no key", document.has(ShieldLifts.KEY))
+    assertEquals("a record without its key is no lift (fail closed)", ShieldLifts.NONE, ShieldLifts.read(JSONObject().put(ShieldLifts.KEY, JSONObject().put("apps", org.json.JSONArray(listOf("insta"))))))
+    assertTrue(ShieldLifts.read(JSONObject().put(ShieldLifts.KEY, JSONObject().put("sources", key).put("apps", org.json.JSONArray(listOf(1, "", JSONObject.NULL))))).isEmpty)
   }
 }

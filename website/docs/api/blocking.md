@@ -358,4 +358,26 @@ an app written against the capability will get.
   [steps](./permissions.md#android). Without the overlay permission the
   engine cannot start the shield from the background: it logs the gap and
   stops polling rather than burn battery.
+- **Temporary unlock** keeps the contract above, with the engine as the
+  meter: `temporaryUnlock(budget)` suspends every source in force (the
+  manual block, the schedules and threshold blocks in progress, by
+  occurrence) and the budget is spent only while one of the apps those
+  sources shielded is in the foreground with the screen on, in **exact
+  seconds** — `meteringSeconds` is `1`, so `getRemainingUnlockSeconds()`
+  moves one second at a time. The same codes apply (`NO_ACTIVE_BLOCK`,
+  `UNSUPPORTED` under an allowlist, `INVALID_CONFIG`), a renewal replaces
+  the grant, `isBlocked()` reads `false` while everything is suspended, and
+  the grant survives the engine process (it is persisted with its meter at
+  most once a second while in use). When the budget is spent, or at
+  midnight, the shields come back **by themselves**: the engine recomposes
+  the sources and the app still on screen is shielded within about a
+  second, whether or not your app runs. `temporaryUnlock(budget, { target })`
+  lifts one app the same way a shield [snooze](./shields.md#android) does;
+  a category or web-domain handle is never shielded here (`NO_ACTIVE_BLOCK`,
+  or `UNSUPPORTED` for a category under an allowlist, as on iOS), and a
+  handle that does not resolve on this install is `INVALID_CONFIG`.
+  `relock()` ends the unlock, every snooze and every shield `unblock`.
+- **Shield interactions** are recorded by the shield itself, one per button
+  press (collapsed per app within 2 s, 200 kept), with the app's handle and
+  the owning activity; `drainShieldInteractions()` reads and clears them.
 

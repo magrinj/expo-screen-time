@@ -157,4 +157,18 @@ class StateStoreTest {
     }
     assertEquals(1, store.read { it.optInt("a", 0) })
   }
+
+  @Test
+  fun `shield actions resolve with the iOS precedence - the owning activity's, else the default, else none`() {
+    val store = store()
+    assertNull(store.read { store.shieldActions(it, null) })
+    store.setDefaultShieldActions(JSONObject().put("primaryAction", "close"))
+    store.setShieldActions("work", JSONObject().put("primaryAction", "unblock"))
+    assertEquals("close", store.read { store.shieldActions(it, null)?.getString("primaryAction") })
+    assertEquals("unblock", store.read { store.shieldActions(it, "work")?.getString("primaryAction") })
+    assertEquals("an activity without its own falls back to the default", "close", store.read { store.shieldActions(it, "other")?.getString("primaryAction") })
+    store.clearShieldActions()
+    assertNull(store.read { store.shieldActions(it, "work") })
+    assertNull(store.read { store.shieldActions(it, null) })
+  }
 }

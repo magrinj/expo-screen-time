@@ -157,4 +157,16 @@ class SelectionStoreTest {
       assertEquals("application", tokens.getJSONObject(key).getString("type"))
     }
   }
+
+  @Test
+  fun `a handle the shield remembers resolves like a selection member's - an allowlisted app can be targeted`() {
+    val state = stateStore()
+    val store = SelectionStore(state)
+    val handle = state.update { document -> store.rememberToken(document, TokenHandles.APPLICATION, "com.example.notselected") }
+    assertEquals(TokenHandles.derive(state.installSecret(), TokenHandles.APPLICATION, "com.example.notselected"), handle)
+    assertEquals("resolvable through the handle map, from another instance", TokenHandles.APPLICATION to "com.example.notselected", store().resolve(handle, null))
+    assertNull("but not inside a selection that does not hold it", store().resolve(handle, "social"))
+    val again = state.update { document -> store.rememberToken(document, TokenHandles.APPLICATION, "com.example.notselected") }
+    assertEquals("remembering twice is one entry", handle, again)
+  }
 }

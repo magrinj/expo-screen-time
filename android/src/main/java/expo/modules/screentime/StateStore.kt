@@ -34,7 +34,13 @@ import kotlin.io.encoding.Base64
  * manual block (`blocks.manual`, read by the engine process on every
  * change) and the shield configurations (`shield.default`,
  * `shield.activities.<name>`); step 4 adds the monitoring layer
- * (`monitoring`: activities, intervals, the event log, the usage cursor).
+ * (`monitoring`: activities, intervals, the event log, the usage cursor);
+ * step 5 adds the shield actions (`shieldActions.default`,
+ * `shieldActions.activities.<name>`), the temporary unlock (`unlock`, with
+ * the sources it suspended), the snoozes (`snoozes`), the shield's unblocks
+ * (`lifts`) and the interaction queue (`shieldInteractions`), each read and
+ * written through its pure codec ([UnlockGrant], [ShieldSnoozes],
+ * [ShieldLifts], [ShieldInteractionQueue]) inside one `update`.
  */
 internal class StateStore(private val directory: File) {
   constructor(context: Context) : this(File(context.noBackupFilesDir, "expo_screen_time"))
@@ -178,6 +184,38 @@ internal class StateStore(private val directory: File) {
     owner?.let { shield.optJSONObject(ACTIVITIES)?.optJSONObject(it) } ?: shield.optJSONObject(DEFAULT)
   }
 
+  // MARK: - Shield actions
+
+  /** `setShieldActions`: what the buttons of every shield do, unless the owning activity has its own. */
+  fun setDefaultShieldActions(config: JSONObject): Unit = update { document ->
+    shieldActions(document).put(DEFAULT, config)
+    Unit
+  }
+
+  /** `setShieldActionsForActivity`. */
+  fun setShieldActions(activityName: String, config: JSONObject): Unit = update { document ->
+    val activities = shieldActions(document).optJSONObject(ACTIVITIES) ?: JSONObject().also { shieldActions(document).put(ACTIVITIES, it) }
+    activities.put(activityName, config)
+    Unit
+  }
+
+  /** `clearShieldActions`: the default and every per-activity config. */
+  fun clearShieldActions() = update { document ->
+    document.remove(SHIELD_ACTIONS)
+    Unit
+  }
+
+  /**
+   * The actions of the shield [owner] (an activity name; null for the manual
+   * block) draws, with the iOS precedence: the owning activity's config,
+   * else the default, else null (every button closes). Document-in, so the
+   * shield Activity reads it inside the `update` that records the press.
+   */
+  fun shieldActions(document: JSONObject, owner: String?): JSONObject? {
+    val actions = document.optJSONObject(SHIELD_ACTIONS) ?: return null
+    return owner?.let { actions.optJSONObject(ACTIVITIES)?.optJSONObject(it) } ?: actions.optJSONObject(DEFAULT)
+  }
+
   // MARK: - Install secret
 
   /**
@@ -284,6 +322,7 @@ internal class StateStore(private val directory: File) {
   private fun engine(document: JSONObject) = document.optJSONObject(ENGINE) ?: JSONObject().also { document.put(ENGINE, it) }
   private fun permissions(document: JSONObject) = document.optJSONObject(PERMISSIONS) ?: JSONObject().also { document.put(PERMISSIONS, it) }
   private fun shield(document: JSONObject) = document.optJSONObject(SHIELD) ?: JSONObject().also { document.put(SHIELD, it) }
+  private fun shieldActions(document: JSONObject) = document.optJSONObject(SHIELD_ACTIONS) ?: JSONObject().also { document.put(SHIELD_ACTIONS, it) }
 
   companion object {
     private const val ENGINE = "engine"
@@ -299,6 +338,7 @@ internal class StateStore(private val directory: File) {
     private const val BLOCKS = "blocks"
     private const val MANUAL = "manual"
     private const val SHIELD = "shield"
+    private const val SHIELD_ACTIONS = "shieldActions"
     private const val DEFAULT = "default"
     private const val ACTIVITIES = "activities"
     private const val MAX_FAILURES = 20

@@ -71,6 +71,9 @@ internal data class ShieldSnooze(
   fun observing(sample: UsageSample): ShieldSnooze =
     copy(meter = meter.observe(sample.atMs, isInUse(sample), maxChargeMs = sample.atMs - grantedAt - meter.consumedMs))
 
+  /** The wall clock was set by [deltaMs]: the grant instant and the meter's last instant move with it (see [UnlockGrant.shifted]). */
+  fun shifted(deltaMs: Long): ShieldSnooze = if (deltaMs == 0L) this else copy(grantedAt = grantedAt + deltaMs, meter = meter.shifted(deltaMs))
+
   /**
    * Whether storing this snooze instead of [previous] changes what another
    * process would read: another snooze, the consumption in whole seconds,
@@ -189,8 +192,16 @@ internal object ShieldSnoozes {
    * meters' threshold steps (`ShieldSnoozes.recording`); here the engine is
    * the meter.
    */
-  fun observing(sample: UsageSample, snoozes: List<ShieldSnooze>): Observed {
-    val observed = snoozes.map { it.observing(sample) }
+  fun observing(sample: UsageSample, snoozes: List<ShieldSnooze>): Observed = observing(snoozes) { sample }
+
+  /**
+   * [observing] with one sample per snooze: in multi-window two snoozed
+   * apps can be resumed at once, and a single foreground package would
+   * charge only one of them. The engine answers [sampleFor] from the
+   * resumed set, picking the snooze's own target when it is on screen.
+   */
+  fun observing(snoozes: List<ShieldSnooze>, sampleFor: (ShieldSnooze) -> UsageSample): Observed {
+    val observed = snoozes.map { it.observing(sampleFor(it)) }
     val (spent, live) = observed.partition { it.isSpent }
     val changed = spent.isNotEmpty() || observed.zip(snoozes).any { (now, before) -> now.isWorthPersistingOver(before) }
     return Observed(live, spent, changed)

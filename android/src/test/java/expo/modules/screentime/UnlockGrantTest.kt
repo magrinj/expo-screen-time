@@ -158,4 +158,33 @@ class UnlockGrantTest {
     assertEquals("INVALID_CONFIG", code(judge(300, target = mapOf("handle" to 1, "type" to "application"))))
     assertEquals(mapOf("handle" to "UkVE", "type" to "webDomain"), TemporaryUnlockRequest.parseTarget(mapOf("type" to "webDomain", "handle" to "UkVE")))
   }
+
+  @Test
+  fun `the grant carries the sources it suspended, and the engine's write-back keeps them`() {
+    val suspended = SuspendedSources(manual = true, schedules = mapOf("A" to 1_000L), thresholds = mapOf("A" to SuspendedSources.Thresholds(1_000, listOf("S3"))))
+    val grant = UnlockGrant.grant(60, at(2026, 11, 1, 10, 0), "g1", suspended)
+    val document = JSONObject()
+    UnlockGrant.write(document, grant)
+    assertEquals("round trip through the document", grant, UnlockGrant.read(JSONObject(document.toString())))
+    val metered = use(grant, "com.insta", at(2026, 11, 1, 10, 0), 10)
+    assertEquals("the write-back keeps the suspension", suspended, UnlockGrant.merging(grant, metered)?.suspended)
+    val legacy = JSONObject(document.toString()).also { it.getJSONObject("unlock").remove("suspended") }
+    assertEquals("a grant without a readable suspension suspends nothing (fail closed)", SuspendedSources.NONE, UnlockGrant.read(legacy)?.suspended)
+  }
+
+  @Test
+  fun `a clock set back during a grant hands out no free time - the instants move with the clock`() {
+    val t0 = at(2026, 11, 1, 10, 0)
+    val grant = use(UnlockGrant.grant(600, t0, "g"), "com.insta", t0, 60)
+    assertEquals(60, grant.consumedSeconds)
+    // TIME_SET: the clock goes back 5 minutes while the app is in use.
+    val delta = -5 * 60_000L
+    val unshifted = use(grant, "com.insta", t0 + 60_000 + delta, 30)
+    assertEquals("without the shift, the plausibility bound (atMs - grantedAt) charges nothing for about five minutes", 60, unshifted.consumedSeconds)
+    val shifted = use(grant.shifted(delta), "com.insta", t0 + 60_000 + delta, 30)
+    assertEquals("shifted, the next 30 s of use are charged as before", 90, shifted.consumedSeconds)
+    assertEquals("the grant instant moved with the clock", t0 + delta, shifted.grantedAt)
+    assertEquals("a zero shift is the same grant", grant, grant.shifted(0))
+    assertEquals("an idle meter has no instant to move", UsageAccumulator.EMPTY, UsageAccumulator.EMPTY.shifted(delta))
+  }
 }

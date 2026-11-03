@@ -147,7 +147,7 @@ internal class MonitoringController(
   }
 
   /** An event was written by this process: deliver it like the engine's broadcast would. */
-  private fun notifyListeners() = main.post { drain() }
+  fun notifyListeners() = main.post { drain() }
 
   private fun drain() {
     val cursor = cursor ?: return

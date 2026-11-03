@@ -165,14 +165,24 @@ internal class SelectionStore(private val store: StateStore) {
 
   private fun remember(document: JSONObject, selection: Selection) {
     if (selection.isEmpty) return
+    selection.applications.forEach { rememberToken(document, TokenHandles.APPLICATION, it) }
+    selection.categories.forEach { rememberToken(document, TokenHandles.CATEGORY, it) }
+    selection.webDomains.forEach { rememberToken(document, TokenHandles.WEB_DOMAIN, it) }
+  }
+
+  /**
+   * Makes the handle of ([type], [id]) resolvable through the handle map,
+   * inside the caller's `update`. Every selection member is remembered when
+   * the selection is saved; the shield remembers the app it reports in an
+   * interaction too, so a handle from `drainShieldInteractions` can be
+   * passed back to `temporaryUnlock(…, { target })` even for an app no
+   * selection holds (one an allowlist shields). Returns the handle.
+   */
+  fun rememberToken(document: JSONObject, type: String, id: String): String {
     val tokens = document.optJSONObject(TOKENS) ?: JSONObject().also { document.put(TOKENS, it) }
-    fun put(type: String, id: String) {
-      val handle = TokenHandles.derive(secret, type, id)
-      if (!tokens.has(handle)) tokens.put(handle, JSONObject().put("type", type).put("id", id))
-    }
-    selection.applications.forEach { put(TokenHandles.APPLICATION, it) }
-    selection.categories.forEach { put(TokenHandles.CATEGORY, it) }
-    selection.webDomains.forEach { put(TokenHandles.WEB_DOMAIN, it) }
+    val handle = TokenHandles.derive(secret, type, id)
+    if (!tokens.has(handle)) tokens.put(handle, JSONObject().put("type", type).put("id", id))
+    return handle
   }
 
   companion object {

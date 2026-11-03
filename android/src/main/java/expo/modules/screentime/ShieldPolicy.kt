@@ -19,16 +19,21 @@ package expo.modules.screentime
  *   the allowed app, which is the opposite of what an allowlist means.
  * - **exemptions** win over everything: the apps the user must always
  *   reach ([SystemExemptions]).
+ * - **lifted** targets — the apps a shield snooze or the shield's `unblock`
+ *   lifted ([ShieldSnooze], [ShieldLifts]) — are taken out of every source
+ *   covering them, an allowlist's included (the iOS projection excepts a
+ *   snoozed app from `.all(except:)`); the sources stay in force for
+ *   everything else.
  */
 internal object ShieldPolicy {
   /** The subset of [foreground] to shield; empty when nothing is. */
-  fun targets(foreground: Set<String>, sources: List<BlockSource>, launchable: Set<String>, exempt: Set<String>): Set<String> {
+  fun targets(foreground: Set<String>, sources: List<BlockSource>, launchable: Set<String>, exempt: Set<String>, lifted: Set<String> = emptySet()): Set<String> {
     if (sources.isEmpty()) return emptySet()
-    return foreground.filterTo(LinkedHashSet()) { shields(it, sources, launchable, exempt) }
+    return foreground.filterTo(LinkedHashSet()) { shields(it, sources, launchable, exempt, lifted) }
   }
 
-  fun shields(packageName: String, sources: List<BlockSource>, launchable: Set<String>, exempt: Set<String>): Boolean {
-    if (packageName in exempt) return false
+  fun shields(packageName: String, sources: List<BlockSource>, launchable: Set<String>, exempt: Set<String>, lifted: Set<String> = emptySet()): Boolean {
+    if (packageName in exempt || packageName in lifted) return false
     return sources.any { shields(packageName, it, launchable) }
   }
 

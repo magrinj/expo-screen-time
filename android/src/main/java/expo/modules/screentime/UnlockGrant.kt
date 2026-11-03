@@ -18,10 +18,11 @@ import java.util.UUID
  * independently: `isTemporarilyUnlocked` and `getRemainingUnlockSeconds`
  * describe this grant alone.
  *
- * WHICH sources the grant suspends (the iOS `SuspendedSources`, captured at
- * the commit) belongs to the block model and its wiring: the wiring step
- * stores that beside this record, under its own key, and feeds this meter
- * the set of packages those sources shield.
+ * WHICH sources the grant suspends is captured at the commit
+ * ([SuspendedSources], the iOS record of the same name) and travels with
+ * the grant, so every composition in every process leaves those sources
+ * unshielded until relock or expiry; the engine feeds this meter the set of
+ * packages those sources shield.
  */
 internal data class UnlockGrant(
   /** Unique per grant, so the engine's write-back can never be taken for a renewal's. */
@@ -31,6 +32,8 @@ internal data class UnlockGrant(
   /** Unix milliseconds. */
   val grantedAt: Long,
   val meter: UsageAccumulator = UsageAccumulator.EMPTY,
+  /** The sources the grant suspended: by identity, so a source starting during the grant shields and is not metered. */
+  val suspended: SuspendedSources = SuspendedSources.NONE,
 ) {
   val consumedSeconds: Int
     get() = meter.consumedSeconds
@@ -61,6 +64,15 @@ internal data class UnlockGrant(
     copy(meter = meter.observe(sample.atMs, sample.isUsing(meteredPackages), maxChargeMs = sample.atMs - grantedAt - meter.consumedMs))
 
   /**
+   * The wall clock was set by [deltaMs] (`TIME_SET`): the grant instant and
+   * the meter's last instant move with it, as the monitoring state's
+   * instants do, so the plausibility bound (`atMs - grantedAt`) and the day
+   * rule keep measuring real time — a clock set back must not hand out the
+   * difference as free budget.
+   */
+  fun shifted(deltaMs: Long): UnlockGrant = if (deltaMs == 0L) this else copy(grantedAt = grantedAt + deltaMs, meter = meter.shifted(deltaMs))
+
+  /**
    * Whether storing this grant instead of [previous] changes what another
    * process would read (see [ShieldSnooze.isWorthPersistingOver]): the
    * engine persists at most once a second while the unlock is in use.
@@ -81,6 +93,7 @@ internal data class UnlockGrant(
     .put(BUDGET_SECONDS, budgetSeconds)
     .put(GRANTED_AT, grantedAt)
     .put(METER, meter.toJson())
+    .put(SUSPENDED, suspended.toJson())
 
   companion object {
     /** The document key the grant is stored under. */
@@ -89,10 +102,11 @@ internal data class UnlockGrant(
     private const val BUDGET_SECONDS = "budgetSeconds"
     private const val GRANTED_AT = "grantedAt"
     private const val METER = "meter"
+    private const val SUSPENDED = "suspended"
 
-    /** A fresh grant of [requestedSeconds] (floored) at [nowMs]. */
-    fun grant(requestedSeconds: Int, nowMs: Long, id: String = UUID.randomUUID().toString()): UnlockGrant =
-      UnlockGrant(id, UsageMeter.budget(requestedSeconds), nowMs)
+    /** A fresh grant of [requestedSeconds] (floored) at [nowMs], suspending [suspended]. */
+    fun grant(requestedSeconds: Int, nowMs: Long, id: String = UUID.randomUUID().toString(), suspended: SuspendedSources = SuspendedSources.NONE): UnlockGrant =
+      UnlockGrant(id, UsageMeter.budget(requestedSeconds), nowMs, suspended = suspended)
 
     /**
      * The grant to store when the engine writes [metered] back over the
@@ -118,7 +132,10 @@ internal data class UnlockGrant(
       val id = (json.opt(ID) as? String)?.takeIf { it.isNotEmpty() } ?: return null
       val budget = JsonNumbers.int(json.opt(BUDGET_SECONDS))?.takeIf { it > 0 } ?: return null
       val grantedAt = JsonNumbers.long(json.opt(GRANTED_AT)) ?: return null
-      return UnlockGrant(id, budget, grantedAt, UsageAccumulator.fromJson(json.optJSONObject(METER)))
+      // A grant without a readable suspension suspends nothing: the shields
+      // stay up and the budget idles until relock — fail closed.
+      val suspended = SuspendedSources.fromJson(json.optJSONObject(SUSPENDED)) ?: SuspendedSources.NONE
+      return UnlockGrant(id, budget, grantedAt, UsageAccumulator.fromJson(json.optJSONObject(METER)), suspended)
     }
 
     fun read(document: JSONObject): UnlockGrant? = fromJson(document.optJSONObject(KEY))

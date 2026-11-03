@@ -15,8 +15,11 @@ import expo.modules.kotlin.modules.ModuleDefinitionBuilder
  * internal preview switch (`BuildConfig.BLOCKING_PREVIEW`): off, the build
  * behaves exactly as before the step. Step 4: monitoring (schedules,
  * thresholds, the event history and the live events), under the same
- * switch. Every function not yet implemented fails with a coded
- * `UNSUPPORTED` error.
+ * switch. Step 5: the temporary unlock (whole block and targeted), the
+ * shield actions and the interaction queue, under the same switch again —
+ * it goes once `getEnforcementGaps` is wired and the preview build passes
+ * the whole conformance suite. Every function not yet implemented fails
+ * with a coded `UNSUPPORTED` error.
  */
 class ExpoScreenTimeModule : Module() {
   private val permissionRequester by lazy { AndroidPermissionRequester(appContext) }
@@ -26,6 +29,7 @@ class ExpoScreenTimeModule : Module() {
   private val selections by lazy { SelectionStore(store) }
   private val blocks by lazy { BlockController(context, store, selections) }
   private val monitoring by lazy { MonitoringController(context, store, selections) { payload -> sendEvent("onMonitorEvent", payload) } }
+  private val unlocks by lazy { UnlockController(context, store, selections) { monitoring.notifyListeners() } }
 
   override fun definition() = ModuleDefinition {
     Name("ExpoScreenTime")
@@ -100,8 +104,9 @@ class ExpoScreenTimeModule : Module() {
     // store holds them); categories and web domains stay off in v1 (review
     // R10: `ApplicationInfo.category` is mostly unset; no web blocking).
     // `blocking` is "friction" (review R2: a user can stop the engine) only
-    // under the preview switch; it flips for real in step 5, once every
-    // scenario that keys on it (C03–C10) has its behaviour. The limits are
+    // under the preview switch; it flips for real once every scenario that
+    // keys on it (C03–C10) has its behaviour — `getEnforcementGaps` (C09)
+    // is the last one. The limits are
     // the cross-platform ones (the contract enforces the iOS values on both
     // platforms).
     Function("getCapabilities") {
@@ -182,18 +187,36 @@ class ExpoScreenTimeModule : Module() {
 
       OnStopObserving("onMonitorEvent") { monitoring.stopObserving() }
 
-      // Honest empties: no shield interaction is recorded and no unlock can
-      // be granted yet, so draining has nothing to return, nothing
-      // is unlocked and no budget remains. The suite's reset() drains; a
-      // screen that sees `blocking !== "none"` reads the last two (the
-      // example's Blocking tab crashed on UNSUPPORTED there).
-      // `temporaryUnlock` and `relock` keep rejecting UNSUPPORTED: granting
-      // or restoring is not something that can be honestly no-op'd.
-      Function("drainShieldInteractions") { emptyList<Map<String, Any?>>() }
+      // MARK: - Temporary unlock
 
-      Function("isTemporarilyUnlocked") { false }
+      // Same judge order, codes and messages as the Swift `temporaryUnlock`
+      // (UnlockController): the whole block (every active source suspended,
+      // the budget metered over their apps by the engine) or one target (a
+      // shield snooze granted from the app). `budgetSeconds` is taken as it
+      // arrives so a non-number is INVALID_CONFIG, not a bridge error.
+      AsyncFunction("temporaryUnlock") { budgetSeconds: Any?, options: Map<String, Any?>?, promise: Promise ->
+        promise.resolve(unlocks.temporaryUnlock(budgetSeconds, options))
+      }
 
-      Function("getRemainingUnlockSeconds") { 0 }
+      Function("isTemporarilyUnlocked") { unlocks.isTemporarilyUnlocked() }
+
+      Function("getRemainingUnlockSeconds") { unlocks.getRemainingUnlockSeconds() }
+
+      Function("relock") { unlocks.relock() }
+
+      // MARK: - Shield interactions
+
+      // Read-and-clear the queue the shield Activity writes (one entry per
+      // button press, collapsed per target within 2 s).
+      Function("drainShieldInteractions") { unlocks.drainShieldInteractions() }
+
+      // MARK: - Shield Actions
+
+      Function("setShieldActions") { config: Map<String, Any?> -> blocks.setShieldActions(config) }
+
+      Function("setShieldActionsForActivity") { activityName: String, config: Map<String, Any?> -> blocks.setShieldActionsForActivity(activityName, config) }
+
+      Function("clearShieldActions") { blocks.clearShieldActions() }
     }
 
     // MARK: - Selection Store

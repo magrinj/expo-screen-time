@@ -227,6 +227,39 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   on whichever state is current; `TIMEZONE_CHANGED` re-evaluates in the
   new zone. `isBlocked()` reads `MonitoringState.schedulesAt`: the
   boundaries at now, the thresholds as the engine persisted them.
+- **Temporary unlock and shield interactions (step 5, behind the same
+  switch).** `UnlockController.kt` is the module-process half (the twin of
+  the Swift `temporaryUnlock`, `isTemporarilyUnlocked`,
+  `getRemainingUnlockSeconds`, `relock` and `drainShieldInteractions`): the
+  judge (`TemporaryUnlockRequest.judge`, the iOS order and codes), the
+  capture of the suspended sources (`SuspendedSources.capturing`, by
+  occurrence, as `ios/BlockComposition.swift`) and the record
+  (`UnlockGrant`, the suspension travelling with the grant) land in ONE
+  `update`, then the engine is SYNCed; a targeted unlock is a
+  `ShieldSnooze` granted from the app (`BlockComposition.targetedUnlockVerdict`
+  over the sources with the suspension not honoured, so a suspended block
+  still counts). `blockSelection`, `unblockAll` and `relock` clear the
+  grant, the snoozes and the shield's unblocks (`ShieldLifts`) in their own
+  `update`. The composition honours the grant's suspension (`isBlocked()`
+  reads false under a grant that suspended everything) and the policy
+  subtracts the lifted set (snoozed apps, unblocks) after the union — the
+  Android reading of the iOS `storeShields(of:snoozed:)` projection. In the
+  engine, every poll (100 ms while something is shielded, 1 s while only a
+  budget or a threshold is observed) feeds one `UsageSample` — the
+  tracker's resumed set, the screen state — to the grant's meter (over the
+  apps its suspended sources shield) and to each snooze's, persists what is
+  worth persisting under the lock with the write-back merges
+  (`UnlockGrant.merging`, `ShieldSnoozes.merging`: a renewal or a relock
+  the module made meanwhile is kept), and recomposes the sources when a
+  budget is spent or expired (the wake alarm covers midnight): the app
+  still on screen is re-shielded by the standing check, with the host app
+  never running. The shield Activity records every press
+  (`ShieldInteractionQueue`, the app's handle derived like `getTokens`
+  derives it, the owner's activity name) and applies the configured action
+  (`ShieldAction.configured` over `StateStore.shieldActions(owner)`, the
+  iOS precedence) in one `update`, then tells the engine (same process,
+  `refreshListener`) before it finishes, so the next poll never re-shields
+  what was just lifted. `openApp` is a direct launch.
 - `ShieldActivity.kt` — the shield, in the `:screentime` process (already
   alive, so no React Native start on the hot path): `excludeFromRecents`,
   own task affinity, `singleTask`, `windowDisablePreview` (the first frame
@@ -236,9 +269,11 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   never thrown). Appearance from `ShieldAppearance.kt` (pure: the nested
   and legacy `ShieldConfig` formats, hex colours, the SF Symbol → Material
   Symbol table) over `StateStore.shieldConfig(owner)` (the iOS precedence:
-  the owning activity's config, else the default). Every button and Back do
-  the iOS default `close`: Home first, then finish, so the blocked app never
-  resumes underneath. After the shield has drawn, the loop looks once more
+  the owning activity's config, else the default). `close` and Back do
+  the iOS default: Home first, then finish, so the blocked app never
+  resumes underneath; `unblock` and `snooze` finish the shield and leave
+  the user in the app; `defer` keeps it up; `openApp` launches the host.
+  After the shield has drawn, the loop looks once more
   (`followUp`): a target paused but not stopped is a picture-in-picture
   window over the shield, and `PipEvictorActivity.kt` enters PiP itself to
   evict it (one pinned task per display); a target still resumed is a

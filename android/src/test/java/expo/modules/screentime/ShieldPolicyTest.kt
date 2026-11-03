@@ -78,4 +78,15 @@ class ShieldPolicyTest {
     assertEquals(BlockSourceKind.Manual, ShieldPolicy.owner("com.chrome", listOf(manual))?.kind)
     assertNull("nothing covers an allowed app", ShieldPolicy.owner("com.clock", sources))
   }
+
+  @Test
+  fun `a lifted app - a snooze or an unblock - is shielded by no source, an allowlist included`() {
+    val block = listOf(BlockSource(BlockSourceKind.Manual, 0, setOf("com.chrome", "com.clock"), BlockMode.blocklist))
+    assertEquals(setOf("com.clock"), ShieldPolicy.targets(setOf("com.chrome", "com.clock"), block, launchable, exempt, lifted = setOf("com.chrome")))
+    assertFalse(ShieldPolicy.shields("com.chrome", block, launchable, exempt, lifted = setOf("com.chrome")))
+    val allow = listOf(BlockSource(BlockSourceKind.Manual, 0, setOf("com.maps"), BlockMode.allowlist))
+    assertFalse("excepted from \"every other app\"", ShieldPolicy.shields("com.chrome", allow, launchable, exempt, lifted = setOf("com.chrome")))
+    assertTrue("the others stay shielded", ShieldPolicy.shields("com.clock", allow, launchable, exempt, lifted = setOf("com.chrome")))
+    assertEquals("the sources still own the lifted app's configuration", BlockSourceKind.Manual, ShieldPolicy.owner("com.chrome", block)?.kind)
+  }
 }

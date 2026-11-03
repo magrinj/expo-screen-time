@@ -74,6 +74,23 @@ import java.util.TimeZone
  * → `SYNC`): a boundary due while the screen is off is observed within the
  * system's window, as iOS observes it at the next use; no exact alarm, no
  * permission.
+ *
+ * **Unlocks and snoozes.** The engine is the meter iOS delegates
+ * to DeviceActivity: on every poll (100 ms while something is shielded,
+ * 1 s while only a budget or a threshold is observed), [meter] feeds one
+ * [UsageSample] — the resumed set from the tracker, the screen state — to
+ * the whole-block grant ([UnlockGrant.observing] over the apps its
+ * suspended sources shield) and to each snooze ([ShieldSnoozes.observing]),
+ * and persists what is worth persisting (a whole second consumed, a target
+ * entering or leaving use, a budget spent) under the store's lock with the
+ * write-back merges ([UnlockGrant.merging], [ShieldSnoozes.merging]), so a
+ * grant or an end the module made meanwhile is kept. A spent or expired
+ * budget is dropped from the document and the sources are recomposed: the
+ * suspension ends, the lifted app re-shields, and the standing check puts
+ * the shield over the app still on screen — by itself, the host app never
+ * runs. The composition honours the grant's [SuspendedSources] and the
+ * lifted set (snoozed apps, the shield's unblocks); the grant survives the
+ * process (it is read back from the document with its meter).
  */
 internal class EngineLoop(private val context: Context) {
   private val thread = HandlerThread("expo-st-engine").apply { start() }
@@ -94,6 +111,22 @@ internal class EngineLoop(private val context: Context) {
   private var lastPersistAt = 0L
   private var blocks: List<MonitoringBlock>? = null
   private var sources: List<BlockSource> = emptyList()
+  /** The whole-block unlock in progress (active today, budget left), with its meter; null otherwise. */
+  private var grant: UnlockGrant? = null
+  /** The snoozes in force (granted today, not spent), with their meters. */
+  private var snoozes: List<ShieldSnooze> = emptyList()
+  /** The shield's unblocks, with the composition they were pressed under: they apply while it is in force. */
+  private var lifts: ShieldLifts.Lifts = ShieldLifts.NONE
+  /** What the last composition took out of every source: the snoozed apps and the lifts in force. */
+  private var lifted: Set<String> = emptySet()
+  /** The suspension the last composition honoured. */
+  private var appliedSuspension: SuspendedSources? = null
+  /** The apps the grant meters: shielded by a suspended source, by no live one. */
+  private var metered: Set<String> = emptySet()
+  /** The lifts (in force or not) the last composition judged, so a void one is dropped once. */
+  private var liftedApplied: Set<String> = emptySet()
+  /** When the unlock state was last read back from the document on the engine's own initiative. */
+  private var lastUnlockReconcileAt = 0L
   private var zone: TimeZone = TimeZone.getDefault()
   /** Wall clock minus the monotonic clock: a change is a clock step (`TIME_SET`). */
   private var drift = System.currentTimeMillis() - SystemClock.elapsedRealtime()
@@ -120,10 +153,15 @@ internal class EngineLoop(private val context: Context) {
   private val poll = object : Runnable {
     override fun run() {
       if (!polling) return
-      var delay = pollInterval
+      var delay: Long
       try {
         pollOnce()
         errorStreak = 0
+        // Read after the poll: an interval the poll itself changed (a spent
+        // budget turning 1 s metering into 100 ms shielding) applies to the
+        // very next poll, so the shield's follow-up never judges a target
+        // from a tracker view that is a second old.
+        delay = pollInterval
       } catch (t: Throwable) {
         errorStreak++
         // A short window (not the long seed: an oversized query could be
@@ -136,7 +174,15 @@ internal class EngineLoop(private val context: Context) {
     }
   }
 
-  private val settleAfterScreenOff = Runnable { guarded("screen-off settle") { step("screen-off"); persist("screen-off", force = true) } }
+  private val settleAfterScreenOff = Runnable {
+    guarded("screen-off settle") {
+      step("screen-off")
+      persist("screen-off", force = true)
+      // Nothing is in use behind a dark screen: the in-use stretches close
+      // here, so the time until the screen comes back is never charged.
+      meter("screen-off", interactive = false)
+    }
+  }
 
   /**
    * The in-process twin of the alarm: while the engine lives, a schedule
@@ -158,6 +204,9 @@ internal class EngineLoop(private val context: Context) {
             step(intent.action!!.substringAfterLast('.'))
           }
           Intent.ACTION_SCREEN_OFF -> {
+            // Nothing is in use behind a dark screen: the in-use stretches
+            // close now, on the known power state, so no dark second is charged.
+            meter("SCREEN_OFF", interactive = false)
             stopPolling("SCREEN_OFF")
             // The stream's SCREEN_NON_INTERACTIVE event closes every open
             // usage span; it is visible after the pipeline lag, so one last
@@ -207,6 +256,10 @@ internal class EngineLoop(private val context: Context) {
     context.registerReceiver(receiver, filter, null, handler)
     context.registerReceiver(receiver, packages, null, handler)
     ShieldActivity.shownListener = { target -> handler.post { onShieldShown(target) } }
+    // A press that lifted its target (unblock, snooze) is read back here,
+    // ahead of the next poll, so the app the user is returned to is not
+    // shielded again from a stale lifted set.
+    ShieldActivity.refreshListener = { reason -> refresh(reason) }
   }
 
   /**
@@ -236,6 +289,7 @@ internal class EngineLoop(private val context: Context) {
         handler.removeCallbacks(settleAfterScreenOff)
         handler.removeCallbacks(wake)
         persist("stop", force = true)
+        persistMeters("stop")
         // The alarm outlives the service only while something is scheduled;
         // it is then one path that brings the engine back (the system may
         // refuse a background start; a refusal is recorded, step 6's
@@ -247,6 +301,7 @@ internal class EngineLoop(private val context: Context) {
       thread.quitSafely()
     }
     ShieldActivity.shownListener = null
+    ShieldActivity.refreshListener = null
     try {
       context.unregisterReceiver(receiver)
     } catch (e: IllegalArgumentException) {
@@ -262,10 +317,51 @@ internal class EngineLoop(private val context: Context) {
   // MARK: - The monitoring step
 
   private fun reload() {
-    manual = store.manualBlock
-    monitoring = store.monitoring
+    store.read { document ->
+      manual = store.manualBlock
+      monitoring = store.monitoring
+      readUnlockState(document)
+    }
     persisted = monitoring
     blocks = null
+  }
+
+  /**
+   * The unlock state as the document holds it, stale records included:
+   * [expireMeters] (the first thing every [act] does) drops a spent or
+   * expired budget from the document and from here, so nothing acts on one.
+   */
+  private fun readUnlockState(document: org.json.JSONObject) {
+    grant = UnlockGrant.read(document)
+    snoozes = ShieldSnoozes.read(document)
+    lifts = ShieldLifts.read(document)
+    lastUnlockReconcileAt = SystemClock.uptimeMillis()
+  }
+
+  /**
+   * The engine's own look at the unlock state, every [PERSIST_MS] while
+   * one is in force: the module's writes reach the engine through the SYNC
+   * start intent, which the system can refuse from the background, and a
+   * relock that is not seen keeps everything suspended. A grant, snooze
+   * or lift the document no longer holds (or holds anew) is adopted here.
+   */
+  private fun reconcileUnlockState(reason: String) {
+    if (grant == null && snoozes.isEmpty() && lifts.isEmpty) return
+    if (SystemClock.uptimeMillis() - lastUnlockReconcileAt < PERSIST_MS) return
+    val before = Triple(grant?.id, snoozes.map { it.id }, lifts)
+    store.read { document ->
+      val stored = UnlockGrant.read(document)
+      // The engine's meter is ahead of the document for the same grant; adopt only another grant or none.
+      if (stored?.id != grant?.id) grant = stored
+      val storedSnoozes = ShieldSnoozes.read(document).associateBy { it.id }
+      snoozes = storedSnoozes.values.map { stored -> snoozes.firstOrNull { it.id == stored.id } ?: stored }
+      lifts = ShieldLifts.read(document)
+    }
+    lastUnlockReconcileAt = SystemClock.uptimeMillis()
+    if (before != Triple(grant?.id, snoozes.map { it.id }, lifts)) {
+      Log.i(TAG, "unlock state changed under the engine ($reason); re-applying")
+      act("reconcile:$reason", System.currentTimeMillis())
+    }
   }
 
   /**
@@ -325,6 +421,7 @@ internal class EngineLoop(private val context: Context) {
         Log.i(TAG, "document changed by the module (revision ${monitoring.revision} → ${stored.revision}); reloading ($reason)")
         monitoring = stored
         manual = store.manualBlock
+        readUnlockState(document)
         reloaded = true
       } else {
         MonitoringDocument.write(document, monitoring)
@@ -351,6 +448,12 @@ internal class EngineLoop(private val context: Context) {
       }
       monitoring = monitoring.clockShifted(deltaMs)
       MonitoringDocument.write(document, monitoring)
+      // The budgets' instants move too (a clock set back must not hand out
+      // the difference as free time): shifted on the document's records,
+      // which the module may have replaced meanwhile, then read back.
+      UnlockGrant.read(document)?.let { UnlockGrant.write(document, it.shifted(deltaMs)) }
+      ShieldSnoozes.write(document, ShieldSnoozes.read(document).map { it.shifted(deltaMs) })
+      readUnlockState(document)
     }
     persisted = monitoring
     lastPersistAt = System.currentTimeMillis()
@@ -376,17 +479,46 @@ internal class EngineLoop(private val context: Context) {
     if (persist("history:$reason", force = true) && recorded.isNotEmpty()) announce(recorded, reason)
   }
 
-  /** Composes the sources from the manual block and the monitoring state, and brings the shield, the polling and the alarm in line. */
+  /**
+   * Composes the sources from the manual block and the monitoring state —
+   * minus what the grant suspended, with the lifted set taken out by the
+   * policy — and brings the shield, the polling and the alarm in line. A
+   * change of the composed sources drops the shield's unblocks ("until a
+   * block is applied again"); a change of the lifted set alone re-applies
+   * the same sources (a shield over a lifted app goes, an app whose snooze
+   * was spent is caught by the standing check).
+   */
   private fun act(reason: String, now: Long) {
+    expireMeters(now, reason)
     val current = monitoring.activeBlocks()
-    if (current != blocks) {
+    val suspended = grant?.suspended?.takeIf { !it.isEmpty }
+    val liftedNow = snoozed() + lifts.under(sources)
+    if (current != blocks || suspended != appliedSuspension || liftedNow != lifted || lifts.apps != liftedApplied) {
       val before = sources
-      sources = BlockComposition.sources(manual, monitoring, selections::get)
+      val liftedBefore = lifted
+      val all = BlockComposition.sources(manual, monitoring, selections::get)
+      sources = if (suspended == null) all else BlockComposition.sources(manual, monitoring, selections::get, suspended)
+      metered = BlockComposition.union(all) - BlockComposition.union(sources)
       blocks = current
-      if (sources != before) applySources(reason, before)
+      appliedSuspension = suspended
+      ShieldActivity.sourcesKey = BlockComposition.fingerprint(sources)
+      // An unblock pressed under another composition is void: "until a block is applied again".
+      if (!lifts.isEmpty && lifts.under(sources).isEmpty()) dropLifts(reason)
+      lifted = snoozed() + lifts.under(sources)
+      liftedApplied = lifts.apps
+      if (sources != before || lifted != liftedBefore) applySources(reason, before)
+      if (grant != null) Log.i(TAG, "unlock in force ($reason): remaining=${grant!!.remainingSeconds(now, zone)} s metered=$metered")
+      if (snoozes.isNotEmpty()) Log.i(TAG, "snoozes in force ($reason): ${snoozes.map { "${it.token}:${it.remainingSeconds}s" }}")
     }
-    arm(monitoring.nextWakeMs(now, zone))
-    val observing = monitoring.observesUsage
+    arm(
+      listOfNotNull(
+        monitoring.nextWakeMs(now, zone),
+        // A budget is void at midnight: the composition is re-run then.
+        grant?.let { UsageMeter.dayEndMs(it.grantedAt, zone) },
+        snoozes.minOfOrNull { UsageMeter.dayEndMs(it.grantedAt, zone) },
+      ).minOrNull(),
+    )
+    val observing = monitoring.observesUsage || grant != null || snoozes.isNotEmpty()
     val wanted = if (sources.isNotEmpty()) INTERVAL_MS else if (observing) THRESHOLD_POLL_MS else null
     if (wanted == null) {
       stopPolling(reason)
@@ -410,9 +542,9 @@ internal class EngineLoop(private val context: Context) {
     reloadSets()
     reenforced.clear()
     evicted.clear()
-    // A shield over an app the new sources allow goes away at once.
-    ShieldActivity.showing?.let { if (!ShieldPolicy.shields(it, sources, launchable, exempt)) ShieldActivity.dismiss() }
-    Log.i(TAG, "block in force ($reason): sources=${sources.map { "${it.kind}:${it.mode}:${it.applications.size}" }} launchable=${launchable.size} exempt=${exempt.size}")
+    // A shield over an app the new sources allow (or a snooze lifted) goes away at once.
+    ShieldActivity.showing?.let { if (!ShieldPolicy.shields(it, sources, launchable, exempt, lifted)) ShieldActivity.dismiss() }
+    Log.i(TAG, "block in force ($reason): sources=${sources.map { "${it.kind}:${it.mode}:${it.applications.size}" }} lifted=$lifted launchable=${launchable.size} exempt=${exempt.size}")
     // The sources changed while polling: the next poll replays the history
     // to find an app of the new sources already on screen (the standing check).
     if (before.isNotEmpty() && polling) restartWindow(SEED_MS)
@@ -544,6 +676,9 @@ internal class EngineLoop(private val context: Context) {
     // The schedules and thresholds at now, from the stream just read.
     // Guarded on its own: a monitoring failure must not keep the shield from the targets below.
     if (monitoring.activities.isNotEmpty()) guarded("poll step") { step("poll", usageEvents = if (cursor != null) usage else null, queriedUntilMs = now) }
+    // The budgets, from the same tracker view. Guarded on its own, like the step.
+    if (grant != null || snoozes.isNotEmpty()) guarded("meter") { meter("poll") }
+    guarded("reconcile") { reconcileUnlockState("poll") }
 
     if (sources.isEmpty()) return
     // The replay that rebuilt the state is history: an app that came forward
@@ -555,7 +690,7 @@ internal class EngineLoop(private val context: Context) {
     val replay = seeding
     seeding = false
     val visibleNow = tracker.visible
-    val targets = if (replay) emptySet() else ShieldPolicy.targets(cameForward.keys.filterTo(LinkedHashSet()) { it in visibleNow }, sources, launchable, exempt)
+    val targets = if (replay) emptySet() else ShieldPolicy.targets(cameForward.keys.filterTo(LinkedHashSet()) { it in visibleNow }, sources, launchable, exempt, lifted)
     if (targets.isNotEmpty()) {
       val target = targets.first()
       Log.i(TAG, "detected target=$target eventAt=${cameForward[target]} ageMs=${now - cameForward[target]!!}")
@@ -568,7 +703,7 @@ internal class EngineLoop(private val context: Context) {
     // shield goes up; its follow-up evicts a PiP window. Capped per target
     // until a fresh event arrives, so a stale entry never relaunches the
     // shield every second over whatever is really in front.
-    val standing = ShieldPolicy.targets(visibleNow, sources, launchable, exempt)
+    val standing = ShieldPolicy.targets(visibleNow, sources, launchable, exempt, lifted)
     val up = SystemClock.uptimeMillis()
     if (standing.isNotEmpty() && ShieldActivity.showing == null && up > evictingUntil && (replay || up - lastShieldAt > REENFORCE_MS)) {
       val target = standing.first()
@@ -641,6 +776,89 @@ internal class EngineLoop(private val context: Context) {
   private fun isLockTaskActive(): Boolean {
     val manager = context.getSystemService(ActivityManager::class.java) ?: return false
     return manager.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE
+  }
+
+  // MARK: - Metering (the temporary unlock and the snoozes)
+
+  /** The apps the snoozes in force lift. */
+  private fun snoozed(): Set<String> = snoozes.mapTo(LinkedHashSet()) { it.token }
+
+  /**
+   * One tick of every meter from the tracker's view: the grant is charged
+   * while one of [metered] is resumed with the screen on, each snooze while
+   * its own target is. Persisted when worth it (once a second per budget in
+   * use, at once when one is spent); a spent budget recomposes the sources.
+   */
+  private fun meter(reason: String, interactive: Boolean = power.isInteractive) {
+    val grantBefore = grant
+    val snoozesBefore = snoozes
+    if (grantBefore == null && snoozesBefore.isEmpty()) return
+    val now = System.currentTimeMillis()
+    val resumed = tracker.resumed
+    fun sampleFor(packages: Set<String>) = UsageSample(now, resumed.firstOrNull { it in packages } ?: resumed.firstOrNull(), interactive)
+    val grantNow = grantBefore?.observing(sampleFor(metered), metered)
+    val observed = ShieldSnoozes.observing(snoozesBefore) { sampleFor(setOf(it.token)) }
+    grant = grantNow
+    snoozes = observed.snoozes
+    val grantDue = grantBefore != null && grantNow != null && (grantNow.isSpent || grantNow.isWorthPersistingOver(grantBefore))
+    if (!grantDue && !observed.changed) return
+    for (spent in observed.spent) Log.i(TAG, "snooze spent target=${spent.token} consumed=${spent.consumedSeconds} s ($reason)")
+    if (grantNow?.isSpent == true) Log.i(TAG, "unlock spent: budget=${grantNow.budgetSeconds} s consumed=${grantNow.consumedSeconds} s ($reason)")
+    persistMeters(reason, observed)
+    act("meter:$reason", now)
+  }
+
+  /**
+   * Writes the meters back over the document another process may have
+   * changed meanwhile: a renewal (another id) is taken, a relock keeps the
+   * grant gone, a spent budget leaves. The in-memory state is then what the
+   * document holds.
+   */
+  private fun persistMeters(reason: String, observed: ShieldSnoozes.Observed = ShieldSnoozes.Observed(snoozes, emptyList(), changed = false)) {
+    val metered = grant
+    val now = System.currentTimeMillis()
+    store.update { document ->
+      if (metered != null) UnlockGrant.write(document, UnlockGrant.merging(UnlockGrant.read(document), metered))
+      ShieldSnoozes.write(document, ShieldSnoozes.merging(ShieldSnoozes.read(document), observed))
+      readUnlockState(document)
+    }
+    Log.i(TAG, "meters persisted ($reason): unlock=${grant?.let { "${it.remainingSeconds(now, zone)} s left" } ?: "none"} snoozes=${snoozes.size}")
+  }
+
+  /**
+   * A budget that is void — the day rolled over, or a persisted grant
+   * came back spent — leaves the document here, whether or not a poll
+   * ran: the wake at midnight and every step pass through.
+   */
+  private fun expireMeters(now: Long, reason: String) {
+    val staleGrant = grant?.takeIf { !it.isActive(now, zone) }
+    val staleSnoozes = snoozes.filter { it.isSpent || !UsageMeter.isSameDay(it.grantedAt, now, zone) }
+    if (staleGrant == null && staleSnoozes.isEmpty()) return
+    store.update { document ->
+      if (staleGrant != null && UnlockGrant.read(document)?.id == staleGrant.id) {
+        Log.i(TAG, "unlock expired ($reason): budget=${staleGrant.budgetSeconds} s consumed=${staleGrant.consumedSeconds} s")
+        UnlockGrant.write(document, null)
+      }
+      if (staleSnoozes.isNotEmpty()) {
+        val live = ShieldSnoozes.read(document).filter { stored -> staleSnoozes.none { it.id == stored.id } }
+        Log.i(TAG, "snoozes expired ($reason): ${staleSnoozes.map { it.token }}")
+        ShieldSnoozes.write(document, live)
+      }
+      readUnlockState(document)
+    }
+  }
+
+  /**
+   * The composed sources changed: the unblocks pressed under the previous
+   * composition end ("until a block is applied again"). Only those: one the
+   * shield recorded under the current composition in between is kept.
+   */
+  private fun dropLifts(reason: String) {
+    Log.i(TAG, "lifts dropped ($reason): ${lifts.apps}")
+    store.update { document ->
+      if (ShieldLifts.read(document).under(sources).isEmpty()) ShieldLifts.write(document, ShieldLifts.NONE)
+      readUnlockState(document)
+    }
   }
 
   // MARK: - Follow-up after the shield drew

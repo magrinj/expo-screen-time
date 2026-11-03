@@ -21,6 +21,8 @@ import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import androidx.core.view.WindowCompat
 import java.lang.ref.WeakReference
+import java.util.TimeZone
+import java.util.UUID
 
 /**
  * The shield: the Android counterpart of the iOS ShieldConfiguration
@@ -43,11 +45,23 @@ import java.lang.ref.WeakReference
  *   the iOS precedence ([StateStore.shieldConfig]); what the config leaves
  *   open follows the system light/dark setting ([ViewPalette]) and the
  *   blocked app's own label and icon, as the default iOS shield does.
- * - **Close** (the primary button, the secondary button and Back, until
- *   step 5 maps the configured actions): send the user Home first, then
- *   finish, so the blocked app underneath never resumes. Leaving the shield
- *   any other way (Home, the screen going off) finishes it too: the next
- *   detection starts a fresh one.
+ * - **Buttons**: every press is recorded for
+ *   `drainShieldInteractions` ([ShieldInteractionQueue]: the pressed app's
+ *   handle and the owning activity) and does what `setShieldActions` /
+ *   `setShieldActionsForActivity` configured for the owner ([ShieldAction],
+ *   the iOS precedence), the iOS default `close` otherwise. `close` and Back
+ *   send the user Home first, then finish, so the blocked app underneath
+ *   never resumes; `unblock` records the lift ([ShieldLifts]) and `snooze`
+ *   grants a [ShieldSnooze], then the shield finishes and the user is in
+ *   the app they asked for (the iOS `.defer` outcome of a snooze; on iOS an
+ *   `unblock` closes the app — a platform constraint, documented);
+ *   `defer` keeps the shield up; `openApp` launches the host app directly
+ *   (`shieldOpenApp: "direct"`). The record and the grant are one
+ *   read-decide-write under the state store's lock, and the engine (same
+ *   process) is told at once, before the shield goes, so its next poll
+ *   never re-shields what was just lifted. Leaving the shield any other
+ *   way (Home, the screen going off) finishes it too: the next detection
+ *   starts a fresh one.
  * - **Split-screen.** Stock Android gives a background-started task no way
  *   into one pane of a split (verified on Android 17: the shield takes the
  *   whole screen, as device tests measured on the Pixel). What the library can
@@ -197,13 +211,88 @@ class ShieldActivity : Activity() {
 
   // MARK: - Actions
 
-  /**
-   * A button press. Step 5 maps the configured `ShieldAction` (unblock,
-   * defer, snooze, openApp) and records the interaction; until then every
-   * press is the iOS default, `close`.
-   */
+  /** A button press: recorded, then the configured action (see the class comment). */
   private fun onButton(button: String) {
-    close(button)
+    val owner = intent.getStringExtra(EXTRA_OWNER)
+    val action = try {
+      record(button, owner)
+    } catch (e: Exception) {
+      // A document that cannot be written right now: the press is lost, the
+      // shield behaves like the default. Never a crash in front of the user.
+      Log.w(EngineController.TAG, "shield-press target=$target button=$button failed: ${e.javaClass.simpleName}: ${e.message}")
+      ShieldAction.Close
+    }
+    Log.i(EngineController.TAG, "shield-press target=$target button=$button owner=$owner action=$action")
+    when (action) {
+      ShieldAction.Close -> close(button)
+      ShieldAction.Defer -> Unit
+      ShieldAction.Unblock -> lifted("unblock")
+      is ShieldAction.Snooze -> lifted("snooze")
+      ShieldAction.OpenApp -> openHostApp()
+    }
+  }
+
+  /**
+   * Records the press and applies the configured action's state change in
+   * one critical section: the interaction (with the app's handle, derived
+   * from the install secret as `getTokens` derives it, and the owning
+   * activity), a lift for `unblock`, a snooze grant for `snooze` (replacing
+   * one over the same app; the others run on). Returns the action to act on.
+   */
+  private fun record(button: String, owner: String?): ShieldAction {
+    val store = StateStore(this)
+    // Resolved before the critical section (a first draw writes the document).
+    val selections = SelectionStore(store)
+    return store.update { document ->
+      val now = System.currentTimeMillis()
+      // The handle `getTokens` derives for this app, made resolvable even
+      // for an app no selection holds (shielded by an allowlist), so the
+      // interaction's target can be passed back to temporaryUnlock.
+      val handle = ShieldInteractionQueue.Target(TokenHandles.APPLICATION, selections.rememberToken(document, TokenHandles.APPLICATION, target))
+      ShieldInteractionQueue.record(document, ShieldInteractionQueue.Entry.press(button, now, handle, owner))
+      when (val action = ShieldAction.configured(store.shieldActions(document, owner), button) ?: ShieldAction.Close) {
+        ShieldAction.Unblock -> {
+          // Recorded against the composition on screen: the lift lasts while these sources do.
+          ShieldLifts.write(document, ShieldLifts.read(document).plus(sourcesKey, target))
+          action
+        }
+        is ShieldAction.Snooze -> {
+          val snooze = ShieldSnooze.grant(UUID.randomUUID().toString(), TokenHandles.APPLICATION, target, action.seconds, now) ?: return@update ShieldAction.Close
+          val current = ShieldSnoozes.current(ShieldSnoozes.read(document), now, TimeZone.getDefault())
+          ShieldSnoozes.write(document, ShieldSnoozes.granting(snooze, current).snoozes)
+          action
+        }
+        else -> action
+      }
+    }
+  }
+
+  /**
+   * The target was lifted (an unblock, a snooze): the engine re-reads the
+   * document now — in this process, on its own thread, ahead of its next
+   * poll — then the shield finishes and the app underneath resumes.
+   */
+  private fun lifted(route: String) {
+    refreshListener?.invoke("shield:$route") ?: EngineController.sync(this, "shield:$route")
+    Log.i(EngineController.TAG, "shield-lifted target=$target route=$route")
+    finishAndRemoveTask()
+  }
+
+  /** `openApp`, direct on Android: the host app comes forward over the blocked app and the shield goes. */
+  private fun openHostApp() {
+    val launch = packageManager.getLaunchIntentForPackage(packageName)?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    if (launch == null) {
+      close("openApp")
+      return
+    }
+    try {
+      startActivity(launch)
+      Log.i(EngineController.TAG, "shield-open-app target=$target")
+      finishAndRemoveTask()
+    } catch (e: Exception) {
+      Log.w(EngineController.TAG, "host app launch failed: ${e.javaClass.simpleName}: ${e.message}")
+      close("openApp")
+    }
   }
 
   /** Home first, then finish: the blocked app underneath must not resume. */
@@ -239,6 +328,14 @@ class ShieldActivity : Activity() {
     /** The engine's hook for the follow-up check, set while the loop runs. */
     @Volatile
     var shownListener: ((String) -> Unit)? = null
+
+    /** The engine's hook for "look again" after a press changed the document (same process), set while the loop runs. */
+    @Volatile
+    var refreshListener: ((String) -> Unit)? = null
+
+    /** The fingerprint of the sources the engine last applied (`BlockComposition.fingerprint`): what an `unblock` is recorded under. */
+    @Volatile
+    var sourcesKey: String = ""
 
     /** Starts the shield for [target]; a refusal (no overlay permission) is logged, never thrown. */
     fun launch(context: Context, target: String, owner: String?) {

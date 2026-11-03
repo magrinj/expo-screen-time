@@ -5,10 +5,11 @@ import ExpoScreenTime, {
   CategoryLabel,
   isScreenTimeError,
   WebDomainLabel,
+  type ShieldInteraction,
   type TokenHandle,
 } from "expo-screen-time";
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 
 import { SELECTION_ID, useNativeSelection } from "../_layout";
 import {
@@ -24,6 +25,9 @@ import {
 export default function BlockingScreen() {
   const { tokens, metadata, refresh } = useNativeSelection(SELECTION_ID);
   const [remainingUnlock, setRemainingUnlock] = useState(0);
+  // The bench for the unlock proofs: any budget (the API floors it at 30 s).
+  const [unlockBudget, setUnlockBudget] = useState("300");
+  const [interactions, setInteractions] = useState<ShieldInteraction[]>([]);
 
   useFocusEffect(
     useCallback(() => {
@@ -45,16 +49,25 @@ export default function BlockingScreen() {
   }, [remainingUnlock]);
 
   const handleTemporaryUnlock = async () => {
+    const budget = parseInt(unlockBudget, 10);
+    if (!Number.isFinite(budget) || budget <= 0) return;
     try {
-      const grant = await ExpoScreenTime.temporaryUnlock(5 * 60);
+      const grant = await ExpoScreenTime.temporaryUnlock(budget);
       setRemainingUnlock(grant.budgetSeconds);
       Alert.alert(
         "Unlocked",
-        "5 minutes of usage granted. The budget is only spent while a blocked app is open."
+        `${grant.budgetSeconds}s of usage granted, metered in ${grant.meteringSeconds}s steps. The budget is only spent while a blocked app is open.`
       );
-    } catch {
-      Alert.alert("Error", "Nothing is blocked — block the selection first");
+    } catch (error) {
+      const code = isScreenTimeError(error) ? error.code : "unknown";
+      Alert.alert("Error", `Could not unlock (${code}) — block the selection first`);
     }
+  };
+
+  // The queue the shield writes: one entry per button press, with the
+  // pressed app's handle and the owning activity.
+  const handleDrainInteractions = () => {
+    setInteractions(ExpoScreenTime.drainShieldInteractions());
   };
 
   const handleRelock = () => {
@@ -290,7 +303,7 @@ export default function BlockingScreen() {
                 <Row
                   icon="hourglass"
                   iconColor={colors.warning}
-                  title={`~${Math.ceil(remainingUnlock / 60)} min of usage left`}
+                  title={`${remainingUnlock}s (~${Math.ceil(remainingUnlock / 60)} min) of usage left`}
                   subtitle="Spent only while a blocked app is open"
                 />
               </Card>
@@ -302,12 +315,50 @@ export default function BlockingScreen() {
               />
             </>
           ) : (
-            <ActionButton
-              title="Unlock for 5 min of usage"
-              icon="hourglass-outline"
-              color={colors.warning}
-              onPress={handleTemporaryUnlock}
-            />
+            <>
+              <Card>
+                <View style={styles.budgetRow}>
+                  <Text style={styles.budgetLabel}>Budget (seconds of use)</Text>
+                  <TextInput
+                    style={styles.budgetInput}
+                    value={unlockBudget}
+                    onChangeText={(text) => setUnlockBudget(text.replace(/\D/g, ""))}
+                    keyboardType="number-pad"
+                    selectTextOnFocus
+                    placeholder="300"
+                    accessibilityLabel="Unlock budget"
+                  />
+                </View>
+              </Card>
+              <ActionButton
+                title="Unlock for this budget of usage"
+                icon="hourglass-outline"
+                color={colors.warning}
+                onPress={handleTemporaryUnlock}
+              />
+            </>
+          )}
+
+          {/* Shield interactions */}
+          <SectionHeader title="Shield Interactions" />
+          <ActionButton
+            title="Drain shield interactions"
+            icon="list"
+            color={colors.primary}
+            onPress={handleDrainInteractions}
+          />
+          {interactions.length > 0 && (
+            <Card>
+              {interactions.map((press, index) => (
+                <Row
+                  key={`press-${press.timestamp}-${index}`}
+                  icon={press.button === "primary" ? "radio-button-on" : "radio-button-off"}
+                  iconColor={colors.warning}
+                  title={`${press.button} · ${press.target?.type ?? "no target"} · ${press.activityName ?? "manual block"}`}
+                  subtitle={new Date(press.timestamp).toLocaleTimeString()}
+                />
+              ))}
+            </Card>
           )}
         </>
       )}
@@ -334,6 +385,28 @@ const styles = StyleSheet.create({
   },
   content: {
     paddingBottom: 100,
+  },
+  budgetRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  budgetLabel: {
+    fontSize: 15,
+    color: colors.text,
+  },
+  budgetInput: {
+    minWidth: 80,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    fontSize: 16,
+    textAlign: "right",
+    color: colors.text,
   },
   hint: {
     fontSize: 12,

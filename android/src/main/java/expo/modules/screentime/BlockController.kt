@@ -6,9 +6,9 @@ import org.json.JSONObject
 import java.util.TimeZone
 
 /**
- * The module-process half of blocking: the twin of the `// MARK: - Blocking`
- * and `// MARK: - Shield Configuration` sections of
- * `ios/ExpoScreenTimeModule.swift` plus `ScreenTimeManager.isBlocked`. The
+ * The module-process half of blocking: the twin of the `// MARK: - Blocking`,
+ * `// MARK: - Shield Configuration` and `// MARK: - Shield Actions` sections
+ * of `ios/ExpoScreenTimeModule.swift` plus `ScreenTimeManager.isBlocked`. The
  * state lives in the [StateStore] document; the engine process
  * ([ScreenTimeEngineService]) reads it and enforces it, and is told to look
  * again through [EngineController] (a start intent, the signal that reaches
@@ -25,6 +25,9 @@ internal class BlockController(private val context: Context, private val store: 
   fun blockSelection(selectionId: String, options: Map<String, Any?>?) {
     val block = store.update { document ->
       val validated = BlockValidation.manualBlock(selectionId, selections.get(selectionId), options?.get("mode"))
+      // An explicit block supersedes any temporary unlock in progress, every
+      // snooze and the shield's unblocks, as on iOS.
+      UnlockController.clearUnlockState(document)
       store.manualBlock = validated
       store.syncEngineDesired(document)
       validated
@@ -43,6 +46,7 @@ internal class BlockController(private val context: Context, private val store: 
    */
   fun unblockAll() {
     store.update { document ->
+      UnlockController.clearUnlockState(document)
       store.manualBlock = null
       MonitoringDocument.write(document, MonitoringDocument.read(document).lift())
       store.syncEngineDesired(document)
@@ -60,9 +64,17 @@ internal class BlockController(private val context: Context, private val store: 
    * the engine will. Synchronous: one shared-lock file read, nothing
    * written. This is the *intended* state (review R2): whether the engine
    * is alive to enforce it is a gap for `getEnforcementGaps`, not a `false`
-   * here.
+   * here. A whole-block unlock in progress suspends its sources and a
+   * snooze or a shield unblock lifts its app, so `isBlocked()` is false
+   * during a grant that suspended everything, as iOS reads its emptied
+   * stores (the conformance suite's C08 asserts it).
    */
-  fun isBlocked(): Boolean = BlockComposition.shieldsSomething(activeSources(store, selections))
+  fun isBlocked(): Boolean = store.read { document ->
+    val now = System.currentTimeMillis()
+    val zone = TimeZone.getDefault()
+    val sources = activeSources(store, selections)
+    BlockComposition.shieldsSomething(sources, UnlockController.lifted(document, sources, now, zone))
+  }
 
   // MARK: - Shield configuration
 
@@ -72,16 +84,29 @@ internal class BlockController(private val context: Context, private val store: 
 
   fun clearShieldConfig() = store.clearShieldConfigs()
 
+  // MARK: - Shield actions
+
+  fun setShieldActions(config: Map<String, Any?>) = store.setDefaultShieldActions(toJson(config))
+
+  fun setShieldActionsForActivity(activityName: String, config: Map<String, Any?>) = store.setShieldActions(activityName, toJson(config))
+
+  fun clearShieldActions() = store.clearShieldActions()
+
   companion object {
     /**
      * The sources in force now, from the document as it is: the schedules
      * evaluated at `now` in memory (`schedulesAt`: boundaries as the engine
      * will record them, thresholds as the engine persisted them; nothing
-     * written) and the manual block.
+     * written) and the manual block — minus what the temporary unlock in
+     * progress suspended, unless [honouringSuspension] is false (what a
+     * relock or a renewal restores: the iOS `activeBlockSources`).
      */
-    fun activeSources(store: StateStore, selections: SelectionStore): List<BlockSource> = store.read { document ->
-      val monitoring = MonitoringDocument.read(document).schedulesAt(System.currentTimeMillis(), TimeZone.getDefault(), selections::get)
-      BlockComposition.sources(store.manualBlock, monitoring, selections::get)
+    fun activeSources(store: StateStore, selections: SelectionStore, honouringSuspension: Boolean = true): List<BlockSource> = store.read { document ->
+      val now = System.currentTimeMillis()
+      val zone = TimeZone.getDefault()
+      val monitoring = MonitoringDocument.read(document).schedulesAt(now, zone, selections::get)
+      val suspended = if (honouringSuspension) UnlockGrant.read(document)?.takeIf { it.isActive(now, zone) }?.suspended else null
+      BlockComposition.sources(store.manualBlock, monitoring, selections::get, suspended)
     }
 
     /** A JS record (nested maps and lists of primitives) as the JSON the document stores. */

@@ -152,6 +152,9 @@ internal data class UsageAccumulator(
     return UsageAccumulator(consumedMs + charged, if (inUse) atMs else null, inUse)
   }
 
+  /** The wall clock was set by [deltaMs]: the stretch's last instant moves with it, consumption does not. */
+  fun shifted(deltaMs: Long): UsageAccumulator = if (sampledAtMs == null) this else copy(sampledAtMs = sampledAtMs + deltaMs)
+
   fun toJson(): JSONObject = JSONObject()
     .put(CONSUMED_MS, consumedMs)
     .put(SAMPLED_AT_MS, sampledAtMs ?: JSONObject.NULL)

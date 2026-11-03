@@ -275,4 +275,37 @@ class ShieldSnoozeTest {
     assertFalse(document.has(ShieldSnoozes.KEY))
     assertEquals(emptyList<ShieldSnooze>(), ShieldSnoozes.read(JSONObject()))
   }
+
+  @Test
+  fun `observing with one sample per snooze charges two snoozed apps resumed side by side`() {
+    val t0 = at(2026, 11, 1, 10, 0)
+    val a = ShieldSnooze("a", TokenHandles.APPLICATION, "com.a", 60, t0)
+    val b = ShieldSnooze("b", TokenHandles.APPLICATION, "com.b", 60, t0)
+    val resumed = setOf("com.a", "com.b")
+    fun sampleFor(atMs: Long) = { snooze: ShieldSnooze -> UsageSample(atMs, resumed.firstOrNull { it == snooze.token }, screenInteractive = true) }
+    val first = ShieldSnoozes.observing(listOf(a, b), sampleFor(t0 + 1_000))
+    val second = ShieldSnoozes.observing(first.snoozes, sampleFor(t0 + 3_000))
+    assertEquals("both targets charged (a single foreground package would charge one)", listOf(2, 2), second.snoozes.map { it.consumedSeconds })
+    assertTrue(second.changed)
+    // The one-sample form sees one foreground app: b's stretch closes at 3 s and stays there.
+    val single = ShieldSnoozes.observing(UsageSample(t0 + 3_000, "com.a", true), first.snoozes)
+    val later = ShieldSnoozes.observing(UsageSample(t0 + 5_000, "com.a", true), single.snoozes)
+    assertEquals("the one-sample form charges the app in the foreground only", listOf(4, 2), later.snoozes.map { it.consumedSeconds })
+  }
+
+  @Test
+  fun `a clock set back during a snooze hands out no free time`() {
+    val t0 = at(2026, 11, 1, 10, 0)
+    var snooze = ShieldSnooze("s", TokenHandles.APPLICATION, "com.a", 120, t0)
+    for (i in 0..30) snooze = snooze.observing(using(t0 + i * 1_000L, "com.a"))
+    assertEquals(30, snooze.consumedSeconds)
+    val delta = -10 * 60_000L
+    val shifted = snooze.shifted(delta)
+    var later = shifted
+    for (i in 31..60) later = later.observing(using(t0 + i * 1_000L + delta, "com.a"))
+    assertEquals("the next 30 s of use are charged on the new clock", 60, later.consumedSeconds)
+    var unshifted = snooze
+    for (i in 31..60) unshifted = unshifted.observing(using(t0 + i * 1_000L + delta, "com.a"))
+    assertEquals("(unshifted, the bound would have refused them)", 30, unshifted.consumedSeconds)
+  }
 }
