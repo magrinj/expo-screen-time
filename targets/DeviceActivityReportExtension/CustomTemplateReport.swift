@@ -91,6 +91,9 @@ struct CustomTemplateReport: DeviceActivityReportScene {
                             name: name,
                             duration: (existing?.duration ?? 0) + app.totalActivityDuration
                         )
+                        // Pickups whose first app was this one; with the pickups without
+                        // application activity they make the device total (Screen Time's Pickups).
+                        pickups += app.numberOfPickups
                     }
                 }
             }
