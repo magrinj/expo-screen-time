@@ -130,6 +130,6 @@ blocking Activity as the shield, device admin for anti-tamper), with the
 stages and their exit criteria. The module is in stage 3 of that plan, the
 Android MVP: the foundation, the selections, blocking and the shield,
 monitoring, the temporary unlock with the shield actions, the enforcement
-gaps, the engine's restart chain and the device-admin friction are in. Still
-open: 24 h survival runs on a Pixel and a Samsung; usage reports are a later
-phase.
+gaps, the engine's restart chain and the device-admin friction are in, and the
+engine passed 24 h survival runs on a Pixel 8a and a Samsung Galaxy A54. Usage
+reports are a later phase.
