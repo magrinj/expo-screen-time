@@ -83,8 +83,10 @@ The report is template-only: without a template (children or the imperative
 per-item template of [`TopApps` / `Categories`](#reporttopapps--reportcategories)
 (a descriptive error is thrown otherwise).
 
-**Formatting durations.** On `Report.Text`, `durationStyle` picks the format:
-`'abbreviated'` (1h 24m), `'short'` (1:24), `'full'` (1 hour, 24 minutes).
+**Formatting durations.** On `Report.Text`, `durationStyle` picks the format,
+Foundation's `DateComponentsFormatter` unit styles in the device locale (en-US
+shown): `'abbreviated'` (1h 24m), `'short'` (1 hr, 24 min), `'full'` (1 hour,
+24 minutes). Under an hour only minutes show (24m, 24 min, 24 minutes).
 Alternatively `format="percent"` + `goal` renders any numeric binding as a
 percentage.
 

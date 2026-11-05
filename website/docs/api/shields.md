@@ -230,7 +230,7 @@ const intercept = ExpoScreenTime.drainShieldInteractions()
 ```
 
 Posting needs the `notifications` permission step: request it with the
-`shieldOpenApp` feature (see [Permissions](./permissions.md#steps)). Without
+`shieldOpenApp` feature (see [Permissions](./permissions.md#steps-on-ios)). Without
 it, or if the notification cannot be posted, the press behaves like `'close'`
 — still recorded. The banner's title is the shield's `title`, else your app's
 name; its body names your app and nothing else.
