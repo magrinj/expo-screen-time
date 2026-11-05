@@ -44,7 +44,10 @@ shield, and the user can stop it from the system settings, which
   draws the shield, a full-screen Activity, over it (about 120 ms after the
   app comes forward on a Pixel 8a). It is `"friction"`: the user can stop
   the engine from the Task Manager or Settings, and such periods are
-  reported by `getEnforcementGaps()`. Details on the
+  reported by `getEnforcementGaps()`. An engine the system killed comes
+  back by itself, within 3.5 minutes while the screen is on. On battery,
+  that bound needs the `deviceAdmin` or `batteryOptimization` step (see
+  [blocking](./api/blocking.md#android)). Details on the
   [blocking](./api/blocking.md#android) and [shields](./api/shields.md#android)
   pages.
 - **Monitoring.** `startMonitoring` and the rest of the
@@ -126,7 +129,7 @@ a per-API mapping of the iOS behaviour to Android (UsageStats detection, a
 blocking Activity as the shield, device admin for anti-tamper), with the
 stages and their exit criteria. The module is in stage 3 of that plan, the
 Android MVP: the foundation, the selections, blocking and the shield,
-monitoring, the temporary unlock with the shield actions and the enforcement
-gaps are in. Still open: a restart path that does not rely on the system's
-sticky restart, the device-admin friction, and 24 h survival runs on a Pixel
-and a Samsung; usage reports are a later phase.
+monitoring, the temporary unlock with the shield actions, the enforcement
+gaps, the engine's restart chain and the device-admin friction are in. Still
+open: 24 h survival runs on a Pixel and a Samsung; usage reports are a later
+phase.

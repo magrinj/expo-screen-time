@@ -327,6 +327,27 @@ when that happened.
   still stop the engine (Task Manager, force stop, revoking usage access or
   the overlay permission); such periods are reported by
   `getEnforcementGaps`, which is why the capability is `"friction"`.
+- **If the system kills the engine, it comes back.** Android restarts a
+  killed foreground service by itself within seconds; when it refuses (an
+  app in the background may not start a foreground service without an
+  exemption), the library retries under the overlay permission and, failing
+  everything else, a watchdog alarm brings the engine back within
+  **3.5 minutes** of its last heartbeat while the screen is on and
+  unlocked, or within seconds of the next unlock (nothing can be opened
+  with the screen off, and no battery is spent on wakeups overnight).
+  **On battery, that bound needs the `deviceAdmin` or the
+  `batteryOptimization` step.** Without either, Android may put an app the
+  user rarely opens in its `rare` standby bucket, which allows the app one
+  alarm per hour. A Pixel did so within an hour of the last use. A stop
+  made while the phone stays in use is still repaired within minutes, but
+  a second stop within the hour, or a stop followed by locking the phone
+  and leaving it asleep, can leave the engine down for up to an hour. The `batteryOptimization`
+  step also makes the restart direct. A "Force stop" stays final until the app is opened again
+  (Android cancels the app's alarms); a Task Manager "Stop" does not cancel
+  them, so the engine returns within the same bound and the stop is
+  reported as a `stoppedByUser` gap of a few minutes. A device the user
+  put in restricted battery mode cannot run a foreground service at all;
+  that period is reported as a gap.
 - **Allowlist = launchable apps.** `{ mode: 'allowlist' }` shields every
   app with a launcher entry except the selection's apps. Apps without a
   launcher entry (permission dialogs, the share sheet, the document picker)

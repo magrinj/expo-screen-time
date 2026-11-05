@@ -104,6 +104,9 @@ import java.util.TimeZone
  * `SYSTEM_ALERT_WINDOW`: a revocation is observed at once, not at the next
  * minute). Every beat carries the engine's own permission check, so a
  * permission gap opens and closes from here too ([EnforcementGapRecorder]).
+ * Every beat and every start intent ([refresh]) also push the restart
+ * chain's watchdog forward ([EngineWatchdog]): it lands only once the beats
+ * have stopped.
  */
 internal class EngineLoop(private val context: Context) {
   private val thread = HandlerThread("expo-st-engine").apply { start() }
@@ -203,6 +206,9 @@ internal class EngineLoop(private val context: Context) {
   private val heartbeat = object : Runnable {
     override fun run() {
       guarded("heartbeat") { beat("timer") }
+      // The watchdog is pushed forward on every beat: it lands only when the beats stop
+      // (far ahead with the screen off, so a sleeping CPU never lets it come due).
+      EngineWatchdog.arm(context, power.isInteractive)
       handler.postDelayed(this, EnforcementGapTracker.HEARTBEAT_INTERVAL_MS)
     }
   }
@@ -229,12 +235,16 @@ internal class EngineLoop(private val context: Context) {
         when (intent.action) {
           Intent.ACTION_SCREEN_ON, Intent.ACTION_USER_PRESENT -> {
             handler.removeCallbacks(settleAfterScreenOff)
+            // Back to the short watchdog: the screen is where a stop happens.
+            EngineWatchdog.arm(context, interactive = true)
             // The beat on its own: the shield step must never wait on the gap bookkeeping.
             guarded("beat") { beat(intent.action!!.substringAfterLast('.')) }
             step(intent.action!!.substringAfterLast('.'))
           }
           Intent.ACTION_SCREEN_OFF -> {
             guarded("beat") { beat("SCREEN_OFF") }
+            // The long watchdog: it must not come due while this engine only sleeps.
+            EngineWatchdog.arm(context, interactive = false)
             // Nothing is in use behind a dark screen: the in-use stretches
             // close now, on the known power state, so no dark second is charged.
             meter("SCREEN_OFF", interactive = false)
@@ -321,6 +331,7 @@ internal class EngineLoop(private val context: Context) {
       zone = TimeZone.getDefault()
       step(reason, reloaded = true)
     }
+    EngineWatchdog.arm(context, power.isInteractive)
   }
 
   /**
@@ -339,11 +350,13 @@ internal class EngineLoop(private val context: Context) {
         persist("stop", force = true)
         persistMeters("stop")
         // The alarm outlives the service only while something is scheduled;
-        // it is then one path that brings the engine back (the system may
-        // refuse a background start; a refusal is recorded as a gap; the
-        // restart path that does not rely on the sticky restart is still open).
+        // it is then one path that brings the engine back (through the
+        // controller's revival when the background start is refused). The
+        // watchdog outlives a service destroyed while the engine is still
+        // wanted, and goes with a release.
         arm(monitoring.nextWakeMs(System.currentTimeMillis(), zone))
         handler.removeCallbacks(wake)
+        if (!store.engineDesired) EngineWatchdog.cancel(context)
         ShieldActivity.dismiss()
       }
       thread.quitSafely()

@@ -202,6 +202,15 @@ internal class EnforcementGapRecorder(private val context: Context, private val 
   }
 
   /**
+   * Whether the recorded run is live and its process alive (false without
+   * a run, or after a release: a cached process left by a released engine
+   * is not an engine): what decides that a refused start needs a revival.
+   */
+  fun runAlive(): Boolean = store.read { document ->
+    EnforcementGapTracker.load(document).run?.takeIf { it.isLive }?.pid?.let { engineAlive(it) } ?: false
+  }
+
+  /**
    * Whether the process [pid] is alive: this process, or one of the
    * package's running processes (`runningAppProcesses` lists the caller's
    * own package only, which is what is asked).

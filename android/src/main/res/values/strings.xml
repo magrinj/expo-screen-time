@@ -5,6 +5,8 @@
   <string name="expo_st_notice_title">Screen Time protection is active</string>
   <string name="expo_st_notice_text">Restrictions you set are being enforced.</string>
   <string name="expo_st_device_admin_explanation">Keeps the protection from being force-stopped or removed without turning it off here first.</string>
+  <!-- The confirmation the system shows when the user deactivates the device admin. -->
+  <string name="expo_st_device_admin_disable_warning">Turning this off lets the protection be force-stopped or uninstalled. Restrictions you set keep running until then.</string>
   <!-- The picker (ActivityPicker) and the token label. -->
   <string name="expo_st_picker_search_hint">Search apps</string>
   <string name="expo_st_picker_empty">No apps to show</string>

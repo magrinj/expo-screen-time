@@ -92,6 +92,15 @@ internal class StateStore(private val directory: File) {
     set(value) = update { engine(it).put(RUNNING, value) }
 
   /**
+   * How many revivals in a row the system refused (the restart chain's
+   * backoff, [EngineWatchdog.retry]); reset by the service once
+   * the engine runs again.
+   */
+  var engineRetries: Int
+    get() = read { it.optJSONObject(ENGINE)?.optInt(RETRIES, 0) ?: 0 }
+    set(value) = update { engine(it).put(RETRIES, value) }
+
+  /**
    * Records why the engine could not start or stay in the foreground (the
    * system refusing `startForeground`, a `startForegroundService` from the
    * background). Diagnostic, capped; the gaps themselves are the tracker's
@@ -329,6 +338,7 @@ internal class StateStore(private val directory: File) {
     private const val ENGINE = "engine"
     private const val DESIRED = "desired"
     private const val RUNNING = "running"
+    private const val RETRIES = "retries"
     private const val FAILURES = "failures"
     private const val INSTALL = "install"
     private const val SECRET = "secret"

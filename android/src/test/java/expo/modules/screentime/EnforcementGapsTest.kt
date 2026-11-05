@@ -701,6 +701,74 @@ class EnforcementGapsAndroidTest {
   }
 
   @Test
+  fun `the restart chain - a kill undone by the sticky restart is no gap, one undone by the watchdog is the record's gap, a refused revival keeps it open`() {
+    val lastBeat = runStart + 10 * minute
+    val tracker = running(runStart, pid = 100, until = lastBeat + 1)
+    val killed = lastBeat + 30_000
+    val signaled = ExitRecord(ExitReasons.SIGNALED, killed, 100, engine, "signal 9")
+    // 1. The sticky restart's promotion is refused, the retry under the overlay exemption lands 1.2 s later: no gap.
+    val sticky = tracker.engineStarted(killed + 1_200, 101, listOf(signaled), engine, bootTime = bootBefore)
+    assertTrue(sticky.gaps.isEmpty())
+    assertEquals(101, sticky.run!!.pid)
+    // 2. No sticky restart (a Task Manager stop): the watchdog lands at the bound and revives the engine.
+    val stop = stopApp(killed, 100)
+    val bound = killed + 210_000
+    val watchdog = tracker.engineStarted(bound + 900, 102, listOf(stop), engine, bootTime = bootBefore)
+    assertEquals(listOf(Triple(killed, bound + 900, Reason.stoppedByUser)), watchdog.gaps.shapes())
+    // 3. The revival is refused (no overlay permission, a restricted app). As the wiring does it: the refusal is
+    //    folded first, with no exit record (the gap opens at the refusal, "start refused"), the record lands at the
+    //    app's next look or at the start and takes the gap back to the death; it stays open through the next
+    //    watchdog refusals; the eventual start closes it as one gap.
+    val refusedBlind = tracker.engineRefused(bound, "start:ForegroundServiceStartNotAllowedException")
+    assertEquals(listOf(Triple(bound, null, Reason.killedBySystem)), refusedBlind.gaps.shapes())
+    assertTrue(refusedBlind.gaps.single().detail.startsWith("start refused"))
+    val refusedOnce = refusedBlind.recordExits(listOf(signaled), engine, bound + 1_000)
+    assertEquals(listOf(Triple(killed, null, Reason.killedBySystem)), refusedOnce.gaps.shapes())
+    val refusedTwice = refusedOnce.engineRefused(bound + 210_000, "start:ForegroundServiceStartNotAllowedException")
+    assertEquals(1, refusedTwice.gaps.size)
+    assertTrue(refusedTwice.hasOpenEngineGap)
+    val back = refusedTwice.engineStarted(bound + 400_000, 103, listOf(signaled), engine, bootTime = bootBefore)
+    assertEquals(listOf(Triple(killed, bound + 400_000, Reason.killedBySystem)), back.gaps.shapes())
+    assertFalse(back.hasOpenEngineGap)
+    // 4. A release while the revival is still refused closes it at the release.
+    val released = refusedTwice.engineStopped(bound + 300_000, engineAlive = false, bootTime = bootBefore)
+    assertEquals(listOf(Triple(killed, bound + 300_000, Reason.killedBySystem)), released.gaps.shapes())
+  }
+
+  @Test
+  fun `the watchdog's retry delay doubles from 20 s and caps at 30 min`() {
+    assertEquals(20_000L, RestartBackoff.delayMs(0))
+    assertEquals(40_000L, RestartBackoff.delayMs(1))
+    assertEquals(80_000L, RestartBackoff.delayMs(2))
+    assertEquals(RestartBackoff.MAX_MS, RestartBackoff.delayMs(11))
+    assertEquals(RestartBackoff.MAX_MS, RestartBackoff.delayMs(100))
+    assertEquals(20_000L, RestartBackoff.delayMs(-3))
+  }
+
+  @Test
+  fun `the blocked floor is the system's minimum with the screen off and 20 s at a lit lock screen`() {
+    // Screen off: AlarmManager holds a due non-wakeup alarm until a wakeup batch and delivers it at the
+    // screen-on, so the floor must be due by then: AlarmManager's minimum delay for an app (5 s),
+    // under the 10 s below which it adds no inexact window.
+    assertEquals(5_000L, RestartBackoff.floorMs(UnlockWait.SCREEN_OFF))
+    assertTrue(RestartBackoff.SCREEN_OFF_MS < 10_000L)
+    // A lit keyguard: the wait for the unlock catches the unlock, the floor only spaces its rounds.
+    assertEquals(RestartBackoff.LOCKED_MS, RestartBackoff.floorMs(UnlockWait.KEYGUARD))
+    assertEquals(RestartBackoff.LOCKED_MS, RestartBackoff.floorMs(null))
+  }
+
+  @Test
+  fun `the watchdog watches at 2 min with the screen on and stands back past deep Doze with it off`() {
+    assertEquals(EngineWatchdog.PERIOD_MS, EngineWatchdog.periodMs(interactive = true))
+    assertEquals(EngineWatchdog.IDLE_PERIOD_MS, EngineWatchdog.periodMs(interactive = false))
+    // Screen on: the documented 3.5 min bound (120 s plus the system's 75 % inexact window).
+    assertEquals(210_000L, EngineWatchdog.BOUND_MS)
+    // Screen off: the beats of a live engine come at least once per deep-Doze maintenance window,
+    // so a period past the longest window spacing never lets the alarm land on a live engine.
+    assertTrue(EngineWatchdog.IDLE_PERIOD_MS > EngineWatchdog.DOZE_MAX_IDLE_MS + EnforcementGapTracker.HEARTBEAT_INTERVAL_MS)
+  }
+
+  @Test
   fun `the app looking at a dead engine folds an open gap, at an alive or fresh one nothing`() {
     val lastBeat = runStart + 10 * minute
     val tracker = running(runStart, pid = 100, until = lastBeat + 1)

@@ -148,10 +148,10 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
 - `ScreenTimeEngineService.kt` — the enforcement engine's `specialUse`
   foreground service, in the **`:screentime` process** so the React Native
   process stays killable. It runs only while the store says so; a refused
-  `startForeground` is recorded, never thrown. `EngineController.kt` starts
-  and stops it from any process; `ScreenTimeRestartReceiver.kt` (boot,
-  update) and the module's `OnCreate` are the recovery paths, so the engine
-  never depends on the system's sticky restart. Every start intent is also
+  `startForeground` is retried and, failing that, recorded, never thrown.
+  `EngineController.kt` starts and stops it from any process;
+  `ScreenTimeRestartReceiver.kt` (boot, update, the two alarms) and the
+  module's `OnCreate` are the recovery paths. Every start intent is also
   the "look again" signal: the module process writes the block to the store
   and sends one (`ACTION_SYNC`, never a STOP that would carry state, and
   never `stopService`, which kills a still-spawning foreground service), the
@@ -162,6 +162,69 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   `ACTION_WAKE` and sends the same SYNC: a schedule boundary due while the
   screen is off is observed within the system's window, with no exact
   alarm and no permission.
+- **The restart chain.** A wanted engine that dies (a kill, a
+  crash, a Task Manager stop) comes back without relying on the system's
+  sticky restart, which Android 12+ may refuse: a background
+  `startForegroundService`, and a restarted service's `startForeground`
+  when its record was not started from the foreground, are allowed only by
+  the exemptions in `ActiveServices` — the uid at TOP, the user's
+  battery-optimization exemption, a temp allowlist with foreground-service
+  capability (`BOOT_COMPLETED`, exact alarms: not the inexact alarms the
+  module uses) and `SYSTEM_ALERT_WINDOW` **while a process of the uid shows
+  an overlay window**. The chain uses that last one, which blocking holds
+  anyway: `ForegroundStartExemption.kt` puts up a 1×1 transparent,
+  untouchable overlay window on the main looper and retries the start at
+  80 / 200 / 450 / 900 / 1500 ms, then removes it. Three triggers reach it:
+  the service's own refused promotion (the sticky restart, retried in
+  place, about a second after the death), the controller's refused start
+  intent (the schedule alarm, the watchdog), and the app's launch
+  (`OnCreate`, from TOP, no exemption needed). `EngineWatchdog.kt` is the
+  floor: an inexact, **non-wakeup**, allow-while-idle `ELAPSED_REALTIME`
+  alarm, pushed forward by every heartbeat, every start intent and every
+  screen change, so it lands only once the beats have stopped.
+  Allow-while-idle because battery saver's forced app standby holds a plain
+  alarm of an idle app until it lifts, screen on or off, and only
+  rate-limits this kind, and on the Pixel Google's adaptive battery saver
+  turns that standby on at every unplug; in exchange the alarm also goes
+  through Doze, so in `rare` a stop followed by a sleeping phone can spend
+  the hour's delivery before the user is back. With the screen on, it is
+  set 120 s ahead and lands within 3.5 minutes of the last beat. With the
+  screen off, it is set 8 h ahead: past deep Doze's longest sleep, so it
+  never lands on a live engine whose CPU only slept. That delivery would
+  spend the app's standby alarm quota, one alarm per hour in `rare`, right
+  before the screen-on where a stop happens. A death with the screen off is
+  left to the sticky restart. The device admin and the battery-optimization
+  exemption lift the quota and battery saver's standby (`EXEMPTED`); no
+  wakeup is spent overnight. Cancelled
+  on release; nothing is armed when nothing is wanted. With the screen off
+  or the keyguard up an overlay window is not shown, so the exemption is
+  not asked for (`blockedBy`): the engine is recorded as down and nothing
+  is counted. Under the keyguard with the screen on, the revival **waits in
+  place** (`UnlockWait.kt`, pure; driven by the controller on the main
+  looper while the receiver's broadcast stays open): `isKeyguardLocked` is
+  polled every 250 ms for 25 s and the overlay revival runs the moment the
+  keyguard is gone, so the engine is back within about 2 s of the unlock
+  whenever the process was awake at the screen-on — the common case, since
+  the pending floor or watchdog alarm is delivered at the screen-on. The
+  wait ends early when the screen goes off or the engine is released, and
+  falls back to the floor alarm on timeout. With the screen off nothing can
+  wait: a one-shot `USER_PRESENT` / `SCREEN_ON` receiver (`UnlockRetry.kt`,
+  dynamic, exported — `USER_PRESENT` comes from SystemUI's uid — no manifest
+  entry) and the watchdog at 5 s, the system's minimum (held until a batch
+  of wakeup alarms, so it is due at the screen-on), are the floor; on Android 14+ both
+  broadcasts are deferred for a cached process, so the receiver only fires
+  once an alarm has made the process active. A revival
+  the system refused (no overlay permission, a
+  background-restricted app) records the gap (`engineRefused`) and re-arms
+  with a backoff (`RestartBackoff.kt`: 20 s doubled to 30 min, reset when
+  the engine runs), so the chain keeps trying while the engine is wanted
+  at a bounded cost. A user force stop
+  cancels the alarms with the app's other pending intents and stays final,
+  as the stopped state intends; the Task Manager "Stop" leaves alarms
+  alive (per Android's own documentation), so the watchdog revives the
+  engine and the stop is reported as a `stoppedByUser` gap of a few
+  minutes. Gap accounting is unchanged: a revival closes the gap, a
+  refused one keeps it open, a death undone within 10 s is dropped.
 - **Blocking.**
   `BlockController.kt` is the module-process half (the twin of the Swift
   `blockSelection` / `unblockAll` / `isBlocked` and the shield-config
@@ -326,8 +389,14 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   engine is a gap first and a closed one next), on every foreground and in
   `getEnforcementGaps`, which answers `gaps(since, now, intent)`. The
   document key is `gaps`.
-- `ScreenTimeDeviceAdminReceiver.kt` — a no-policy device admin (force-stop
-  and uninstall friction).
+- `ScreenTimeDeviceAdminReceiver.kt` — a no-policy device admin: while
+  active, Settings disables "Force stop" and "Uninstall" goes through
+  "Deactivate & uninstall" first (measured on Android 17);
+  SystemUI hides the Task Manager "Stop" button for an active admin
+  (`FgsManagerController`, not exercised on the emulator). Deactivation
+  is two deliberate steps (the toggle, then the system's confirmation with
+  `onDisableRequested`'s localisable text); it lifts the friction and is
+  not a gap: the engine process is not touched.
 - `AndroidManifest.xml` — the static declarations every consumer needs
   (permissions, `<queries>`, the service and receivers), merged by Gradle;
   the plugin's Android mod (`plugin/src/android/`) only writes optional

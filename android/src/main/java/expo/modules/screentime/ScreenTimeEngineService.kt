@@ -29,15 +29,29 @@ import android.util.Log
  *
  * Two lessons from the survival run are built in:
  * - `startForeground` can throw `ForegroundServiceStartNotAllowedException`
- *   (Android 12+) on the system's sticky restart hours after the app was last
- *   visible. It is caught, recorded in the store and the service stops
- *   quietly; the next app launch or boot brings the engine back.
+ *   (Android 12+) on the system's sticky restart: the restarted service's
+ *   `startForeground` is judged on the app's state again (`ActiveServices`,
+ *   `mStartForegroundCount >= 1`), and a background process without the
+ *   battery exemption is refused. It is caught and retried under the
+ *   overlay exemption ([ForegroundStartExemption]); only when that fails
+ *   too is the refusal recorded as a gap, the watchdog armed
+ *   ([EngineWatchdog]) and the service stopped quietly.
  * - The service never trusts an intent alone: the desired state lives in
  *   the store, so a redelivered or stale intent cannot keep a released
  *   engine running.
  */
 class ScreenTimeEngineService : Service() {
   private var loop: EngineLoop? = null
+  /** Whether `startForeground` succeeded for this instance; the loop runs only once it has. */
+  private var promoted = false
+  /** A refused promotion being retried under the overlay exemption, with the starts that wait for it. */
+  private var reviving = false
+  private val pendingStartIds = mutableListOf<Int>()
+  private var pendingReason: String? = null
+  private var lastRefusal: String? = null
+  /** Whether the refusal can be answered by the overlay exemption (a background-start denial), or not at all (a SecurityException). */
+  private var retryable = false
+  private var destroyed = false
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -56,13 +70,50 @@ class ScreenTimeEngineService : Service() {
         recorder.released(document, before)
       }
     }
+    val reason = intent?.getStringExtra(EXTRA_REASON) ?: intent?.action ?: "redelivered"
     // Promote FIRST, whatever the store says: a `startForegroundService`
     // must be answered by `startForeground`, or the system kills the process
     // with ForegroundServiceDidNotStartInTimeException and shows a crash
     // dialog, which is exactly what happened when `unblockAll` followed
     // `blockSelection` within a millisecond (the stop arrived before the
-    // start was honoured). A refused promotion is recorded by `promote`.
-    val promoted = promote()
+    // start was honoured).
+    if (promoted || promote()) {
+      run(reason, startId)
+      return START_STICKY
+    }
+    // Refused: the sticky restart of a killed engine, judged on the app's
+    // background state. Retried under the overlay exemption on the main
+    // looper (the window needs a frame, so this cannot block here); the
+    // starts that arrive meanwhile wait for the outcome. (The system's
+    // 10 s deadline does not run here: a refused `startForeground` clears
+    // it, so a later `stopSelf` is quiet.)
+    pendingStartIds += startId
+    pendingReason = reason
+    if (!retryable || ForegroundStartExemption.blockedBy(this) != null) {
+      // Not answerable by the exemption (a SecurityException), or not right
+      // now (screen off, keyguard: the retry comes at the unlock).
+      refused(reason, pendingStartIds.toList().also { pendingStartIds.clear() })
+      return START_NOT_STICKY
+    }
+    if (!reviving) {
+      reviving = true
+      ForegroundStartExemption.attempt(this, "promote:$reason", { !destroyed && (promoted || promote()) }) { ok ->
+        reviving = false
+        if (destroyed) return@attempt
+        val ids = pendingStartIds.toList()
+        pendingStartIds.clear()
+        val why = pendingReason ?: reason
+        pendingReason = null
+        // A start that arrived meanwhile may have promoted and run already: nothing to redo.
+        if (ok || promoted) { if (loop == null) run(why, ids.last()) } else refused(why, ids)
+      }
+    }
+    return START_STICKY
+  }
+
+  /** Promoted: the desired state decides whether the engine runs or the service leaves. */
+  private fun run(reason: String, startId: Int) {
+    val store = StateStore(this)
     // The desired state is re-checked and the engine's run is recorded in
     // ONE update (EnforcementGapRecorder.engineStarted: the exit history is
     // folded, a previous process's death or a reboot becomes a gap that
@@ -72,7 +123,7 @@ class ScreenTimeEngineService : Service() {
     val desired = try {
       store.update { document ->
         val desired = store.engineDesired
-        if (desired && promoted) gaps.engineStarted(document, Process.myPid())
+        if (desired) gaps.engineStarted(document, Process.myPid())
         desired
       }
     } catch (e: Exception) {
@@ -82,25 +133,45 @@ class ScreenTimeEngineService : Service() {
     }
     // stopSelf(startId): a start queued behind this one (released, then
     // wanted again at once) keeps the service alive instead of being dropped.
-    if (!desired || !promoted) {
-      if (!desired) Log.i(EngineController.TAG, "engine not wanted; stopping (intent=${intent?.action ?: "redelivered"})")
-      if (promoted) stopForeground(STOP_FOREGROUND_REMOVE)
+    if (!desired) {
+      Log.i(EngineController.TAG, "engine not wanted; stopping (intent=$reason)")
+      EngineWatchdog.cancel(this)
+      stopForeground(STOP_FOREGROUND_REMOVE)
+      // A start queued behind this one must promote again: the system kills a
+      // started service that does not answer with `startForeground`.
+      promoted = false
       stopSelf(startId)
-      return START_NOT_STICKY
+      return
     }
-    val reason = intent?.getStringExtra(EXTRA_REASON) ?: intent?.action ?: "redelivered"
     Log.i(EngineController.TAG, "engine running in ${processName()} (reason=$reason)")
     store.engineRunning = true
+    // The chain's backoff starts over once the engine runs.
+    if (store.engineRetries != 0) store.engineRetries = 0
     // Every start intent is also the "look again" signal from the module
     // process, the restart receiver and the alarm: the manual block, the
     // monitoring state (and the sets they need) are re-read from the store.
     (loop ?: EngineLoop(this).also { loop = it }).refresh(reason)
-    // Sticky: the system may restart a killed engine; if it then refuses the
-    // promotion, `promote` records it and the service leaves.
-    return START_STICKY
+  }
+
+  /**
+   * Every promotion refused, the overlay one included: the engine is down
+   * for certain while it is wanted, so a gap opens now and the watchdog
+   * keeps the chain trying (with its backoff; not for a refusal the
+   * exemption cannot answer); the service leaves. `stopSelf(startId)` with
+   * the last start waited for: a newer start keeps the service alive and
+   * promotes on its own. Not a gap after a release.
+   */
+  private fun refused(reason: String, startIds: List<Int>) {
+    val detail = "foreground:${lastRefusal ?: "refused"}"
+    val store = StateStore(this)
+    EnforcementGapRecorder(this, store).engineRefused(detail, certain = true)
+    if (!store.engineDesired) EngineWatchdog.cancel(this) else if (retryable) EngineWatchdog.retry(this, ForegroundStartExemption.blockedBy(this))
+    Log.w(EngineController.TAG, "engine not promoted ($reason): $detail; stopping")
+    startIds.lastOrNull()?.let { stopSelf(it) } ?: stopSelf()
   }
 
   override fun onDestroy() {
+    destroyed = true
     loop?.stop()
     loop = null
     val store = StateStore(this)
@@ -118,7 +189,11 @@ class ScreenTimeEngineService : Service() {
     super.onDestroy()
   }
 
-  /** `startForeground` with the notice; false (recorded) when the system refuses. */
+  /**
+   * `startForeground` with the notice; false when the system refuses (the
+   * failure is recorded for `engineFailures`, the gap only once the retry
+   * under the overlay exemption has failed too, in [refused]).
+   */
   private fun promote(): Boolean {
     val notification = buildNotice()
     return try {
@@ -127,18 +202,17 @@ class ScreenTimeEngineService : Service() {
       } else {
         startForeground(NOTICE_ID, notification)
       }
+      promoted = true
       true
     } catch (e: Exception) {
       // ForegroundServiceStartNotAllowedException (31+) is an
       // IllegalStateException; SecurityException covers a missing FGS
       // permission. Caught by base class so the catch verifies on every API.
       Log.w(EngineController.TAG, "startForeground refused: ${e.javaClass.simpleName}: ${e.message}")
-      val store = StateStore(this)
-      store.recordEngineFailure("foreground:${e.javaClass.simpleName}", e.message)
-      // The engine is down for certain while it is wanted: a gap opens now
-      // (the Pixel refused the sticky restart hours after the app
-      // was last visible; the next launch or boot brings the engine back).
-      EnforcementGapRecorder(this, store).engineRefused("foreground:${e.javaClass.simpleName}", certain = true)
+      lastRefusal = e.javaClass.simpleName
+      // The overlay exemption answers a background-start denial only.
+      retryable = e is IllegalStateException
+      StateStore(this).recordEngineFailure("foreground:${e.javaClass.simpleName}", e.message)
       false
     }
   }
