@@ -313,12 +313,16 @@ describe('the library manifest (merged into every consumer)', () => {
     expect(usageStats.$['tools:ignore']).toBe('ProtectedPermissions');
   });
 
-  it('declares the launcher <queries> intent', () => {
+  it('declares the launcher and home <queries> intents, nothing broader', () => {
     const queries = (manifest.manifest as any).queries as any[];
     expect(queries).toHaveLength(1);
-    const intent = queries[0].intent[0];
-    expect(names(intent.action)).toEqual(['android.intent.action.MAIN']);
-    expect(names(intent.category)).toEqual(['android.intent.category.LAUNCHER']);
+    const intents = queries[0].intent as any[];
+    expect(intents).toHaveLength(2);
+    expect(names(intents[0].action)).toEqual(['android.intent.action.MAIN']);
+    expect(names(intents[0].category)).toEqual(['android.intent.category.LAUNCHER']);
+    expect(names(intents[1].action)).toEqual(['android.intent.action.MAIN']);
+    expect(names(intents[1].category)).toEqual(['android.intent.category.HOME']);
+    expect(queries[0].package).toBeUndefined();
   });
 
   it('declares the engine service as a specialUse FGS in the :screentime process, with its subtype', () => {

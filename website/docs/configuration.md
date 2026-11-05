@@ -72,7 +72,7 @@ To include only specific targets, use `expo.extra.expoScreenTime.targets`:
 The plugin needs nothing on Android: the permissions the engine uses
 (`PACKAGE_USAGE_STATS`, `SYSTEM_ALERT_WINDOW`, the foreground service and its
 `specialUse` type, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`), the
-launcher `<queries>` intent (never `QUERY_ALL_PACKAGES`), the enforcement
+launcher and home `<queries>` intents (never `QUERY_ALL_PACKAGES`), the enforcement
 service in its own `:screentime` process, the boot and update receivers and
 the device-admin receiver come from the library's own manifest, merged into
 yours by Gradle.

@@ -25,13 +25,20 @@
   <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
   <!--
-    Package visibility (Android 11+): the launchable apps the picker lists.
-    Deliberately not QUERY_ALL_PACKAGES, which Play restricts.
+    Package visibility (Android 11+): the launchable apps the picker lists,
+    and the home apps, so the usage report and the shield policy can tell a
+    launcher from an app (a launcher is not visible otherwise: it has no
+    launcher icon of its own). Deliberately not QUERY_ALL_PACKAGES, which
+    Play restricts.
   -->
   <queries>
     <intent>
       <action android:name="android.intent.action.MAIN" />
       <category android:name="android.intent.category.LAUNCHER" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.MAIN" />
+      <category android:name="android.intent.category.HOME" />
     </intent>
   </queries>
 

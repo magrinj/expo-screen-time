@@ -9,6 +9,7 @@ import {
   StyleSheet,
 } from "react-native";
 
+import { getCapabilities } from "./functions";
 import { serializeTemplate } from "./report/serializeTemplate";
 import {
   acquireTemplate,
@@ -23,7 +24,6 @@ export type FilterSegment = "daily" | "weekly";
 
 /**
  * Props for DeviceActivityReport component
- * @platform ios
  */
 export interface DeviceActivityReportProps {
   /** Time filter segment */
@@ -37,20 +37,21 @@ export interface DeviceActivityReportProps {
 
   /**
    * The report template, built from `Report.*` components. The tree is
-   * serialized (never rendered by React) and shipped to the report extension
-   * via the App Group, where values are resolved inside Apple's sandbox.
+   * serialized (never rendered by React) and handed to the native renderer:
+   * on iOS the report extension, through the App Group; on Android the
+   * module's own renderer, in the app process. Values are resolved natively
+   * on both platforms and never reach JavaScript.
    *
    * Omit children only when pairing with the imperative
-   * `setReportTemplate(element)` — with no template at all, the extension
+   * `setReportTemplate(element)` — with no template at all, the report
    * renders a "No custom template set" placeholder.
    *
-   * One template is active at a time (App Group is a single channel) — the
-   * last mounted report with children wins.
+   * One template is active at a time (the native slot is a single channel) —
+   * the last mounted report with children wins.
    *
-   * **Sizing:** the report renders in a sandboxed remote view that cannot
-   * report its content height back to the app — the template is clipped to
-   * this component's `style`. Size the container to fit your template (e.g.
-   * a fixed `height`).
+   * **Sizing:** the report cannot report its content height back to React
+   * Native — the template is clipped to this component's `style`. Size the
+   * container to fit your template (e.g. a fixed `height`).
    */
   children?: ReactNode;
 }
@@ -59,26 +60,42 @@ export interface DeviceActivityReportProps {
 interface NativeReportViewProps {
   filterSegment: string;
   filterDate: number;
-  /** Hash of the active template — changes force the extension to re-read it
-   * (applied as the SwiftUI view identity). */
+  /** Hash of the active template — changes force the native side to re-read
+   * it (the SwiftUI view identity on iOS, a render on Android). */
   templateHash?: string;
   style?: StyleProp<ViewStyle>;
 }
 
-// Native view for iOS 16+ using Expo's new view API
-// Registered as a named view on the ExpoScreenTime module (see ExpoScreenTimeModule.swift)
+// Native view registered as a named view on the ExpoScreenTime module on both
+// platforms (ExpoScreenTimeModule.swift / ExpoScreenTimeModule.kt). Web has no
+// native module at all.
 const NativeReportView =
-  Platform.OS === "ios"
+  Platform.OS === "ios" || Platform.OS === "android"
     ? requireNativeView<NativeReportViewProps>(
         "ExpoScreenTime",
         "ExpoScreenTimeReportView",
       )
     : null;
 
+// A build either renders reports or not; the native read (a file probe on iOS)
+// is taken once.
+let supportedInThisBuild: boolean | null = null;
+function usageReportsSupported(): boolean {
+  if (supportedInThisBuild === null) {
+    supportedInThisBuild = getCapabilities().usageReports === true;
+  }
+  return supportedInThisBuild;
+}
+
 /**
- * DeviceActivityReport renders a JS-authored template against iOS Screen Time
- * usage data, inside Apple's sandboxed report extension. The layout comes from
- * `Report.*` children; the values never reach JavaScript.
+ * DeviceActivityReport renders a JS-authored template against the device's
+ * usage data, natively: inside Apple's sandboxed report extension on iOS,
+ * from UsageEvents by the module's renderer on Android. The layout comes
+ * from `Report.*` children; the values never reach JavaScript.
+ *
+ * Where `getCapabilities().usageReports` is `false` (a build without the
+ * iOS report extension, or an Android build whose `android.features` leaves
+ * `usageReports` out) it renders a styled fallback and writes no template.
  *
  * @example
  * ```tsx
@@ -89,8 +106,6 @@ const NativeReportView =
  *   </Report.VStack>
  * </DeviceActivityReport>
  * ```
- *
- * @platform ios (iOS 16.0+)
  */
 export function DeviceActivityReport({
   filterSegment = "daily",
@@ -105,44 +120,47 @@ export function DeviceActivityReport({
   // must not release each other's claim.
   const templateOwner = useRef({}).current;
 
+  // Whether this build renders reports: the fallback must never call into a
+  // template slot the build does not have (it rejects UNSUPPORTED).
+  const supported = NativeReportView != null && usageReportsSupported();
+
   // Serialize the template every render (trees are tiny). Template errors
-  // throw here on purpose — fail fast in dev instead of silently in the
-  // sandbox.
+  // throw here on purpose — fail fast in dev instead of silently natively.
   const templateJson =
-    Platform.OS === "ios" && children != null
+    supported && children != null
       ? JSON.stringify(serializeTemplate(children as ReactElement))
       : null;
 
   // Write during render (idempotent per owner+json): the native view below is
-  // committed with this template's hash in the same frame, and the extension
-  // may read the App Group as soon as that identity changes — a post-commit
+  // committed with this template's hash in the same frame, and the native
+  // side may read the slot as soon as that identity changes — a post-commit
   // effect would race it and briefly expose an empty/stale template.
   if (templateJson != null) {
     acquireTemplate(templateOwner, templateJson);
   }
 
   useEffect(() => {
-    if (Platform.OS !== "ios") return;
+    if (!supported) return;
     return () => {
       // Release on unmount (and when children are removed): restores the most
       // recent surviving templated report, or clears the channel.
       releaseTemplate(templateOwner);
     };
-  }, [templateOwner]);
+  }, [supported, templateOwner]);
 
   useEffect(() => {
     // Children removed while mounted → give up the claim.
-    if (Platform.OS === "ios" && templateJson == null) {
+    if (supported && templateJson == null) {
       releaseTemplate(templateOwner);
     }
-  }, [templateJson, templateOwner]);
+  }, [supported, templateJson, templateOwner]);
 
-  // Fallback for non-iOS platforms
-  if (Platform.OS !== "ios" || !NativeReportView) {
+  // Fallback where the build cannot render reports (and on web).
+  if (!supported || !NativeReportView) {
     return (
       <View style={[styles.fallback, style]}>
         <Text style={styles.fallbackText}>
-          DeviceActivityReport is only available on iOS 16+
+          Usage reports are not available in this build
         </Text>
       </View>
     );

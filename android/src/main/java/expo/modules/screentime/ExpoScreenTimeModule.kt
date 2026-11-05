@@ -17,7 +17,8 @@ import expo.modules.screentime.PermissionSteps.Feature
  * events). Step 5: the temporary unlock (whole block and targeted), the
  * shield actions and the interaction queue. Step 6: the enforcement gaps,
  * which is where `blocking` became `"friction"` for real and the internal
- * preview switch the steps 3–5 shipped behind went away. Every function
+ * preview switch the steps 3–5 shipped behind went away. Stage 4: the
+ * usage reports (the template slot, the report view). Every function
  * not implemented fails with a coded `UNSUPPORTED` error, and so does every
  * function of a feature the config plugin left out of this build
  * (`android.features`, read back from the merged manifest: [BuildManifest]).
@@ -157,7 +158,9 @@ class ExpoScreenTimeModule : Module() {
     // (the contract enforces the iOS values on both platforms). `blocking`
     // is `"none"` when the config plugin left the engine or the shield out
     // of this build (`android.features`): nothing can be enforced, and the
-    // blocking functions reject `UNSUPPORTED`.
+    // blocking functions reject `UNSUPPORTED`. `usageReports` is on when
+    // the build requests usage access (the renderer needs nothing else), as
+    // iOS answers for the report extension being embedded.
     Function("getCapabilities") {
       mapOf(
         "blocking" to if (build.blocking) "friction" else "none",
@@ -165,7 +168,7 @@ class ExpoScreenTimeModule : Module() {
         "webDomainBlocking" to false,
         "appRemovalProtection" to "none",
         "appInstallationBlocking" to "none",
-        "usageReports" to false,
+        "usageReports" to build.has(Feature.usageReports),
         "shieldOpenApp" to "direct",
         "openApplication" to false,
         "limits" to mapOf(
@@ -336,6 +339,22 @@ class ExpoScreenTimeModule : Module() {
       blocks.clearShieldActions()
     }
 
+    // MARK: - Reporting
+
+    // The template slot the mounted report views render (ReportTemplateChannel),
+    // the App Group key `expo_st_report_template` of iOS. JS writes it before
+    // it commits the view carrying the template's hash (`templateChannel.ts`),
+    // and clears it when the last templated report unmounts.
+    Function("setReportTemplate") { templateJson: String ->
+      requireInBuild("setReportTemplate", Feature.usageReports)
+      ReportTemplateChannel.set(templateJson)
+    }
+
+    Function("clearReportTemplate") {
+      requireInBuild("clearReportTemplate", Feature.usageReports)
+      ReportTemplateChannel.set(null)
+    }
+
     // MARK: - Selection Store
 
     // Same answers as `ios/SelectionStore.swift` for the same inputs: null
@@ -380,11 +399,14 @@ class ExpoScreenTimeModule : Module() {
       Events("onSelectionChange", "onOpen", "onClose")
     }
 
-    // Props accepted and ignored until the report renderer.
+    // Props are stored, then the report renders once per batch (the
+    // aggregation runs off the main thread; the view also renders when the
+    // template slot changes, whichever lands first).
     View(ExpoScreenTimeReportView::class) {
-      Prop("filterSegment") { _: ExpoScreenTimeReportView, _: String? -> }
-      Prop("filterDate") { _: ExpoScreenTimeReportView, _: Double? -> }
-      Prop("templateHash") { _: ExpoScreenTimeReportView, _: String? -> }
+      Prop("filterSegment") { view: ExpoScreenTimeReportView, filterSegment: String? -> view.filterSegment = filterSegment }
+      Prop("filterDate") { view: ExpoScreenTimeReportView, filterDate: Double? -> view.filterDate = filterDate }
+      Prop("templateHash") { view: ExpoScreenTimeReportView, templateHash: String? -> view.templateHash = templateHash }
+      OnViewDidUpdateProps { view: ExpoScreenTimeReportView -> view.render() }
     }
 
     // Props are stored, then resolved once per batch (the handle lookup

@@ -80,16 +80,18 @@ export type {
 
 /**
  * Imperative form of the `<DeviceActivityReport>` children API: serialize a
- * `Report.*` element tree and ship it to the report extension via the App
- * Group. Any mounted `<DeviceActivityReport>` without children renders it —
- * the children API is the reactive path and should be preferred.
- * @platform ios
+ * `Report.*` element tree and hand it to the native template slot (the App
+ * Group on iOS, the module's own slot on Android). Any mounted
+ * `<DeviceActivityReport>` without children renders it — the children API
+ * is the reactive path and should be preferred. Throws `UNSUPPORTED` where
+ * `getCapabilities().usageReports` is off (an Android build without the
+ * `usageReports` feature).
  */
 export function setReportTemplate(element: ReactElement): void {
   acquireTemplate(IMPERATIVE_OWNER, JSON.stringify(serializeTemplate(element)));
 }
 
-/** Remove the custom report template (revert to built-in layouts). @platform ios */
+/** Remove the custom report template (back to the "No custom template set" placeholder). */
 export function clearReportTemplate(): void {
   clearTemplateChannel();
 }

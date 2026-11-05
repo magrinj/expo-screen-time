@@ -1,12 +1,12 @@
 import ExpoScreenTimeModule from "../ExpoScreenTimeModule";
 
-// The App Group template slot is a single shared channel. Ownership is tracked
+// The native template slot (the App Group on iOS, the module's own on Android) is a single shared channel. Ownership is tracked
 // per OWNER (component instance / imperative caller), not by template contents:
 // two reports with identical JSON must not clear each other, and unmounting the
 // active owner restores the most recent surviving one ("last mounted wins",
 // with restore). Writes happen synchronously at acquire time so the template is
-// in the App Group BEFORE the native view (whose identity carries the hash)
-// triggers the extension read — a post-commit effect would race it.
+// in the slot BEFORE the native view (whose identity carries the hash)
+// triggers the native read — a post-commit effect would race it.
 
 const ownerTemplates = new Map<object, string>(); // insertion order = acquire order
 let activeOwner: object | null = null;

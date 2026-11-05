@@ -53,14 +53,16 @@ After picking, use the same `selectionId` with
 
 ## `<DeviceActivityReport />` {#device-activity-report}
 
-:::info Requires the `DeviceActivityReportExtension` target
+:::info iOS needs the `DeviceActivityReportExtension` target; Android the `usageReports` feature
 :::
 
-Renders a JSX-authored template against iOS Screen Time usage data, inside
-Apple's sandboxed report extension. **The layout comes from `Report.*`
+Renders a JSX-authored template against the device's usage data, natively:
+inside Apple's sandboxed report extension on iOS, from UsageEvents by the
+module's own renderer on Android. **The layout comes from `Report.*`
 children** — see [Report Templates](./api/templates.md) for the full component
 vocabulary and bindings. The values never reach JavaScript. Renders a styled
-fallback on non-iOS platforms.
+fallback where `getCapabilities().usageReports` is `false` (a build without
+the extension or the feature) and on web.
 
 ```tsx
 import { DeviceActivityReport, Report } from 'expo-screen-time';
@@ -178,9 +180,17 @@ not know shows the same placeholder text as iOS. `CategoryLabel` and
 `WebDomainLabel` always show their placeholder on Android (no such handles
 exist there).
 
-**Light and dark.** The picker's background and the labels' text colours
-follow the activity's effective appearance — what `useColorScheme()`
-reports — as the iOS views follow their trait collection. An app that fixes
+**`<DeviceActivityReport />`** renders the same `Report.*` template as iOS
+from the device's UsageEvents, in the app process, with Android views: stacks,
+text, charts, gauges, app icons from the package manager. Details and the
+platform notes on the [templates page](./api/templates.md#platform-notes).
+It needs the `usageAccess` permission step; without it the report shows
+zeros.
+
+**Light and dark.** The picker's background, the labels' text colours and
+the report's default colours follow the activity's effective appearance —
+what `useColorScheme()` reports — as the iOS views follow their trait
+collection. An app that fixes
 `userInterfaceStyle` in `app.json` needs
 [`expo-system-ui`](https://docs.expo.dev/versions/latest/sdk/system-ui/)
 installed for that setting to apply on Android; without it the activity

@@ -26,7 +26,7 @@ const shortest = limits.minIntervalSeconds; // 900 on iOS
 | `selectableKinds` | Applications, categories and web domains. Android: applications only (`categories` and `webDomains` are `false`: [selections](./selections.md#android)). |
 | `webDomainBlocking` | `true` |
 | `appRemovalProtection`, `appInstallationBlocking` | `"friction"` after an `individual` authorization (the user can revoke Screen Time access in Settings, which lifts them); `"enforced"` after a `child` one (a parent holds it). |
-| `usageReports` | `true` when the report extension is in the build (the config plugin can leave it out). Android: `false` until the report renderer exists. |
+| `usageReports` | `true` when `<DeviceActivityReport />` renders data: on iOS the report extension is in the build (the config plugin can leave it out), on Android the build requests usage access (the `usageReports` feature of [`android.features`](../configuration.md#android-features)). |
 | `shieldOpenApp` | `"notification"`: a shield's [`openApp` action](./shields.md#open-app) posts a notification the user taps, which needs the `notifications` [permission step](./permissions.md#steps-on-ios). Android: `"direct"` (the shield launches the app). |
 | `openApplication` | `false`: iOS cannot launch another app. |
 | `limits` | 19 monitored activities, intervals from 15 minutes to 7 days. |

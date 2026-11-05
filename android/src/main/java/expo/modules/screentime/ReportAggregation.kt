@@ -90,9 +90,9 @@ internal data class ReportCoverage(val windowStartMs: Long, val windowEndMs: Lon
 /**
  * The values a report template binds to: `CustomTemplateData` of
  * `CustomTemplateReport.swift`, field for field, plus what Android can say
- * and iOS cannot ([totalPickups], [pickupsWithApplicationActivity],
- * [coverage]). Durations are milliseconds here; the resolver formats them as
- * the iOS `TimeInterval` seconds.
+ * and iOS cannot ([pickupsWithApplicationActivity], [coverage]). Durations
+ * are milliseconds here; the resolver formats them as the iOS `TimeInterval`
+ * seconds.
  *
  * The iOS numbers are per hourly segment, then combined
  * (`makeConfiguration`): this data reproduces those combinations on
@@ -101,9 +101,14 @@ internal data class ReportCoverage(val windowStartMs: Long, val windowEndMs: Lon
 internal data class ReportData(
   /** Device activity in the window: the union of app sessions, an instant counted once however many apps share the screen. */
   val totalDurationMs: Long,
-  /** The iOS binding: `totalPickupsWithoutApplicationActivity`, pickups during which no app came to the foreground. */
+  /**
+   * Device pickups: every time the screen woke up in the window, a glance at
+   * the lock screen included (what Apple's Screen Time shows as pickups, and
+   * what iOS binds since it moved to the total: pickups without application
+   * activity plus every app's `numberOfPickups`).
+   */
   val pickups: Int,
-  /** Pickups during which an app came to the foreground (Apple's per-app `numberOfPickups`, summed). */
+  /** Of [pickups], those during which an app came to the foreground (Apple's per-app `numberOfPickups`, summed). */
   val pickupsWithApplicationActivity: Int,
   /** The longest continuous device activity inside one hourly segment; never above one hour (iOS artefact). */
   val longestActivityMs: Long,
@@ -119,8 +124,9 @@ internal data class ReportData(
   val categories: List<ReportCategoryUsage>,
   val coverage: ReportCoverage,
 ) {
-  val totalPickups: Int
-    get() = pickups + pickupsWithApplicationActivity
+  /** Of [pickups], those that saw no app: the lock-screen glances and the launcher-only unlocks (Apple's `totalPickupsWithoutApplicationActivity`). */
+  val pickupsWithoutApplicationActivity: Int
+    get() = pickups - pickupsWithApplicationActivity
 
   companion object {
     fun empty(window: ReportWindow, nowMs: Long): ReportData = ReportAggregator(window, ReportAppFilter(emptySet())).result(nowMs)
@@ -146,7 +152,8 @@ internal data class ReportData(
  * iOS reads one `ActivitySegment` per hour and combines them
  * (`CustomTemplateReport.swift:63-73`):
  * - `totalDuration` and `hourly[hour]` add each segment's activity;
- * - `pickups` sums the segments' `totalPickupsWithoutApplicationActivity`;
+ * - `pickups` sums the segments' pickups (`totalPickupsWithoutApplicationActivity`
+ *   plus each app's `numberOfPickups`);
  * - `longestActivity` is the MAX of the segments' longest activity, so a
  *   session that runs 9:30–11:30 reads as one hour, never two;
  * - `firstPickup` is the earliest of the segments'.
@@ -172,33 +179,37 @@ internal data class ReportData(
  * - **Closing.** A package's span ends with the ACTIVITY_PAUSED of its last
  *   resumed activity. SCREEN_NON_INTERACTIVE, KEYGUARD_SHOWN and
  *   DEVICE_SHUTDOWN close every span (`UsageEventKind.closesAll`);
- *   DEVICE_STARTUP too, for a reboot that never logged a shutdown (battery
- *   pulled: the dead time until the boot is then counted for the open app,
- *   the one thing the stream cannot tell apart). ACTIVITY_STOPPED closes
- *   nothing: a stop follows a pause of the same instance, and the public
- *   `Event` has no instance id, so a stop for a class still resumed is an
- *   OLDER instance finishing under a new one (the fixture shows it twice in
- *   one second). A pause that never comes (the process died in the
- *   foreground; DESTROYED is not read) leaves the span open until the next
- *   closing event or the window end.
+ *   DEVICE_STARTUP too. ACTIVITY_STOPPED closes nothing: a stop follows a
+ *   pause of the same instance, and the public `Event` has no instance id,
+ *   so a stop for a class still resumed is an OLDER instance finishing under
+ *   a new one (the fixture shows it twice in one second). A pause that never
+ *   comes (the process died in the foreground; DESTROYED is not read) leaves
+ *   the span open until the next closing event or the window end.
+ * - **A boot that never logged a shutdown** (battery pulled, kernel panic):
+ *   the stream then shows a SCREEN_INTERACTIVE while the screen is already
+ *   interactive, which cannot happen on a running device (every open span
+ *   lives on a lit screen, and the screen-off closes them). That second
+ *   screen-on closes the open spans at the last event before it: the last
+ *   instant the device is known to have been alive. The stretch from there
+ *   to the death is lost (minutes, at most the last session) rather than the
+ *   dead hours counted as use, which is what iOS shows too: nothing is
+ *   recorded while the phone is off.
  * - **Two apps at once** (split screen, picture-in-picture): the union
  *   rule of [ThresholdProgress], `totalDuration` counts an instant once;
  *   each app's own total counts it fully, so the apps may add up to more
  *   than the total, as `ApplicationActivity` durations do on iOS.
  *
  * ### Pickups
- * A pickup is one screen-on session in which the device was unlocked: on
- * SCREEN_INTERACTIVE when the keyguard is known to be down or there is no
- * lock screen (no keyguard event ever seen: the emulator fixture), else on
- * the KEYGUARD_HIDDEN that follows; one per session at most. A pickup
- * counted while the keyguard state was still unknown is taken back if a
- * KEYGUARD_SHOWN follows in the same session (the boot's lock screen). It is
- * "with application activity" when a counted app is on screen at the pickup
- * or resumes before the screen goes off (Apple: "pickups made directly to
- * the application", attributed to that app) and "without" otherwise (Apple:
- * "device pickups without application use"). `pickups` is the latter, the
- * binding iOS ships; both are exposed so the maintainer can choose (PR body,
- * open questions).
+ * A pickup is a screen wake: every SCREEN_INTERACTIVE in the window counts
+ * one, a glance at the lock screen as much as an unlock (Apple's Screen Time
+ * counts a pickup whenever the screen turns on, and the report binds the
+ * total: `totalPickupsWithoutApplicationActivity` plus every app's
+ * `numberOfPickups`). `firstPickup` is the first wake. The keyguard events
+ * only close spans. A pickup is "with application activity" when a counted
+ * app is on screen at the wake or resumes before the screen goes off (Apple:
+ * "pickups made directly to the application", attributed to that app, the
+ * first one) and "without" otherwise (Apple: "device pickups without
+ * application use"); both counts are kept, [ReportData.pickups] is the sum.
  *
  * ### Reading
  * [result] is terminal: it settles the open spans up to `nowMs`, so [add]
@@ -220,7 +231,7 @@ internal class ReportAggregator(
 
   private val segmentActivityMs = LongArray(segmentCount)
   private val segmentLongestMs = LongArray(segmentCount)
-  private val segmentPickupsWithout = IntArray(segmentCount)
+  private val segmentPickups = IntArray(segmentCount)
   private val segmentPickupsWith = IntArray(segmentCount)
   private val segmentFirstPickupMs = LongArray(segmentCount) { Long.MIN_VALUE }
 
@@ -237,16 +248,10 @@ internal class ReportAggregator(
   private val appDurationMs = HashMap<String, Long>()
   private val appPickups = HashMap<String, Int>()
 
+  /** Whether the screen is lit, as far as the stream has said (null before the first screen event). */
   private var screenInteractive: Boolean? = null
-  private var keyguardUp: Boolean? = null
-  /** A screen-on session already produced its pickup. */
-  private var sessionPickedUp = false
-  /** The pickup of the current session awaiting attribution: its segment, -1 when out of the window, -2 when none. */
+  /** The pickup of the current screen-on session awaiting attribution: its segment, -1 when out of the window, -2 when none. */
   private var pendingPickupSegment = -2
-  /** Whether the pending pickup was counted on the assumption that there is no keyguard (state unknown). */
-  private var pendingAssumed = false
-  /** The segment's first pickup before the pending one took it, so a retraction can restore it. */
-  private var pendingPreviousFirstMs = Long.MIN_VALUE
   /** The counted package resumed last: what an unlock straight into the app on screen is made to. */
   private var lastResumedPackage: String? = null
 
@@ -259,8 +264,15 @@ internal class ReportAggregator(
   fun add(event: UsageEvent) {
     check(!finished) { "ReportAggregator.result() was read; feed every event before reading it" }
     eventCount++
+    val previous = lastMs
     val at = maxOf(event.timestampMs, lastMs) // the stream is chronological; a stray earlier stamp is clamped
     lastMs = at
+    // A screen-on while the screen is lit: a screen-off was never logged, so
+    // the device died (a boot without a shutdown event). The open spans end at
+    // the last event before, the last instant the device is known alive; this
+    // runs before the segments advance to `at`, so the dead hours are never
+    // settled into them.
+    if (event.kind == UsageEventKind.SCREEN_INTERACTIVE && screenInteractive == true && previous != Long.MIN_VALUE) closeAll(previous)
     advanceTo(at)
     when (event.kind) {
       UsageEventKind.ACTIVITY_RESUMED -> resume(event.packageName, event.className, at)
@@ -272,36 +284,25 @@ internal class ReportAggregator(
       UsageEventKind.ACTIVITY_STOPPED -> Unit
       UsageEventKind.SCREEN_INTERACTIVE -> {
         screenInteractive = true
-        sessionPickedUp = false
-        if (keyguardUp != true) pickup(at, assumed = keyguardUp == null)
+        pickup(at)
       }
-      UsageEventKind.KEYGUARD_HIDDEN -> {
-        keyguardUp = false
-        if (screenInteractive != false && !sessionPickedUp) pickup(at, assumed = false)
-      }
+      // The lock screen going away opens nothing by itself: the app's resume does.
+      UsageEventKind.KEYGUARD_HIDDEN -> Unit
       UsageEventKind.SCREEN_NON_INTERACTIVE -> {
         screenInteractive = false
         closeAll(at)
       }
-      UsageEventKind.KEYGUARD_SHOWN -> {
-        // The lock screen is up: a pickup counted while the keyguard state was
-        // unknown (the boot's screen-on, or a window with no keyguard event in
-        // its lookback) was premature; the unlock that follows is the pickup.
-        keyguardUp = true
-        if (pendingPickupSegment != -2 && pendingAssumed) retractPickup()
-        closeAll(at)
-      }
+      // The lock screen up with the screen still lit (a boot, a lock from the
+      // power menu): the spans end, the wake's pickup still goes to the first
+      // app opened after the unlock.
+      UsageEventKind.KEYGUARD_SHOWN -> closeSpans(at)
       UsageEventKind.DEVICE_SHUTDOWN -> {
         screenInteractive = false
         closeAll(at)
       }
-      UsageEventKind.DEVICE_STARTUP -> {
-        // Nothing survives a boot; the keyguard state is unknown again. The
-        // pickup of the boot's screen-on stays pending: the first app opened
-        // after the boot is what it was made to.
-        keyguardUp = null
-        closeSpans(at)
-      }
+      // Nothing survives a boot. The pickup of the boot's screen-on stays
+      // pending: the first app opened after the boot is what it was made to.
+      UsageEventKind.DEVICE_STARTUP -> closeSpans(at)
       UsageEventKind.OTHER -> Unit
     }
   }
@@ -332,15 +333,13 @@ internal class ReportAggregator(
     for (i in 0 until segmentCount) {
       totalMs += segmentActivityMs[i]
       longestMs = maxOf(longestMs, segmentLongestMs[i])
-      pickups += segmentPickupsWithout[i]
+      pickups += segmentPickups[i]
       pickupsWith += segmentPickupsWith[i]
       val first = segmentFirstPickupMs[i]
       if (first != Long.MIN_VALUE && (firstPickup == Long.MIN_VALUE || first < firstPickup)) firstPickup = first
       val hour = segments[i].hourOfDay
       if (hour in 0..23) hourly[hour] += segmentActivityMs[i]
     }
-    // A pickup still awaiting an app at the end is one without application activity so far.
-    if (pendingPickupSegment >= 0) pickups++
 
     val apps = appDurationMs.entries
       .filter { it.value > 0 }
@@ -486,48 +485,31 @@ internal class ReportAggregator(
     closeUnion(at)
   }
 
-  /** The screen went dark or locked: every span ends, and the session's pickup, if still pending, saw no app. */
+  /** The screen went dark or locked: every span ends, and the session's pickup, if still unattributed, saw no app. */
   private fun closeAll(at: Long) {
     closeSpans(at)
-    resolvePendingPickup()
+    pendingPickupSegment = -2
   }
 
   // MARK: Pickups
 
-  private fun pickup(at: Long, assumed: Boolean) {
-    sessionPickedUp = true
-    resolvePendingPickup()
-    pendingAssumed = assumed
+  /** The screen woke up: one pickup, counted now; which app it was made to, if any, is settled by the next resume. */
+  private fun pickup(at: Long) {
     if (!inWindow) {
       pendingPickupSegment = -1
     } else {
       pendingPickupSegment = segmentIndex
+      segmentPickups[segmentIndex]++
       val first = segmentFirstPickupMs[segmentIndex]
-      pendingPreviousFirstMs = first
       if (first == Long.MIN_VALUE || at < first) segmentFirstPickupMs[segmentIndex] = at
     }
-    // Unlocked straight into the app on screen: AOSP resumes the top activity
-    // when the keyguard starts going away and reports KEYGUARD_HIDDEN only
-    // after its exit animation, so the resume precedes the pickup event.
+    // Woke up with an app already on screen (the lock timeout had not elapsed,
+    // or the device unlocked straight into it: AOSP resumes the top activity
+    // when the keyguard starts going away): the pickup was made to that app.
     if (openSince.isNotEmpty()) attributePickup(lastResumedPackage?.takeIf { it in openSince } ?: openSince.keys.first())
   }
 
-  /** The pending pickup never happened: the keyguard was up all along (see KEYGUARD_SHOWN in [add]). */
-  private fun retractPickup() {
-    if (pendingPickupSegment >= 0) segmentFirstPickupMs[pendingPickupSegment] = pendingPreviousFirstMs
-    pendingPickupSegment = -2
-    pendingAssumed = false
-    sessionPickedUp = false
-  }
-
-  /** The current session's pickup, if any, was one without application activity. */
-  private fun resolvePendingPickup() {
-    if (pendingPickupSegment >= 0) segmentPickupsWithout[pendingPickupSegment]++
-    pendingPickupSegment = -2
-    pendingAssumed = false
-  }
-
-  /** A counted app came to the foreground: the session's pickup, if still pending, was made to it. */
+  /** A counted app came to the foreground: the session's pickup, if still unattributed, was made to it. */
   private fun attributePickup(pkg: String) {
     if (pendingPickupSegment == -2) return
     if (pendingPickupSegment >= 0) {

@@ -9,12 +9,13 @@ sidebar_position: 2
 `expo-screen-time` runs on **iOS and Android** behind one API. On Android the
 restrictions are `friction`, not OS-enforced: a foreground service draws the
 shield, and the user can stop it from the system settings, which
-`getEnforcementGaps()` reports. Usage reports are still iOS-only.
+`getEnforcementGaps()` reports. Usage reports render on both platforms from
+the same templates.
 
 | Platform | Status |
 |---|---|
 | **iOS 16+** | Supported. Every API on this site is implemented. |
-| **Android 7+ (API 24)** | Supported for apps: the [permission steps](./api/permissions.md#android), the [picker](./components.md#activity-picker), the [selection store](./api/selections.md) and the [token labels](./components.md#token-labels), [blocking](./api/blocking.md#android) and the [shield](./api/shields.md#android), [monitoring](./api/monitoring.md#android), the temporary unlock, the shield actions and the [enforcement gaps](./api/capabilities.md#getenforcementgapssince). `getCapabilities().blocking` is `"friction"`. Categories, web domains, reports and `openApplication` report their capability off and fail with the `UNSUPPORTED` error code; `<DeviceActivityReport />` renders its fallback. |
+| **Android 7+ (API 24)** | Supported for apps: the [permission steps](./api/permissions.md#android), the [picker](./components.md#activity-picker), the [selection store](./api/selections.md) and the [token labels](./components.md#token-labels), [blocking](./api/blocking.md#android) and the [shield](./api/shields.md#android), [monitoring](./api/monitoring.md#android), the temporary unlock, the shield actions, the [enforcement gaps](./api/capabilities.md#getenforcementgapssince) and the [usage reports](./api/templates.md). `getCapabilities().blocking` is `"friction"`. Categories, web domains and `openApplication` report their capability off and fail with the `UNSUPPORTED` error code. |
 | **Web** | Not supported. |
 
 ## What works on Android now
@@ -69,8 +70,16 @@ shield, and the user can stop it from the system settings, which
   reboot (`unknown`), or usage access / the overlay permission was revoked
   (`permissionRevoked`, open while it is). Details on the
   [capabilities page](./api/capabilities.md#getenforcementgapssince).
+- **Usage reports.** `<DeviceActivityReport />` renders the same `Report.*`
+  templates as iOS, natively, from the device's UsageEvents: screen time,
+  pickups (every screen wake), the longest session, the first pickup, hourly
+  buckets, the top apps with their icons, and categories as declared by each
+  app's developer (coarse: most are "Other"). It needs the `usageAccess`
+  permission step (requested with the `usageReports` feature) and renders
+  zeros without it. Values never reach JavaScript. Details on the
+  [templates page](./api/templates.md#platform-notes).
 - **The config plugin** prepares the app: the permissions the engine needs,
-  the launcher `<queries>` intent (no `QUERY_ALL_PACKAGES`), the enforcement
+  the launcher and home `<queries>` intents (no `QUERY_ALL_PACKAGES`), the enforcement
   service in its own `:screentime` process, the boot and update receivers and
   the device-admin receiver. Nothing to configure; two options
   (`android.parentalControl`, and `android.features` to leave out what the
@@ -82,16 +91,17 @@ The Android module declares the same functions, event and views as iOS, so a
 screen shared between the platforms does not crash at import or at render:
 
 - **`getCapabilities()`** answers: `blocking: "friction"`,
-  `selectableKinds.applications: true`, `shieldOpenApp: "direct"`, the
-  cross-platform `limits`; `categories`, `webDomains`, `webDomainBlocking`,
-  `usageReports`, `openApplication`, `appRemovalProtection` and
-  `appInstallationBlocking` are off.
+  `selectableKinds.applications: true`, `usageReports: true`,
+  `shieldOpenApp: "direct"`, the cross-platform `limits`; `categories`,
+  `webDomains`, `webDomainBlocking`, `openApplication`,
+  `appRemovalProtection` and `appInstallationBlocking` are off.
 - **Every function behind an off capability** fails with a coded error.
   Synchronous functions (`blockWebDomains`, `denyAppRemoval`…) throw it;
   asynchronous ones (`openApplication`…) reject with it. `error.code` is
   `"UNSUPPORTED"` and the message names the function.
-- **Components**: `<DeviceActivityReport />` renders its built-in fallback
-  text.
+- **Components**: `CategoryLabel` and `WebDomainLabel` render their
+  placeholder; `<DeviceActivityReport />` renders its fallback only in a
+  build whose `android.features` leaves `usageReports` out.
 
 Branch on [capabilities](./api/capabilities.md) rather than on the platform:
 
@@ -131,5 +141,5 @@ stages and their exit criteria. The module is in stage 3 of that plan, the
 Android MVP: the foundation, the selections, blocking and the shield,
 monitoring, the temporary unlock with the shield actions, the enforcement
 gaps, the engine's restart chain and the device-admin friction are in, and the
-engine passed 24 h survival runs on a Pixel 8a and a Samsung Galaxy A54. Usage
-reports are a later phase.
+engine passed 24 h survival runs on a Pixel 8a and a Samsung Galaxy A54. Phase
+4 brought the usage reports.

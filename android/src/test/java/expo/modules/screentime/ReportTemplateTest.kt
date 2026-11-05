@@ -15,7 +15,7 @@ class ReportTemplateTest {
   private val data = ReportData(
     totalDurationMs = 5_040_000L,
     pickups = 7,
-    pickupsWithApplicationActivity = 30,
+    pickupsWithApplicationActivity = 5,
     longestActivityMs = 3_600_000L,
     appCount = 3,
     firstPickupMs = at(2026, 11, 4, 9, 41, zone = PARIS),

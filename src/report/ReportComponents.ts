@@ -4,16 +4,16 @@ import type { ReactNode } from "react";
 // REPORT TEMPLATE COMPONENTS (markers)
 //
 // These components are descriptors, never rendered by React: the serializer
-// reads their type/props and ships a JSON tree to the DeviceActivityReport
-// extension through the App Group. Values are resolved INSIDE Apple's sandbox
-// — JS never sees usage data (see docs/architecture.md
-// template-v1-design.md).
+// reads their type/props and ships a JSON tree to the native renderer (the
+// DeviceActivityReport extension through the App Group on iOS, the module's
+// own renderer on Android). Values are resolved natively — JS never sees
+// usage data (see docs/architecture.md).
 //
 // Naming/prop conventions mirror SwiftUI/@expo/ui (same vocabulary as
 // expo-widgets layouts).
 // ============================================================================
 
-/** Root-scope binding keys, resolved from DeviceActivityResults natively. */
+/** Root-scope binding keys, resolved natively from the usage data. */
 export type ReportBinding =
   | "totalDuration"
   | "pickups"
@@ -111,7 +111,7 @@ export type ReportTextProps = {
 };
 
 export type ReportSymbolProps = {
-  /** SF Symbol name. */
+  /** SF Symbol name. Android draws a bundled Material Symbol for a documented set of names (see the templates docs); other names leave an empty slot. */
   name: string;
   size?: number;
   color?: string;
@@ -122,7 +122,7 @@ export type ReportSymbolProps = {
 };
 
 export type ReportChartProps = {
-  /** `pie` requires iOS 17 (renders as `bar` on iOS 16). */
+  /** `pie` requires iOS 17 (renders as `bar` on iOS 16); every type renders on Android. */
   type: "bar" | "pie" | "line" | "area";
   /** `hourly` = 24 hour-of-day buckets; with a `weekly` filter the days are
    * aggregated per hour-of-day (a daily usage profile, not a timeline). */
@@ -243,8 +243,7 @@ function createReportComponent<P>(type: string): ReportComponent<P> {
 /**
  * Report-template vocabulary. Namespaced to avoid collisions (`Report.Text` vs
  * react-native's `Text`) and to signal "template land": these never render in
- * the app — they describe the report extension's UI.
- * @platform ios
+ * the app — they describe the natively rendered report's UI.
  */
 export const Report = {
   VStack: createReportComponent<ReportStackProps>("VStack"),

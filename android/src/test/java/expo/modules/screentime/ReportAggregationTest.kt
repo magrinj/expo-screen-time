@@ -54,9 +54,9 @@ class ReportAggregationTest {
     assertEquals("09:09:50 → 09:10:13 with no gap between the apps: one session of 23 s", 23 * SECOND, data.longestActivityMs)
     assertEquals(hourly(9 to 56 * SECOND).toList(), data.hourlyMs.toList())
     // Screen-on sessions: boot 09:08:36 (→ Settings), 09:10:22 (→ Clock), 09:10:37 (launcher only), 09:10:50 (→ Contacts).
-    assertEquals("the iOS binding: pickups without application activity", 1, data.pickups)
+    assertEquals("every screen-on is a pickup", 4, data.pickups)
     assertEquals(3, data.pickupsWithApplicationActivity)
-    assertEquals(4, data.totalPickups)
+    assertEquals("the launcher-only session", 1, data.pickupsWithoutApplicationActivity)
     assertEquals(t(9, 8, 36), data.firstPickupMs)
     assertEquals(1, data.topApps.first { it.packageName == "com.android.settings" }.pickups)
     assertEquals(1, data.topApps.first { it.packageName == "com.google.android.deskclock" }.pickups)
@@ -86,7 +86,7 @@ class ReportAggregationTest {
     assertEquals(20 * MINUTE, data.app("com.a"))
     assertEquals(hourly(0 to 20 * MINUTE).toList(), data.hourlyMs.toList())
     assertEquals(20 * MINUTE, data.longestActivityMs)
-    assertEquals("a pickup before the window is not the window's", 0, data.totalPickups)
+    assertEquals("a pickup before the window is not the window's", 0, data.pickups)
   }
 
   @Test
@@ -180,7 +180,7 @@ class ReportAggregationTest {
     assertEquals(5 * MINUTE, aggregate(resumed("com.a", t(10, 0)), device(KEYGUARD_SHOWN, t(10, 5))).totalDurationMs)
     assertEquals(7 * MINUTE, aggregate(resumed("com.a", t(10, 0)), device(DEVICE_SHUTDOWN, t(10, 7))).totalDurationMs)
     val reboot = aggregate(resumed("com.a", t(10, 0)), device(DEVICE_STARTUP, t(10, 9)), resumed("com.b", t(10, 10)), paused("com.b", t(10, 12)))
-    assertEquals("a boot without a shutdown closes at the boot", 9 * MINUTE, reboot.app("com.a"))
+    assertEquals("a boot without a shutdown and without a screen-on closes at the boot", 9 * MINUTE, reboot.app("com.a"))
     assertEquals(11 * MINUTE, reboot.totalDurationMs)
     assertEquals("nothing reopens on screen-on by itself", 0L, aggregate(device(SCREEN_INTERACTIVE, t(10, 0))).totalDurationMs)
   }
@@ -188,7 +188,7 @@ class ReportAggregationTest {
   // MARK: Pickups
 
   @Test
-  fun `pickups on a device with a lock screen - the unlock counts, a glance does not, one per screen-on`() {
+  fun `pickups on a device with a lock screen - every screen-on counts, a glance included, the first app takes it`() {
     val data = aggregate(
       device(KEYGUARD_SHOWN, t(8, 0)),
       // A glance: screen on, never unlocked.
@@ -202,20 +202,21 @@ class ReportAggregationTest {
       // The lock timeout had not elapsed: no keyguard, the screen-on itself is the pickup.
       device(SCREEN_INTERACTIVE, t(9, 40)), resumed(LAUNCHER, t(9, 40)), device(SCREEN_NON_INTERACTIVE, t(9, 45)),
     )
-    assertEquals(2, data.pickups)
+    assertEquals("the glance, the unlock into an app, the unlock to the launcher, the wake without a keyguard", 4, data.pickups)
     assertEquals(1, data.pickupsWithApplicationActivity)
-    assertEquals(3, data.totalPickups)
-    assertEquals("the first pickup is the unlock, not the glance", t(9, 10, 5), data.firstPickupMs)
+    assertEquals(3, data.pickupsWithoutApplicationActivity)
+    assertEquals("the first pickup is the glance", t(9, 0), data.firstPickupMs)
     assertEquals(1, data.topApps.single().pickups)
   }
 
   @Test
-  fun `a screen-on then an unlock in one session is one pickup, and a pending pickup at the end counts without an app`() {
+  fun `a screen-on then an unlock in one session is one pickup, and a pickup still unattributed at the end counts without an app`() {
     val once = aggregate(device(SCREEN_INTERACTIVE, t(9, 0)), device(KEYGUARD_HIDDEN, t(9, 0, 3)), device(SCREEN_NON_INTERACTIVE, t(9, 5)))
-    assertEquals(1, once.totalPickups)
+    assertEquals(1, once.pickups)
     val pending = aggregate(device(SCREEN_INTERACTIVE, t(9, 0)), nowMs = t(9, 2))
     assertEquals("the person is on the lock screen or launcher right now: a pickup without app activity so far", 1, pending.pickups)
     assertEquals(0, pending.pickupsWithApplicationActivity)
+    assertEquals(1, pending.pickupsWithoutApplicationActivity)
     assertEquals(t(9, 0), pending.firstPickupMs)
   }
 
@@ -226,7 +227,7 @@ class ReportAggregationTest {
       device(SCREEN_NON_INTERACTIVE, t(9, 3)),
       device(SCREEN_INTERACTIVE, t(9, 30)), device(SCREEN_NON_INTERACTIVE, t(9, 31)),
     )
-    assertEquals(1, data.pickups)
+    assertEquals(2, data.pickups)
     assertEquals(1, data.pickupsWithApplicationActivity)
     assertEquals(listOf("com.a" to 1, "com.b" to 0), data.topApps.map { it.packageName to it.pickups })
     assertNull("no screen events at all (API < 28): no pickups, no first pickup", aggregate(resumed("com.a", t(9, 0)), paused("com.a", t(9, 5))).firstPickupMs)
@@ -239,7 +240,7 @@ class ReportAggregationTest {
       device(SCREEN_INTERACTIVE, t(14, 59, 50)), resumed("com.a", t(15, 0, 10)), paused("com.a", t(15, 5)), device(SCREEN_NON_INTERACTIVE, t(15, 6)),
     )
     assertEquals(t(9, 15), data.firstPickupMs)
-    assertEquals(1, data.pickups)
+    assertEquals(2, data.pickups)
     assertEquals(1, data.pickupsWithApplicationActivity)
     assertEquals(1, data.topApps.single().pickups)
   }
@@ -264,33 +265,60 @@ class ReportAggregationTest {
       device(SCREEN_INTERACTIVE, t(9, 0)), resumed("com.a", t(9, 0, 1)), device(KEYGUARD_HIDDEN, t(9, 0, 2)),
       paused("com.a", t(9, 10)), device(SCREEN_NON_INTERACTIVE, t(9, 10)), device(KEYGUARD_SHOWN, t(9, 10)),
     )
-    assertEquals(0, data.pickups)
+    assertEquals(1, data.pickups)
     assertEquals(1, data.pickupsWithApplicationActivity)
     assertEquals(1, data.topApps.single().pickups)
-    assertEquals(t(9, 0, 2), data.firstPickupMs)
+    assertEquals("the wake, not the keyguard going away", t(9, 0), data.firstPickupMs)
     assertEquals("the app counts from its resume, keyguard or not", 10 * MINUTE - SECOND, data.totalDurationMs)
   }
 
   @Test
-  fun `a pickup assumed while the keyguard state was unknown is taken back when the lock screen shows`() {
-    // A boot: screen on, the lock screen, then the real unlock into the launcher and an app.
+  fun `a boot's screen-on is a pickup made to the first app opened after the lock screen`() {
+    // A boot: screen on, the lock screen, then the unlock into the launcher and an app.
     val boot = aggregate(
       device(SCREEN_INTERACTIVE, t(8, 0)), resumed(LAUNCHER, t(8, 0)), device(DEVICE_STARTUP, t(8, 0, 1)), device(KEYGUARD_SHOWN, t(8, 0, 2)),
       device(KEYGUARD_HIDDEN, t(8, 1)), resumed("com.a", t(8, 2)), paused("com.a", t(8, 5)), device(SCREEN_NON_INTERACTIVE, t(8, 5)),
     )
-    assertEquals(0, boot.pickups)
-    assertEquals(1, boot.pickupsWithApplicationActivity)
-    assertEquals("the unlock, not the boot's screen-on", t(8, 1), boot.firstPickupMs)
-    // Same with the window's first screen-on, when the lookback had no keyguard event.
-    val unknown = aggregate(device(SCREEN_INTERACTIVE, t(9, 0)), device(KEYGUARD_SHOWN, t(9, 0, 1)), device(SCREEN_NON_INTERACTIVE, t(9, 0, 30)))
-    assertEquals("a glance at a locked device", 0, unknown.totalPickups)
-    assertNull(unknown.firstPickupMs)
-    val earlier = aggregate(
-      device(SCREEN_INTERACTIVE, t(9, 0)), device(SCREEN_NON_INTERACTIVE, t(9, 1)),
-      device(SCREEN_INTERACTIVE, t(9, 30)), device(KEYGUARD_SHOWN, t(9, 30, 1)), device(SCREEN_NON_INTERACTIVE, t(9, 31)),
+    assertEquals(1, boot.pickups)
+    assertEquals("the lock screen in between does not orphan the wake", 1, boot.pickupsWithApplicationActivity)
+    assertEquals(1, boot.topApps.single().pickups)
+    assertEquals("the boot's screen-on", t(8, 0), boot.firstPickupMs)
+    // A glance at a locked device is a pickup too, with no app.
+    val glance = aggregate(device(SCREEN_INTERACTIVE, t(9, 0)), device(KEYGUARD_SHOWN, t(9, 0, 1)), device(SCREEN_NON_INTERACTIVE, t(9, 0, 30)))
+    assertEquals(1, glance.pickups)
+    assertEquals(0, glance.pickupsWithApplicationActivity)
+    assertEquals(t(9, 0), glance.firstPickupMs)
+  }
+
+  @Test
+  fun `a boot without a shutdown - the second screen-on closes the open spans at the last event before it, not at the boot`() {
+    // 10:00 the app is open; the battery is pulled at some unknown instant; the device boots at 11:09.
+    val data = aggregate(
+      device(SCREEN_INTERACTIVE, t(9, 59)), resumed("com.a", t(10, 0)),
+      device(SCREEN_INTERACTIVE, t(11, 9)), resumed(LAUNCHER, t(11, 9)), device(DEVICE_STARTUP, t(11, 9, 1)),
+      resumed("com.b", t(11, 10)), paused("com.b", t(11, 12)),
     )
-    assertEquals("retracting restores the segment's earlier first pickup", t(9, 0), earlier.firstPickupMs)
-    assertEquals(1, earlier.totalPickups)
+    assertEquals("the dead time until the boot is not use; the last known instant was the resume itself", 0L, data.app("com.a"))
+    assertEquals(2 * MINUTE, data.app("com.b"))
+    assertEquals(2 * MINUTE, data.totalDurationMs)
+    assertEquals(hourly(11 to 2 * MINUTE).toList(), data.hourlyMs.toList())
+    assertEquals("both wakes count; the boot's goes to com.b", 2, data.pickups)
+    assertEquals(2, data.pickupsWithApplicationActivity)
+    // With a later event before the death, the span runs to that event.
+    val later = aggregate(
+      device(SCREEN_INTERACTIVE, t(9, 59)), resumed("com.a", t(10, 0)), resumed("com.c", t(10, 5)),
+      device(SCREEN_INTERACTIVE, t(11, 9)), device(DEVICE_STARTUP, t(11, 9, 1)),
+    )
+    assertEquals(5 * MINUTE, later.app("com.a"))
+    assertEquals(0L, later.app("com.c"))
+    assertEquals(5 * MINUTE, later.totalDurationMs)
+    assertEquals(5 * MINUTE, later.longestActivityMs)
+    // The same stream with a logged shutdown behaves as before: the shutdown closes the spans.
+    val clean = aggregate(
+      device(SCREEN_INTERACTIVE, t(9, 59)), resumed("com.a", t(10, 0)), device(DEVICE_SHUTDOWN, t(10, 30)),
+      device(SCREEN_INTERACTIVE, t(11, 9)), device(DEVICE_STARTUP, t(11, 9, 1)),
+    )
+    assertEquals(30 * MINUTE, clean.app("com.a"))
   }
 
   @Test
@@ -405,7 +433,7 @@ class ReportAggregationTest {
   fun `empty data has zeros, no first pickup and the window's coverage`() {
     val data = ReportData.empty(window, t(9, 0))
     assertEquals(0L, data.totalDurationMs)
-    assertEquals(0, data.totalPickups)
+    assertEquals(0, data.pickups)
     assertNull(data.firstPickupMs)
     assertTrue(data.topApps.isEmpty())
     assertTrue(data.categories.isEmpty())

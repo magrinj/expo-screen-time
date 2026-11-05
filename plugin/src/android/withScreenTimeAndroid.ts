@@ -100,7 +100,8 @@ const ENGINE = ['blocking', 'monitoring'] as const;
  *   the engine and its receiver, without the shield, the overlay permission
  *   or the device admin. A `startMonitoring` that would shield
  *   (`selectionId`, `blockOnThreshold`) rejects `UNSUPPORTED` in such a build.
- * - `usageReports`: usage access only (the renderer is stage 4).
+ * - `usageReports`: usage access only (the report view and its renderer
+ *   are plain Kotlin in the library, nothing in the manifest).
  * - `appRemovalProtection`: the device admin.
  * - `shieldOpenApp` (how a shield reaches the host app: direct on Android)
  *   and `webDomainBlocking` (not implemented on Android) need nothing of

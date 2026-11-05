@@ -6,13 +6,18 @@ sidebar_position: 8
 
 # Report Templates
 
-:::info Requires the `DeviceActivityReportExtension` target
+:::info Both platforms
+On iOS the report needs the `DeviceActivityReportExtension` target; on
+Android it needs the `usageReports` feature (on by default) and the
+`usageAccess` permission step. `getCapabilities().usageReports` says whether
+this build renders reports.
 :::
 
 Compose the report screen's **entire layout in JSX** with `Report.*` components.
-The tree is serialized (never rendered by React), shipped to the report
-extension through the App Group, and rendered natively **inside Apple's
-sandbox** — the layout comes from JS, the values never leave the extension.
+The tree is serialized (never rendered by React) and rendered **natively**
+against the device's usage data — inside Apple's sandboxed report extension on
+iOS, by the module's own renderer from UsageEvents on Android. The layout comes
+from JS; the values never reach JavaScript on either platform.
 
 ```tsx
 import { DeviceActivityReport, Report } from 'expo-screen-time';
@@ -43,8 +48,8 @@ import { DeviceActivityReport, Report } from 'expo-screen-time';
 ```
 
 The report is template-only: without a template (children or the imperative
-[`setReportTemplate`](#imperative-api)), the extension renders a
-"No custom template set" placeholder.
+[`setReportTemplate`](#imperative-api)), it renders a "No custom template set"
+placeholder.
 
 ## Rules
 
@@ -52,16 +57,19 @@ The report is template-only: without a template (children or the imperative
   hook-free compositions of them are allowed — React Native components can't
   render inside the extension, and hooks can't run during serialization. Both
   produce descriptive errors in development.
-- **One template at a time.** The App Group carries a single template — the
+- **One template at a time.** The native slot carries a single template — the
   last mounted templated report wins.
-- **Size the container.** The report renders in a sandboxed remote view that
-  can't report its content height: the template is clipped to the component's
-  `style`. Give it a `height` that fits your layout.
-- **Display-only.** No presses/callbacks from the report back to the app
-  (sandbox boundary). Scrolling *over* the report is handled for you.
-- **First render can be slow.** The very first scene invocation after a fresh
-  install (or freshly enabled Screen Time) can take up to a minute while iOS
-  spins up its report service; subsequent renders are fast.
+- **Size the container.** The report can't report its content height back to
+  React Native: the template is clipped to the component's `style`. Give it a
+  `height` that fits your layout.
+- **Display-only.** No presses/callbacks from the report back to the app.
+  Scrolling *over* the report is handled for you.
+- **First render can be slow on iOS.** The very first scene invocation after a
+  fresh install (or freshly enabled Screen Time) can take up to a minute while
+  iOS spins up its report service; subsequent renders are fast. Android reads
+  the usage events in a few hundred milliseconds.
+- **Not live.** The data is read when the report mounts or its props change;
+  remount it (a `key`) to refresh.
 
 ## Bindings
 
@@ -71,7 +79,7 @@ The report is template-only: without a template (children or the imperative
 | Binding | Scope | Value |
 |---|---|---|
 | `totalDuration` | root | Total screen time (seconds) |
-| `pickups` | root | Number of device pickups |
+| `pickups` | root | Number of device pickups: every time the screen woke up, lock-screen glances included |
 | `longestActivity` | root | Longest continuous session (seconds) |
 | `appCount` | root | Number of distinct apps used |
 | `firstPickup` | root | Time of the first pickup ("9:41 AM", or "—") |
@@ -79,13 +87,24 @@ The report is template-only: without a template (children or the imperative
 | `appName` | item | The current app/category's display name |
 | `rank` | item | 1-based position in the list |
 
+**Pickups.** A pickup is a screen wake, as Apple's Screen Time counts them: on
+Android every `SCREEN_INTERACTIVE` event in the window is one, whether or not
+the device was unlocked afterwards, and `firstPickup` is the first wake.
+
+**Categories on Android** come from the category each developer declares in
+its manifest (`ApplicationInfo.category`: Game, Audio, Video, Image, Social,
+News, Maps, Productivity, Accessibility, with the system's localized title).
+Most apps declare none and land in "Other", so Android categories are coarse
+next to Apple's taxonomy.
+
 **Scopes.** Root bindings work anywhere. Item bindings only work inside the
 per-item template of [`TopApps` / `Categories`](#reporttopapps--reportcategories)
 (a descriptive error is thrown otherwise).
 
 **Formatting durations.** On `Report.Text`, `durationStyle` picks the format,
-Foundation's `DateComponentsFormatter` unit styles in the device locale (en-US
-shown): `'abbreviated'` (1h 24m), `'short'` (1 hr, 24 min), `'full'` (1 hour,
+the unit styles of Foundation's `DateComponentsFormatter` on iOS and of ICU's
+`MeasureFormat` on Android (the same data) in the device locale (en-US shown):
+`'abbreviated'` (1h 24m), `'short'` (1 hr, 24 min), `'full'` (1 hour,
 24 minutes). Under an hour only minutes show (24m, 24 min, 24 minutes).
 Alternatively `format="percent"` + `goal` renders any numeric binding as a
 percentage.
@@ -190,7 +209,16 @@ Exactly one of the two is required.
 
 ### `Report.Symbol`
 
-An SF Symbol.
+An SF Symbol. On Android a bundled Material Symbol stands in for a documented
+set of names: `hourglass`, `hourglass.bottomhalf.filled`, `clock`, `clock.fill`,
+`timer`, `calendar`, `chart.bar`, `chart.bar.fill`, `chart.pie`,
+`chart.pie.fill`, `apps.iphone`, `square.grid.2x2`, `iphone`, `hand.raised`,
+`hand.raised.fill`, `lock`, `lock.fill`, `nosign`, `moon.fill`, `moon.zzz.fill`,
+`exclamationmark.triangle.fill`, `checkmark.circle`, `checkmark.circle.fill`,
+`star`, `star.fill`, `bell`, `bell.fill`, `eye`, `eye.fill`, `arrow.up`,
+`arrow.down`, `gamecontroller`, `gamecontroller.fill`, `questionmark`. Any
+other name leaves an empty slot of `size` on Android, so the layout around it
+holds. `renderingMode` and `weight` are iOS-only (Android tints the glyph).
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
@@ -207,7 +235,7 @@ A Swift Charts plot of usage data.
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
-| `type` | `'bar' \| 'line' \| 'area' \| 'pie'` | required | Mark type. `pie` needs iOS 17 (falls back to `bar`) |
+| `type` | `'bar' \| 'line' \| 'area' \| 'pie'` | required | Mark type. `pie` needs iOS 17 (falls back to `bar`); every type renders on Android |
 | `bind` | `'hourly' \| 'topApps' \| 'categories'` | required | Data series: 24 hour-of-day buckets, or per-app/per-category totals |
 | `accentColor` | `string` (hex) | blue | Series color |
 | `colorPalette` | `string[]` | — | Per-entry colors (bar/pie with list binds); cycles when shorter |
@@ -268,8 +296,10 @@ and the `AppIcon` / `AppTitle` components.
 
 ### `Report.AppIcon`
 
-The current item's real app/category icon (rendered from the opaque token via
-`Label(token)` — only possible inside the sandbox). Item scope only.
+The current item's real app/category icon: on iOS rendered from the opaque
+token via `Label(token)` (only possible inside the sandbox), on Android the
+app's launcher icon from the package manager. Android categories have no icon
+and show a category glyph on the placeholder fill. Item scope only.
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
@@ -317,8 +347,24 @@ setReportTemplate(
 clearReportTemplate(); // back to the placeholder
 ```
 
+## Platform notes
+
+The same template JSON is rendered by SwiftUI on iOS and by Android views on
+Android, with the same bindings, units, defaults and copy. Where the platforms
+differ:
+
+- **Fonts.** `design="rounded"` has no Android face and renders as the default
+  sans-serif; `serif` and `monospaced` are the system ones.
+- **Shadows.** `shadowY` has no Android counterpart; the elevation's own offset
+  stands in.
+- **Symbols.** See [`Report.Symbol`](#reportsymbol) for the names Android
+  renders.
+- **Categories and pickups.** See [Bindings](#bindings).
+- **Without usage access** (the `usageAccess` permission step) the Android
+  report renders zeros, as iOS does without Screen Time authorization.
+
 ## Versioning
 
-The serialized template carries a `version`; an extension older than the JS
+The serialized template carries a `version`; a native side older than the JS
 falls back to the placeholder (and unknown components/props are skipped) —
 templates degrade, they don't crash.

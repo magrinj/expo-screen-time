@@ -44,6 +44,10 @@ import {
   relock,
   removeToken,
   requestScreenTimePermissionsAsync,
+  Report,
+  serializeTemplate,
+  setReportTemplate,
+  clearReportTemplate,
   startMonitoring,
   stopAllMonitoring,
   stopMonitoring,
@@ -427,6 +431,50 @@ const scenarios: Scenario[] = [
       const open = await getEnforcementGaps(Date.now());
       expect(open.every((g) => g.to === null || g.to >= Date.now() - 1000), "since keeps gaps still in progress");
       return `${interactions.length} interaction(s), ${gaps.length} gap(s)`;
+    },
+  },
+  {
+    id: "C13",
+    title: "Report templates serialize and reach the native slot",
+    async run(caps) {
+      // The serializer is pure JS and the same on every platform: one versioned root, item bindings only in an item scope.
+      const template = serializeTemplate(
+        <Report.VStack spacing={8} padding={12}>
+          <Report.Text bind="totalDuration" durationStyle="abbreviated" size={24} weight="bold" />
+          <Report.Text bind="pickups" />
+          <Report.Chart type="bar" bind="hourly" height={80} />
+          <Report.TopApps limit={3} emptyText="Nothing yet">
+            <Report.HStack spacing={8}>
+              <Report.AppIcon size={20} />
+              <Report.AppTitle />
+              <Report.Text bind="appDuration" durationStyle="short" />
+            </Report.HStack>
+          </Report.TopApps>
+        </Report.VStack>,
+      );
+      expect(template.version === 1 && template.root.type === "VStack" && template.root.children?.length === 4, `serialized shape: ${JSON.stringify(template).slice(0, 80)}`);
+      let rejected = false;
+      try {
+        serializeTemplate(<Report.Text bind="appDuration" />);
+      } catch (error) {
+        rejected = error instanceof Error && /item/i.test(error.message);
+      }
+      expect(rejected, "an item binding at root scope is rejected by the serializer");
+      if (!caps.usageReports) {
+        // No renderer in this build: the slot rejects UNSUPPORTED (Android without the usageReports feature).
+        // An iOS build without the report extension keeps its App Group channel and accepts the write.
+        try {
+          setReportTemplate(<Report.VStack><Report.Text text="conformance" /></Report.VStack>);
+        } catch (error) {
+          expect(isScreenTimeError(error) && error.code === "UNSUPPORTED", `expected UNSUPPORTED, got ${String(error)}`);
+          return "serializer checked; UNSUPPORTED (no renderer in this build)";
+        }
+        clearReportTemplate();
+        return "serializer checked; slot accepted the write without a renderer";
+      }
+      setReportTemplate(<Report.VStack><Report.Text text="conformance" /></Report.VStack>);
+      clearReportTemplate();
+      return "serializer checked, 1 rejected template; template set and cleared";
     },
   },
 ];

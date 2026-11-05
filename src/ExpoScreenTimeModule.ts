@@ -172,12 +172,14 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
 
   // Reporting
   /**
-   * Write a serialized report template (JSON string) to the App Group for the
-   * report extension to render. Prefer the `<DeviceActivityReport>` children
-   * API or `setReportTemplate(element)` over calling this directly.
+   * Write a serialized report template (JSON string) to the native template
+   * slot (the App Group on iOS, the module's own slot on Android) for the
+   * report renderer. Prefer the `<DeviceActivityReport>` children API or
+   * `setReportTemplate(element)` over calling this directly. Throws
+   * `UNSUPPORTED` where `getCapabilities().usageReports` is off.
    */
   setReportTemplate(templateJson: string): void;
-  /** Remove the custom template — the extension falls back to built-in layouts. */
+  /** Remove the custom template — the report falls back to its placeholder. */
   clearReportTemplate(): void;
   getAppGroup(): string | null;
 

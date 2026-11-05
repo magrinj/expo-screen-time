@@ -97,9 +97,10 @@ internal val NATIVE_FUNCTIONS: List<NativeFunction> = listOf(
  * Functions with a real Android definition in [ExpoScreenTimeModule]: the
  * permission steps, the selection store, blocking and
  * the shield, monitoring, the temporary unlock and the
- * shield interactions and the enforcement gaps. The
- * rest (web domains, app control, reporting, `openApplication`, the debug
- * helper) rejects `UNSUPPORTED` with `getCapabilities()` saying so.
+ * shield interactions, the enforcement gaps and the
+ * report template slot. The rest (web domains, app control,
+ * `getAppGroup`, `openApplication`, the debug helper) rejects `UNSUPPORTED`
+ * with `getCapabilities()` saying so.
  */
 internal val IMPLEMENTED: Set<String> = setOf(
   "getCapabilities",
@@ -144,4 +145,7 @@ internal val IMPLEMENTED: Set<String> = setOf(
   "clearShieldActions",
   // Enforcement gaps
   "getEnforcementGaps",
+  // Usage reports
+  "setReportTemplate",
+  "clearReportTemplate",
 )

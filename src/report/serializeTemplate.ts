@@ -14,8 +14,9 @@ import {
 // ============================================================================
 // TEMPLATE SERIALIZER
 //
-// Walks a Report.* element tree and produces the JSON shipped to the report
-// extension via the App Group. Elements are treated as data ({type, props});
+// Walks a Report.* element tree and produces the JSON shipped to the native
+// renderer (the report extension on iOS, the module's own on Android).
+// Elements are treated as data ({type, props});
 // nothing is ever mounted. User function components are invoked manually
 // (hook-free rule — same mechanism as expo-widgets' jsx-runtime stub).
 // ============================================================================
@@ -59,11 +60,10 @@ class TemplateError extends Error {
 }
 
 /**
- * Serialize a Report.* element tree into the JSON template consumed by the
- * DeviceActivityReport extension. Throws a descriptive error on anything that
- * can't be represented (unknown components, hooks in user components, raw text
+ * Serialize a Report.* element tree into the JSON template the native report
+ * renderers consume. Throws a descriptive error on anything that can't be
+ * represented (unknown components, hooks in user components, raw text
  * outside `Report.Text`, item-scope components at root scope…).
- * @platform ios
  */
 export function serializeTemplate(element: ReactElement): ReportTemplate {
   const roots = serializeNode(element, { depth: 0, inItemScope: false });

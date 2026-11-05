@@ -1,11 +1,20 @@
-import { DeviceActivityReport, FilterSegment, Report } from "expo-screen-time";
-import React, { useState } from "react";
+import {
+  DeviceActivityReport,
+  FilterSegment,
+  Report,
+  getCapabilities,
+  getScreenTimePermissionsAsync,
+  requestScreenTimePermissionsAsync,
+  type PermissionStep,
+} from "expo-screen-time";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   ScrollView,
   StyleSheet,
   Text,
   View,
   TouchableOpacity,
+  useColorScheme,
 } from "react-native";
 
 type SegmentOption = "daily" | "weekly";
@@ -145,7 +154,7 @@ function ListsTemplate() {
           <Report.Text bind="rank" size={13} weight="semibold" color="#C7C7CC" monospacedDigit />
           <Report.AppIcon size={28} cornerRadius={7} />
           <Report.VStack spacing={1} alignment="leading">
-            <Report.AppTitle size={14} weight="medium" color="#1C1C1E" />
+            <Report.AppTitle size={14} weight="medium" />
             <Report.Text bind="appDuration" durationStyle="short" size={11} color="#8E8E93" />
           </Report.VStack>
           <Report.Spacer />
@@ -159,7 +168,7 @@ function ListsTemplate() {
       <Report.Categories limit={3} spacing={8} emptyText="No categories yet">
         <Report.HStack spacing={10} alignment="center">
           <Report.AppIcon size={22} cornerRadius={5} />
-          <Report.AppTitle size={13} color="#3A3A3C" />
+          <Report.AppTitle size={13} />
           <Report.Spacer />
           <Report.Text bind="appDuration" durationStyle="abbreviated" size={12} color="#8E8E93" monospacedDigit />
         </Report.HStack>
@@ -205,9 +214,45 @@ const TEMPLATES: Record<Demo, () => React.JSX.Element> = {
   typography: TypographyTemplate,
 };
 
+/**
+ * The permission steps the usage report needs that are not granted yet
+ * (`screenTime` on iOS, `usageAccess` on Android), read through the public
+ * API rather than the platform: the banner below shows while any is missing
+ * and requests the next one.
+ */
+function useMissingReportSteps(enabled: boolean) {
+  const [missing, setMissing] = useState<PermissionStep[]>([]);
+  const refresh = useCallback(async () => {
+    if (!enabled) return;
+    try {
+      const response = await getScreenTimePermissionsAsync({ features: ["usageReports"] });
+      setMissing(response.steps.filter((step) => step.required && step.status !== "granted"));
+    } catch {
+      setMissing([]);
+    }
+  }, [enabled]);
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+  const request = useCallback(async () => {
+    try {
+      await requestScreenTimePermissionsAsync({ features: ["usageReports"] });
+    } finally {
+      refresh();
+    }
+  }, [refresh]);
+  return { missing, request, refresh };
+}
+
 export default function AnalyticsScreen() {
   const [segment, setSegment] = useState<SegmentOption>("daily");
   const [demo, setDemo] = useState<Demo>("overview");
+  const [reportKey, setReportKey] = useState(0);
+  const usageReports = getCapabilities().usageReports;
+  const { missing, request } = useMissingReportSteps(usageReports);
+  // The report's default colours follow the app's light/dark scheme (as the
+  // iOS extension follows the host's traits): the card behind it must too.
+  const dark = useColorScheme() === "dark";
 
   const Template = TEMPLATES[demo];
   const height = DEMOS.find((d) => d.key === demo)?.height ?? 460;
@@ -252,21 +297,37 @@ export default function AnalyticsScreen() {
         ))}
       </ScrollView>
 
+      {usageReports && missing.length > 0 && (
+        <View style={styles.banner}>
+          <Text style={styles.bannerText}>
+            The report needs {missing.map((step) => step.id).join(", ")} to show real data.
+          </Text>
+          <TouchableOpacity style={styles.bannerButton} onPress={request}>
+            <Text style={styles.bannerButtonText}>Grant access</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* The whole report layout below is JSX (Report.* components), serialized
-          and rendered natively inside the sandboxed report extension. The
-          container height must fit the template (remote views can't auto-size). */}
+          and rendered natively: by the sandboxed report extension on iOS, by
+          the module's renderer on Android. The container height must fit the
+          template (the native view can't auto-size). Remounting re-reads the
+          usage data (the report is not live). */}
       <DeviceActivityReport
+        key={reportKey}
         filterSegment={segment as FilterSegment}
-        style={[styles.card, { height }]}
+        style={[styles.card, { height, backgroundColor: dark ? "#1C1C1E" : "#FFFFFF" }]}
       >
         <Template />
       </DeviceActivityReport>
 
       <View style={styles.footer}>
+        <TouchableOpacity onPress={() => setReportKey((k) => k + 1)}>
+          <Text style={styles.footerLink}>Refresh</Text>
+        </TouchableOpacity>
         <Text style={styles.footerText}>
-          Layout authored in JSX, rendered by the iOS
-          DeviceActivityReportExtension.
-          {"\n"}Usage values never leave Apple's sandbox.
+          Layout authored in JSX, rendered natively from the device's usage data.
+          {"\n"}Usage values never reach JavaScript.
         </Text>
       </View>
     </ScrollView>
@@ -337,9 +398,41 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     overflow: "hidden",
   },
+  banner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#FFF4E5",
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+  },
+  bannerText: {
+    flex: 1,
+    fontSize: 13,
+    color: "#7A4B00",
+  },
+  bannerButton: {
+    backgroundColor: "#AF52DE",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 8,
+  },
+  bannerButtonText: {
+    color: "#FFFFFF",
+    fontSize: 13,
+    fontWeight: "600",
+  },
   footer: {
     marginTop: 16,
     padding: 16,
+    alignItems: "center",
+    gap: 8,
+  },
+  footerLink: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#AF52DE",
   },
   footerText: {
     fontSize: 12,

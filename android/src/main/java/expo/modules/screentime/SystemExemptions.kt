@@ -41,6 +41,18 @@ internal object SystemExemptions {
     )
   }
 
+  /**
+   * The home apps alone, for the usage report's app filter (a launcher is
+   * never an app the person "used"), minus Settings: AOSP Settings answers
+   * the HOME intent too (`FallbackHome`, the stand-in home before the first
+   * unlock, priority -1000), and Settings is an app a person uses.
+   */
+  fun launchers(context: Context): Set<String> {
+    val pm = context.packageManager
+    val settings = resolve(pm, Intent(Settings.ACTION_SETTINGS))
+    return launchers(pm).filterTo(LinkedHashSet()) { it != settings }
+  }
+
   /** Every installed home app, not just the current one: the user may switch launchers under a block. */
   private fun launchers(pm: PackageManager): Set<String> {
     val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
