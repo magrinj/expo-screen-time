@@ -22,7 +22,7 @@ export type AndroidFeature = (typeof ANDROID_FEATURES)[number];
 export type ScreenTimeAndroidOptions = {
   /**
    * The app is a parental-control app: declares Google Play's mandatory
-   * `IsMonitoringTool` manifest flag (Malware / Stalkerware policy: apps that
+   * `isMonitoringTool` manifest flag (Malware / Stalkerware policy: apps that
    * monitor a child must declare it in every version code). Default `false`.
    */
   parentalControl?: boolean;
@@ -60,13 +60,21 @@ export type ResolvedScreenTimeAndroidOptions = {
 
 /**
  * The name of Google Play's monitoring-tool flag and its value for a
- * parental-control app, from the Play Console help page "Use of the
- * IsMonitoringTool flag" (https://support.google.com/googleplay/android-developer/answer/12955211):
- * `child_monitoring`, `enterprise_management` or `other`. A Screen Time
- * consumer is the first kind.
+ * parental-control app, spelled as the manifest example of the Play Console
+ * help page writes them (https://support.google.com/googleplay/android-developer/answer/12955211):
+ * `<meta-data android:name="isMonitoringTool" android:value="child_monitoring" />`,
+ * the values being `child_monitoring`, `enterprise_management` or `other`. A
+ * Screen Time consumer is the first kind. Meta-data names are compared as
+ * written, so the name follows that example (lower-case `i`), not the
+ * "IsMonitoringTool" of the Malware policy's prose.
  */
-export const IS_MONITORING_TOOL = 'IsMonitoringTool';
+export const IS_MONITORING_TOOL = 'isMonitoringTool';
 export const IS_MONITORING_TOOL_CHILD = 'child_monitoring';
+/**
+ * The spelling earlier versions of this plugin wrote. Removed on every run,
+ * so a `--no-clean` prebuild after an upgrade keeps one flag, spelled right.
+ */
+export const LEGACY_IS_MONITORING_TOOL = 'IsMonitoringTool';
 
 
 /** A manifest element of the library that only some features need. */
@@ -205,7 +213,7 @@ const isRemoveNode = (element: ManifestElement, gate: ManifestGate) =>
  * launcher intent, the engine service, the receivers) is declared in the
  * library's own `android/src/main/AndroidManifest.xml` and merged by Gradle,
  * which is idempotent by construction. The app manifest gets only optional
- * entries: the `IsMonitoringTool` flag, and one `tools:node="remove"` per
+ * entries: the `isMonitoringTool` flag, and one `tools:node="remove"` per
  * library element the chosen `features` do not need (`ANDROID_MANIFEST_GATES`),
  * which Gradle's merger then drops from the merged manifest together with
  * the element, from whichever library manifest declared it (the semantics
@@ -225,6 +233,8 @@ export function applyScreenTimeAndroidManifest(
   blockedPermissions: readonly string[] = []
 ): AndroidConfig.Manifest.AndroidManifest {
   const application = AndroidConfig.Manifest.getMainApplicationOrThrow(manifest);
+  // The old spelling goes whatever the option (LEGACY_IS_MONITORING_TOOL).
+  AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(application, LEGACY_IS_MONITORING_TOOL);
   if (options.parentalControl) {
     // Replaces an existing value (a consumer who declared `other` by hand
     // keeps one entry, with the value the option implies).

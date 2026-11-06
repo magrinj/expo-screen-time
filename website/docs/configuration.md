@@ -94,7 +94,7 @@ Two options, under `expo.extra.expoScreenTime.android`:
 
 | Option | Default | |
 |---|---|---|
-| `parentalControl` | `false` | The app is a parental-control app: adds Google Play's mandatory `IsMonitoringTool` manifest flag with the value `child_monitoring` ([Play Console help](https://support.google.com/googleplay/android-developer/answer/12955211)). Play requires it in every version code of such an app; Google Play Protect then tells the user a monitoring app is installed. Turning the option off removes the entry again. |
+| `parentalControl` | `false` | The app is a parental-control app: adds Google Play's mandatory `isMonitoringTool` manifest flag with the value `child_monitoring` ([Play Console help](https://support.google.com/googleplay/android-developer/answer/12955211)). Play requires it in every version code of such an app; Google Play Protect then tells the user a monitoring app is installed. Turning the option off removes the entry again. |
 | `features` | every feature | The features the app uses, by the names of [`ScreenTimeFeature`](./types.md): `blocking`, `monitoring`, `usageReports`, `shieldOpenApp`, `appRemovalProtection`, `webDomainBlocking`. The plugin removes from your manifest (`tools:node="remove"`) every component and permission no listed feature needs; see below. An unknown name fails the prebuild. Android only: the iOS build is shaped by [`targets`](#target-selection). |
 
 ### Features {#android-features}

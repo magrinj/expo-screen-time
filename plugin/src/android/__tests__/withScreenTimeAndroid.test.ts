@@ -9,6 +9,7 @@ import {
   AndroidFeature,
   IS_MONITORING_TOOL,
   IS_MONITORING_TOOL_CHILD,
+  LEGACY_IS_MONITORING_TOOL,
   ManifestGate,
   ResolvedScreenTimeAndroidOptions,
   applyScreenTimeAndroidManifest,
@@ -136,7 +137,9 @@ describe('applyScreenTimeAndroidManifest', () => {
     expect(JSON.stringify(manifest)).toBe(before);
   });
 
-  it('declares the IsMonitoringTool flag for a parental-control app', () => {
+  it('declares the isMonitoringTool flag for a parental-control app', () => {
+    // The spelling of the Play Console help page's manifest example (answer/12955211).
+    expect(IS_MONITORING_TOOL).toBe('isMonitoringTool');
     const manifest = applyScreenTimeAndroidManifest(vanillaManifest(), options(ALL, true));
     const items = metaData(manifest).filter((m) => m.$['android:name'] === IS_MONITORING_TOOL);
     expect(items).toHaveLength(1);
@@ -158,6 +161,18 @@ describe('applyScreenTimeAndroidManifest', () => {
     const manifest = applyScreenTimeAndroidManifest(vanillaManifest(), options(ALL, true));
     applyScreenTimeAndroidManifest(manifest, options(ALL));
     expect(JSON.stringify(manifest)).toBe(JSON.stringify(vanillaManifest()));
+  });
+
+  it('replaces the IsMonitoringTool spelling earlier versions wrote (upgrade on --no-clean)', () => {
+    const withLegacy = () => {
+      const manifest = vanillaManifest();
+      metaData(manifest).push({ $: { 'android:name': LEGACY_IS_MONITORING_TOOL, 'android:value': IS_MONITORING_TOOL_CHILD } });
+      return manifest;
+    };
+    const on = applyScreenTimeAndroidManifest(withLegacy(), options(ALL, true));
+    expect(metaData(on).map((m) => m.$['android:name'])).toEqual(['expo.modules.updates.ENABLED', IS_MONITORING_TOOL]);
+    const off = applyScreenTimeAndroidManifest(withLegacy(), options(ALL));
+    expect(JSON.stringify(off)).toBe(JSON.stringify(vanillaManifest()));
   });
 });
 

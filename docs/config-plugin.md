@@ -82,7 +82,7 @@ no `path`. New wiring ⇒ new assertion.
   `<queries>` intent, the engine service, the receivers. Gradle's manifest
   merger adds them once, so they are idempotent by construction and do not
   depend on the plugin running. The plugin writes **only optional, app-level
-  entries** (today `IsMonitoringTool` for `android.parentalControl`), each
+  entries** (today `isMonitoringTool` for `android.parentalControl`), each
   looked up by name before it is added and removed when its option is off
   (no stale entry on `--no-clean`). Same split as expo-widgets (its receiver
   is in its library manifest; `POST_NOTIFICATIONS` is a plugin option).
