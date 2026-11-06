@@ -160,6 +160,11 @@ internal class EngineLoop(private val context: Context) {
   private var lastShieldAt = 0L
   private var errorStreak = 0
   private var polls = 0L
+  /** When the running poll was due (uptime), and how late it ran. */
+  private var pollDueAt = 0L
+  private var pollLateMs = 0L
+  /** The last polls' timings (`late/query` ms), logged with a detection to tell a late poll from a late event. */
+  private val recentPolls = ArrayDeque<String>()
   /** Re-enforcements and evictions per target since its last fresh event. */
   private val reenforced = HashMap<String, Int>()
   private val evicted = HashMap<String, Int>()
@@ -171,6 +176,9 @@ internal class EngineLoop(private val context: Context) {
   private val poll = object : Runnable {
     override fun run() {
       if (!polling) return
+      // How late the handler ran this poll (the thread was busy, or the CPU was): one of the
+      // three causes of a late detection, measured.
+      pollLateMs = if (pollDueAt == 0L) 0L else SystemClock.uptimeMillis() - pollDueAt
       var delay: Long
       try {
         pollOnce()
@@ -188,6 +196,7 @@ internal class EngineLoop(private val context: Context) {
         Log.w(TAG, "poll error ${t.javaClass.simpleName}: ${t.message}; next poll in $delay ms")
         restartWindow(OVERLAP_MS)
       }
+      pollDueAt = SystemClock.uptimeMillis() + delay
       handler.postDelayed(this, delay)
     }
   }
@@ -240,6 +249,8 @@ internal class EngineLoop(private val context: Context) {
             // The beat on its own: the shield step must never wait on the gap bookkeeping.
             guarded("beat") { beat(intent.action!!.substringAfterLast('.')) }
             step(intent.action!!.substringAfterLast('.'))
+            // The user is about to reach an app: the shield's pages are touched now, not under their eyes.
+            if (sources.isNotEmpty()) ShieldWarmer.touch(context, intent.action!!.substringAfterLast('.'))
           }
           Intent.ACTION_SCREEN_OFF -> {
             guarded("beat") { beat("SCREEN_OFF") }
@@ -279,7 +290,19 @@ internal class EngineLoop(private val context: Context) {
             persist("shutdown", force = true)
             persistMeters("shutdown")
           }
-          Intent.ACTION_PACKAGE_ADDED, Intent.ACTION_PACKAGE_REMOVED, Intent.ACTION_PACKAGE_CHANGED -> if (sources.isNotEmpty()) reloadSets()
+          Intent.ACTION_PACKAGE_ADDED, Intent.ACTION_PACKAGE_REMOVED, Intent.ACTION_PACKAGE_CHANGED -> {
+            // Its label or icon may have changed: the face is dropped, and loaded again if it is shielded.
+            intent.data?.schemeSpecificPart?.let(ShieldCache::dropFace)
+            if (sources.isNotEmpty()) {
+              reloadSets()
+              ShieldWarmer.warm(context, BlockComposition.union(sources), intent.action!!.substringAfterLast('.'))
+            }
+          }
+          // Labels are localized: every face is stale.
+          Intent.ACTION_LOCALE_CHANGED -> {
+            ShieldCache.dropFaces()
+            if (sources.isNotEmpty()) ShieldWarmer.warm(context, BlockComposition.union(sources), "LOCALE_CHANGED")
+          }
         }
       }
     }
@@ -293,6 +316,7 @@ internal class EngineLoop(private val context: Context) {
       addAction(Intent.ACTION_TIME_CHANGED)
       addAction(Intent.ACTION_TIMEZONE_CHANGED)
       addAction(Intent.ACTION_SHUTDOWN)
+      addAction(Intent.ACTION_LOCALE_CHANGED)
     }
     val packages = IntentFilter().apply {
       addAction(Intent.ACTION_PACKAGE_ADDED)
@@ -358,6 +382,7 @@ internal class EngineLoop(private val context: Context) {
         handler.removeCallbacks(wake)
         if (!store.engineDesired) EngineWatchdog.cancel(context)
         ShieldActivity.dismiss()
+        ShieldWarmer.cancel()
       }
       thread.quitSafely()
     }
@@ -391,6 +416,7 @@ internal class EngineLoop(private val context: Context) {
       monitoring = store.monitoring
       readUnlockState(document)
     }
+    ShieldCache.refresh(store)
     persisted = monitoring
     blocks = null
   }
@@ -611,6 +637,8 @@ internal class EngineLoop(private val context: Context) {
     reloadSets()
     reenforced.clear()
     evicted.clear()
+    // What the first shield will need is loaded now, on the main thread, ahead of it.
+    ShieldWarmer.warm(context, BlockComposition.union(sources), reason)
     // A shield over an app the new sources allow (or a snooze lifted) goes away at once.
     ShieldActivity.showing?.let { if (!ShieldPolicy.shields(it, sources, launchable, exempt, lifted)) ShieldActivity.dismiss() }
     Log.i(TAG, "block in force ($reason): sources=${sources.map { "${it.kind}:${it.mode}:${it.applications.size}" }} lifted=$lifted launchable=${launchable.size} exempt=${exempt.size}")
@@ -664,6 +692,7 @@ internal class EngineLoop(private val context: Context) {
     restartWindow(SEED_MS)
     Log.i(TAG, "poll on ($why) interval=$pollInterval ms")
     handler.removeCallbacks(poll)
+    pollDueAt = 0L
     handler.post(poll)
   }
 
@@ -719,7 +748,12 @@ internal class EngineLoop(private val context: Context) {
     // filter ignores what it was fed already).
     val cursor = monitoring.foreground.cursorMs.takeIf { monitoring.activities.isNotEmpty() }
     val begin = if (cursor != null) minOf(trackerBegin, cursor) else trackerBegin
+    val queryStarted = SystemClock.uptimeMillis()
     val events = query(begin, now) ?: return
+    val queryMs = SystemClock.uptimeMillis() - queryStarted
+    if (recentPolls.size >= RECENT_POLLS) recentPolls.removeFirst()
+    recentPolls.addLast("$pollLateMs/$queryMs")
+    if (pollLateMs > SLOW_POLL_MS || queryMs > SLOW_POLL_MS) Log.i(TAG, "slow poll: late=$pollLateMs ms query=$queryMs ms window=${now - begin} ms")
     val event = UsageEvents.Event()
     val cameForward = LinkedHashMap<String, Long>()
     val usage = ArrayList<UsageEvent>()
@@ -750,6 +784,8 @@ internal class EngineLoop(private val context: Context) {
     // The budgets, from the same tracker view. Guarded on its own, like the step.
     if (grant != null || snoozes.isNotEmpty()) guarded("meter") { meter("poll") }
     guarded("reconcile") { reconcileUnlockState("poll") }
+    // A `setShieldConfig` the module wrote since the last poll is read here (one stat otherwise), not in the shield's onCreate.
+    guarded("shield cache") { if (ShieldCache.refresh(store)) Log.i(TAG, "shield configs re-read (document changed)") }
 
     if (sources.isEmpty()) return
     // The replay that rebuilt the state is history: an app that came forward
@@ -764,7 +800,7 @@ internal class EngineLoop(private val context: Context) {
     val targets = if (replay) emptySet() else ShieldPolicy.targets(cameForward.keys.filterTo(LinkedHashSet()) { it in visibleNow }, sources, launchable, exempt, lifted)
     if (targets.isNotEmpty()) {
       val target = targets.first()
-      Log.i(TAG, "detected target=$target eventAt=${cameForward[target]} ageMs=${now - cameForward[target]!!}")
+      Log.i(TAG, "detected target=$target eventAt=${cameForward[target]} ageMs=${now - cameForward[target]!!} pollLateMs=$pollLateMs queryMs=$queryMs recentPolls=$recentPolls")
       shield(target)
       return
     }
@@ -1021,6 +1057,9 @@ internal class EngineLoop(private val context: Context) {
     /** The AppOps behind the enforcement steps (`EnforcementGapTracker.ENFORCEMENT_STEPS`), watched for a revocation under a block. */
     private val ENFORCEMENT_OPS = listOf(AppOpsManager.OPSTR_GET_USAGE_STATS, AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW)
     private const val SEEN_CAP = 512
+    /** How many polls' timings are kept for the detection log, and what counts as a slow one. */
+    private const val RECENT_POLLS = 8
+    private const val SLOW_POLL_MS = 50L
 
     // Public since API 29 (`ACTIVITY_STOPPED`); `ACTIVITY_DESTROYED` is
     // reported but not in the public API. Same values as ForegroundTracker.

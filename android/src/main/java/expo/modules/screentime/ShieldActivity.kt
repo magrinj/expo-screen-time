@@ -3,21 +3,14 @@ package expo.modules.screentime
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.res.ColorStateList
-import android.graphics.Typeface
 import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
-import android.util.TypedValue
-import android.view.Gravity
-import android.view.View
+import android.view.ViewTreeObserver
 import android.view.ViewGroup
 import android.widget.FrameLayout
-import android.widget.ImageView
-import android.widget.LinearLayout
-import android.widget.TextView
 import android.window.OnBackInvokedDispatcher
 import androidx.core.view.WindowCompat
 import java.lang.ref.WeakReference
@@ -42,7 +35,10 @@ import java.util.UUID
  *   shield itself, in the configured colour, instead of a system splash in
  *   a colour the theme fixed before the config was known.
  * - **Appearance** from the stored `ShieldConfig` ([ShieldAppearance]) with
- *   the iOS precedence ([StateStore.shieldConfig]); what the config leaves
+ *   the iOS precedence ([ShieldConfigs], read through [ShieldCache]: the
+ *   engine keeps it and the blocked apps' labels and icons in memory and
+ *   pre-warms the view tree ([ShieldWarmer]), so `onCreate` reads no file
+ *   and opens no APK on the way to the first frame); what the config leaves
  *   open follows the system light/dark setting ([ViewPalette]) and the
  *   blocked app's own label and icon, as the default iOS shield does —
  *   except the text colours over a configured background, chosen for
@@ -78,19 +74,39 @@ import java.util.UUID
 class ShieldActivity : Activity() {
   private var target: String = ""
   private lateinit var root: FrameLayout
+  /** Uptime at which this instance was constructed (the main thread reached the launch). */
+  private val constructedAt = SystemClock.uptimeMillis()
+  /** The phases of the last `render`, in ms, for the `shield-created` log line. */
+  private var phases = ""
+
+  init {
+    Log.i(EngineController.TAG, "shield-construct at=${System.currentTimeMillis()}")
+  }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    val started = SystemClock.uptimeMillis()
     super.onCreate(savedInstanceState)
+    val superMs = SystemClock.uptimeMillis() - started
     target = intent.getStringExtra(EXTRA_TARGET) ?: run {
       finish()
       return
     }
+    val contentStarted = SystemClock.uptimeMillis()
     root = FrameLayout(this)
     setContentView(root)
+    val contentMs = SystemClock.uptimeMillis() - contentStarted
     render()
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
       onBackInvokedDispatcher.registerOnBackInvokedCallback(OnBackInvokedDispatcher.PRIORITY_DEFAULT) { close("back") }
     }
+    // One line per shield: where the time before the first frame goes.
+    Log.i(EngineController.TAG, "shield-created target=$target totalMs=${SystemClock.uptimeMillis() - started} preCreateMs=${started - constructedAt} superMs=$superMs contentMs=$contentMs $phases")
+    root.viewTreeObserver.addOnDrawListener(object : ViewTreeObserver.OnDrawListener {
+      override fun onDraw() {
+        Log.i(EngineController.TAG, "shield-drawn target=$target at=${System.currentTimeMillis()}")
+        root.post { root.viewTreeObserver.removeOnDrawListener(this) }
+      }
+    })
   }
 
   override fun onNewIntent(intent: Intent) {
@@ -133,91 +149,26 @@ class ShieldActivity : Activity() {
   // MARK: - Rendering
 
   private fun render() {
-    val appearance = ShieldAppearance.from(StateStore(this).shieldConfig(intent.getStringExtra(EXTRA_OWNER)))
-    val palette = ViewPalette.of(this)
-    // The text colours the config leaves open: for contrast against a configured
-    // background, else null and the system-adaptive palette below. The primary
-    // button is always painted (the config's colour or the accent), so its
-    // label is always chosen against what it is painted in.
-    val colors = ShieldTextColors.resolve(appearance, defaultPrimaryButtonBackground = palette.accent)
-    val backgroundColor = appearance.backgroundColor ?: palette.background
-    window.setBackgroundDrawable(ColorDrawable(backgroundColor))
+    var mark = SystemClock.uptimeMillis()
+    fun lap(): Long { val now = SystemClock.uptimeMillis(); val d = now - mark; mark = now; return d }
+    // From the cache the engine keeps current (one stat to check it): no file read on the way to the first frame.
+    val appearance = ShieldCache.appearance(StateStore(this), intent.getStringExtra(EXTRA_OWNER))
+    val storeMs = lap()
+    val colors = ShieldLayout.colors(this, appearance)
+    window.setBackgroundDrawable(ColorDrawable(colors.background))
     WindowCompat.getInsetsController(window, window.decorView).apply {
       // Dark system-bar icons where dark text reads: the same contrast rule as the title.
-      isAppearanceLightStatusBars = ShieldTextColors.onBackground(backgroundColor) == ShieldTextColors.BLACK
+      isAppearanceLightStatusBars = ShieldTextColors.onBackground(colors.background) == ShieldTextColors.BLACK
       isAppearanceLightNavigationBars = isAppearanceLightStatusBars
     }
-
-    val column = LinearLayout(this).apply {
-      orientation = LinearLayout.VERTICAL
-      gravity = Gravity.CENTER
-      setPadding(dp(32), dp(48), dp(32), dp(48))
-      fitsSystemWindows = true
-    }
-    val icon = ImageView(this).apply {
-      val drawable = when (val spec = appearance.icon) {
-        is ShieldAppearance.Icon.Symbol -> {
-          val id = resources.getIdentifier(spec.resource, "drawable", packageName)
-          if (id != 0) getDrawable(id)?.also { imageTintList = ColorStateList.valueOf(colors.title ?: palette.text) } else null
-        }
-        ShieldAppearance.Icon.App -> null
-      } ?: LaunchableApps.icon(this@ShieldActivity, target)
-      setImageDrawable(drawable)
-      layoutParams = LinearLayout.LayoutParams(dp(96), dp(96)).apply { bottomMargin = dp(24) }
-    }
-    val title = TextView(this).apply {
-      text = appearance.title?.text ?: LaunchableApps.label(this@ShieldActivity, target) ?: getString(R.string.expo_st_shield_title)
-      setTextColor(colors.title ?: palette.text)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 26f)
-      typeface = Typeface.DEFAULT_BOLD
-      gravity = Gravity.CENTER
-    }
-    val subtitle = TextView(this).apply {
-      text = appearance.subtitle?.text ?: getString(R.string.expo_st_shield_subtitle)
-      setTextColor(colors.subtitle ?: palette.secondary)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-      gravity = Gravity.CENTER
-      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
-    }
-    val primary = TextView(this).apply {
-      text = appearance.primaryButton?.text ?: getString(R.string.expo_st_shield_close)
-      // Never null (the default background is passed above); a fallback rather than a crash on the user's screen.
-      setTextColor(colors.primaryButton ?: palette.text)
-      setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-      typeface = Typeface.DEFAULT_BOLD
-      gravity = Gravity.CENTER
-      minHeight = dp(48)
-      setPadding(dp(24), dp(12), dp(24), dp(12))
-      background = GradientDrawable().apply {
-        cornerRadius = dp(24).toFloat()
-        setColor(appearance.primaryButtonBackgroundColor ?: palette.accent)
-      }
-      isClickable = true
-      isFocusable = true
-      contentDescription = text
-      layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(40) }
-      setOnClickListener { onButton("primary") }
-    }
-    column.addView(icon)
-    column.addView(title)
-    column.addView(subtitle)
-    column.addView(primary)
-    appearance.secondaryButton?.let { label ->
-      column.addView(TextView(this).apply {
-        text = label.text
-        setTextColor(colors.secondaryButton ?: palette.accent)
-        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
-        gravity = Gravity.CENTER
-        minHeight = dp(48)
-        setPadding(dp(24), dp(12), dp(24), dp(12))
-        isClickable = true
-        isFocusable = true
-        layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) }
-        setOnClickListener { onButton("secondary") }
-      })
-    }
+    val windowMs = lap()
+    // Loaded by the warmer for the apps the sources shield; loaded now for any other.
+    val face = ShieldCache.face(this, target)
+    val faceMs = lap()
+    val column = ShieldLayout.build(this, appearance, colors, face, onPrimary = { onButton("primary") }, onSecondary = { onButton("secondary") })
     root.removeAllViews()
     root.addView(column, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+    phases = "storeMs=$storeMs windowMs=$windowMs faceMs=$faceMs viewsMs=${lap()}"
   }
 
   // MARK: - Actions

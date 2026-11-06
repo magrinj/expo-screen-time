@@ -323,11 +323,26 @@ internal class StateStore(private val directory: File) {
   private fun save(document: JSONObject) {
     val tmp = File(directory, "state.json.tmp")
     tmp.writeText(document.toString())
+    // The modification time is made strictly increasing across every writer
+    // (they are serialized by the exclusive lock): the kernel stamps with a
+    // coarse clock and reuses inodes, so two saves within a few ms could
+    // otherwise look identical to a reader that only stats ([signature]).
+    tmp.setLastModified(maxOf(System.currentTimeMillis(), file.lastModified() + 1))
     if (!tmp.renameTo(file)) {
       file.delete()
       check(tmp.renameTo(file)) { "cannot replace ${file.path}" }
     }
   }
+
+  /**
+   * Identifies the document's version without reading it: its modification
+   * time (strictly increasing, see [save]) and size. One stat, a few
+   * microseconds, so a cache of what the document holds can be checked on a
+   * hot path ([ShieldCache]: the shield's first frame) and the file read
+   * only when another process wrote it. A missing document has a signature
+   * too (zeros), which a first write always leaves behind.
+   */
+  fun signature(): DocumentSignature = DocumentSignature(file.lastModified(), file.length())
 
   private fun engine(document: JSONObject) = document.optJSONObject(ENGINE) ?: JSONObject().also { document.put(ENGINE, it) }
   private fun permissions(document: JSONObject) = document.optJSONObject(PERMISSIONS) ?: JSONObject().also { document.put(PERMISSIONS, it) }
@@ -362,3 +377,6 @@ internal class StateStore(private val directory: File) {
     }
   }
 }
+
+/** A document version as [StateStore.signature] reads it; equal while no writer has saved. */
+internal data class DocumentSignature(val modifiedAt: Long, val size: Long)
