@@ -23,7 +23,10 @@ package expo.modules.screentime
  *   lifted ([ShieldSnooze], [ShieldLifts]) — are taken out of every source
  *   covering them, an allowlist's included (the iOS projection excepts a
  *   snoozed app from `.all(except:)`); the sources stay in force for
- *   everything else.
+ *   everything else. Every BLOCK source, that is: a restriction source
+ *   ([BlockSourceKind.Restriction]) is never lifted — on iOS the
+ *   restriction has no shield and no lift, and a snooze pressed on a
+ *   store's manual shield must not open the store a parent closed.
  */
 internal object ShieldPolicy {
   /** The subset of [foreground] to shield; empty when nothing is. */
@@ -33,8 +36,8 @@ internal object ShieldPolicy {
   }
 
   fun shields(packageName: String, sources: List<BlockSource>, launchable: Set<String>, exempt: Set<String>, lifted: Set<String> = emptySet()): Boolean {
-    if (packageName in exempt || packageName in lifted) return false
-    return sources.any { shields(packageName, it, launchable) }
+    if (packageName in exempt) return false
+    return sources.any { (it.kind is BlockSourceKind.Restriction || packageName !in lifted) && shields(packageName, it, launchable) }
   }
 
   private fun shields(packageName: String, source: BlockSource, launchable: Set<String>): Boolean = when (source.mode) {
@@ -104,9 +107,14 @@ internal object ShieldPolicy {
    * configuration applies ([BlockComposition.owner]); null for the default
    * configuration. The launchable rule above is the engine's own refinement
    * of the allowlist: a target it shields is covered by the composition's
-   * rule too, so the owner is resolved with the iOS rule alone.
+   * rule too, so the owner is resolved with the iOS rule alone. A block
+   * source that [lifted] takes the target out of does not own it: when a
+   * restriction is what still shields it (a store the user unblocked under
+   * `denyAppInstallation`), the restriction's shield is the one drawn, not
+   * the lifted block's with its now idle buttons.
    */
-  fun owner(packageName: String, sources: List<BlockSource>): BlockSource? = BlockComposition.owner(packageName, sources)
+  fun owner(packageName: String, sources: List<BlockSource>, lifted: Set<String> = emptySet()): BlockSource? =
+    BlockComposition.owner(packageName, if (packageName in lifted) sources.filter { it.kind is BlockSourceKind.Restriction } else sources)
 
   /**
    * The apps the engine must always leave alone, from the identities the OS

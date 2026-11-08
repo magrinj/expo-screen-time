@@ -8,6 +8,29 @@ import org.junit.Test
 /** The ShieldConfig mapping: nested and legacy formats, colours, the icon table, the precedence lookup in the store. */
 class ShieldAppearanceTest {
   @Test
+  fun `a restriction target takes the library's texts and keeps the configured colours, icon and buttons`() {
+    val configured = ShieldAppearance.from(
+      JSONObject("""{"backgroundColor":"#1a1a2e","icon":"lock.fill","title":{"text":"App Blocked","color":"#ffffff"},"subtitle":{"text":"Work hours","color":"#aaaaaa"},"primaryButton":{"text":"OK"}}""")
+    )
+    val a = configured.forRestriction("Removing apps is turned off", "Turn it back on in Example.")
+    assertEquals(ShieldAppearance.Label("Removing apps is turned off", 0xFFFFFFFF.toInt()), a.title)
+    assertEquals(ShieldAppearance.Label("Turn it back on in Example.", 0xFFAAAAAA.toInt()), a.subtitle)
+    assertEquals(configured.backgroundColor, a.backgroundColor)
+    assertEquals(configured.icon, a.icon)
+    assertEquals(configured.primaryButton, a.primaryButton)
+    val secondary = ShieldAppearance.from(JSONObject("""{"secondaryButton":{"text":"Snooze"}}"""))
+    assertEquals("a secondary button that acts (openApp) is kept", ShieldAppearance.Label("Snooze", null), secondary.forRestriction("t", "s", keepSecondaryButton = true).secondaryButton)
+    assertNull("one whose action a restriction ignores is left out", secondary.forRestriction("t", "s", keepSecondaryButton = false).secondaryButton)
+    val unblocking = ShieldAppearance.from(JSONObject("""{"primaryButton":{"text":"Unblock","color":"#ffffff"}}"""))
+    assertEquals("a primary button whose action a restriction ignores reads the close label, in its colour", ShieldAppearance.Label("OK", 0xFFFFFFFF.toInt()), unblocking.forRestriction("t", "s", primaryText = "OK").primaryButton)
+    assertEquals("one that keeps its meaning keeps its label", unblocking.primaryButton, unblocking.forRestriction("t", "s").primaryButton)
+    val plain = ShieldAppearance.DEFAULT.forRestriction("t", "s")
+    assertEquals(ShieldAppearance.Label("t", null), plain.title)
+    assertEquals(ShieldAppearance.Label("s", null), plain.subtitle)
+    assertEquals(ShieldAppearance.Icon.App, plain.icon)
+  }
+
+  @Test
   fun `the nested contract format maps every field`() {
     val config = JSONObject(
       """{"backgroundColor":"#1a1a2e","backgroundBlurStyle":"dark","icon":"hand.raised.fill",

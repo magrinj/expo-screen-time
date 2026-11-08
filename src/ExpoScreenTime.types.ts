@@ -148,9 +148,18 @@ export type ScreenTimeCapabilities = {
    * For the authorization last granted: iOS `individual` is `friction` (the
    * user can revoke Screen Time access in Settings, then delete the app);
    * `child` is `enforced` (a parent holds the authorization).
+   *
+   * Android: `friction` in a build with the shield (the same test as
+   * `blocking`): the engine shields the system's uninstall dialog, and the
+   * device admin guards this app's own removal; a user who stops the engine
+   * lifts it (`getEnforcementGaps`). `none` when the config plugin left the
+   * shield out of the build.
    */
   appRemovalProtection: Enforcement;
-  /** Same rule as `appRemovalProtection`, for `denyAppInstallation`. */
+  /**
+   * Same rule as `appRemovalProtection`, for `denyAppInstallation`. Android:
+   * `friction`: the engine shields the stores and the package installer.
+   */
   appInstallationBlocking: Enforcement;
   /** `<DeviceActivityReport>` renders data: the report extension is in this build. */
   usageReports: boolean;

@@ -18,7 +18,9 @@ import expo.modules.screentime.PermissionSteps.Feature
  * shield actions and the interaction queue. Step 6: the enforcement gaps,
  * which is where `blocking` became `"friction"` for real and the internal
  * preview switch the steps 3–5 shipped behind went away. Stage 4: the
- * usage reports (the template slot, the report view). Every function
+ * usage reports (the template slot, the report view) and the app-control
+ * restrictions (`denyAppRemoval`, `denyAppInstallation`: two more block
+ * sources of the engine, over the system's uninstall and install UIs). Every function
  * not implemented fails with a coded `UNSUPPORTED` error, and so does every
  * function of a feature the config plugin left out of this build
  * (`android.features`, read back from the merged manifest: [BuildManifest]).
@@ -76,6 +78,11 @@ class ExpoScreenTimeModule : Module() {
         if (!build.blocking && blocks.isBlocked()) {
           android.util.Log.i(EngineController.TAG, "lifting a block left by a build with the shield (this build has none)")
           blocks.unblockAll()
+        }
+        // The same for a restriction: its shield is the engine's.
+        if (!build.blocking && store.restrictions.any) {
+          android.util.Log.i(EngineController.TAG, "clearing restrictions left by a build with the shield (this build has none)")
+          blocks.clearRestrictions()
         }
         // Nothing to revive or observe in a build without the engine (a
         // document a previous, fuller build left behind must not start a
@@ -166,13 +173,19 @@ class ExpoScreenTimeModule : Module() {
     // blocking functions reject `UNSUPPORTED`. `usageReports` is on when
     // the build requests usage access (the renderer needs nothing else), as
     // iOS answers for the report extension being embedded.
+    // `appRemovalProtection` and `appInstallationBlocking` are "friction"
+    // under the same test as `blocking`: their mechanism is the shield (the
+    // engine shields the uninstall dialog, the stores and the package
+    // installer), which the user can stop; the device admin's state is a
+    // permission step, not a capability (the mapping: capabilities reflect
+    // the build, never whether a step is currently granted).
     Function("getCapabilities") {
       mapOf(
         "blocking" to if (build.blocking) "friction" else "none",
         "selectableKinds" to mapOf("applications" to true, "categories" to false, "webDomains" to false),
         "webDomainBlocking" to false,
-        "appRemovalProtection" to "none",
-        "appInstallationBlocking" to "none",
+        "appRemovalProtection" to if (build.blocking) "friction" else "none",
+        "appInstallationBlocking" to if (build.blocking) "friction" else "none",
         "usageReports" to build.has(Feature.usageReports),
         "shieldOpenApp" to "direct",
         "openApplication" to false,
@@ -196,6 +209,35 @@ class ExpoScreenTimeModule : Module() {
       requireInBuild("getEnforcementGaps", Feature.blocking)
       observe("getEnforcementGaps", sync = true)
       promise.resolve(gaps.gaps(since?.toLong()))
+    }
+
+    // MARK: - App Control
+
+    // The iOS semantics (`ScreenTimeManager.denyAppRemoval` and co.: a flag
+    // set, persisted, untouched by `unblockAll` and the unlocks) over the
+    // engine's shield: `denyAppRemoval` shields the system's uninstall
+    // dialog, `denyAppInstallation` the stores and the package installer
+    // (BlockController.setRestriction, RestrictionTargets). `friction`:
+    // the host app's own removal is guarded by the device admin step, and
+    // a user who stops the engine lifts it (getEnforcementGaps records it).
+    Function("denyAppRemoval") {
+      requireInBuild("denyAppRemoval", Feature.blocking)
+      blocks.setRestriction(RestrictionKind.removal, true)
+    }
+
+    Function("allowAppRemoval") {
+      requireInBuild("allowAppRemoval", Feature.blocking)
+      blocks.setRestriction(RestrictionKind.removal, false)
+    }
+
+    Function("denyAppInstallation") {
+      requireInBuild("denyAppInstallation", Feature.blocking)
+      blocks.setRestriction(RestrictionKind.installation, true)
+    }
+
+    Function("allowAppInstallation") {
+      requireInBuild("allowAppInstallation", Feature.blocking)
+      blocks.setRestriction(RestrictionKind.installation, false)
     }
 
     // MARK: - Blocking

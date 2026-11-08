@@ -25,7 +25,7 @@ const shortest = limits.minIntervalSeconds; // 900 on iOS
 | `blocking` | `"enforced"`: the OS draws the shield. Android: `"friction"`: the library's engine draws it, and the user can stop the engine from the Task Manager or Settings, which `getEnforcementGaps` records ([platform support](../platform-support.md)); `"none"` when the config plugin's [`android.features`](../configuration.md#android-features) left the shield out of the build, and every blocking function then rejects `UNSUPPORTED`. |
 | `selectableKinds` | Applications, categories and web domains. Android: applications only (`categories` and `webDomains` are `false`: [selections](./selections.md#android)). |
 | `webDomainBlocking` | `true` |
-| `appRemovalProtection`, `appInstallationBlocking` | `"friction"` after an `individual` authorization (the user can revoke Screen Time access in Settings, which lifts them); `"enforced"` after a `child` one (a parent holds it). |
+| `appRemovalProtection`, `appInstallationBlocking` | `"friction"` after an `individual` authorization (the user can revoke Screen Time access in Settings, which lifts them); `"enforced"` after a `child` one (a parent holds it). Android: `"friction"` in a build with the shield, the same test as `blocking`: the engine shields the system's uninstall dialog, the stores and the package installer ([restrictions](./restrictions.md#android)), and a user who stops the engine lifts it; `"none"` when `android.features` left the shield out. The device admin's state is a [permission step](./permissions.md#android), never a capability. |
 | `usageReports` | `true` when `<DeviceActivityReport />` renders data: on iOS the report extension is in the build (the config plugin can leave it out), on Android the build requests usage access (the `usageReports` feature of [`android.features`](../configuration.md#android-features)). |
 | `shieldOpenApp` | `"notification"`: a shield's [`openApp` action](./shields.md#open-app) posts a notification the user taps, which needs the `notifications` [permission step](./permissions.md#steps-on-ios). Android: `"direct"` (the shield launches the app). |
 | `openApplication` | `false`: iOS cannot launch another app. |
@@ -39,8 +39,7 @@ on iOS (the report extension can be left out), `blocking` on Android (the
 config plugin's `android.features` can leave the shield out). Monitoring has
 no field: a `monitoring`-only Android build and a `usageReports`-only one
 both read `blocking: "none"`, and only the call tells them apart
-(`startMonitoring` rejects `UNSUPPORTED` in the second). `appRemovalProtection`
-is `"none"` on Android whatever the build.
+(`startMonitoring` rejects `UNSUPPORTED` in the second).
 
 `limits.maxMonitoredActivities` is what `startMonitoring` enforces (a 20th
 activity rejects `EXCESSIVE_ACTIVITIES`): iOS has 20 DeviceActivity slots and

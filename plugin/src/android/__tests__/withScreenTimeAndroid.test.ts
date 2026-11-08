@@ -435,16 +435,32 @@ describe('the library manifest (merged into every consumer)', () => {
     expect(usageStats.$['tools:ignore']).toBe('ProtectedPermissions');
   });
 
-  it('declares the launcher and home <queries> intents, nothing broader', () => {
+  it('declares the launcher, home and restriction-target <queries> intents, nothing broader', () => {
     const queries = (manifest.manifest as any).queries as any[];
     expect(queries).toHaveLength(1);
     const intents = queries[0].intent as any[];
-    expect(intents).toHaveLength(2);
+    const data = (intent: any) => (intent.data as any[] | undefined)?.map((d) => d.$);
+    // The picker's list, and telling a launcher from an app.
     expect(names(intents[0].action)).toEqual(['android.intent.action.MAIN']);
     expect(names(intents[0].category)).toEqual(['android.intent.category.LAUNCHER']);
     expect(names(intents[1].action)).toEqual(['android.intent.action.MAIN']);
     expect(names(intents[1].category)).toEqual(['android.intent.category.HOME']);
+    // The app restrictions' targets (RestrictionTargetResolver): the uninstall
+    // dialog, the package installer and the stores. Each intent is one action
+    // with its data, so the resolution works under package visibility; no
+    // category, no bare scheme broader than the handler's. No `ACTION_VIEW`
+    // of an APK: the installer is resolved among system apps from the two
+    // intents only it handles, so a third-party APK handler is never asked.
+    expect(names(intents[2].action)).toEqual(['android.intent.action.DELETE']);
+    expect(data(intents[2])).toEqual([{ 'android:scheme': 'package' }]);
+    expect(names(intents[3].action)).toEqual(['android.intent.action.INSTALL_PACKAGE']);
+    expect(data(intents[3])).toEqual([{ 'android:scheme': 'content', 'android:mimeType': 'application/vnd.android.package-archive' }]);
+    expect(names(intents[4].action)).toEqual(['android.intent.action.VIEW']);
+    expect(data(intents[4])).toEqual([{ 'android:scheme': 'market', 'android:host': 'details' }]);
+    expect(intents).toHaveLength(5);
+    // Never a package name, never QUERY_ALL_PACKAGES (Play restricts it).
     expect(queries[0].package).toBeUndefined();
+    expect(names(manifest.manifest['uses-permission']!)).not.toContain('android.permission.QUERY_ALL_PACKAGES');
   });
 
   it('declares the engine service as a specialUse FGS in the :screentime process, with its subtype', () => {

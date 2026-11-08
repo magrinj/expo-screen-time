@@ -34,6 +34,35 @@ class StateStoreTest {
   }
 
   @Test
+  fun `the restrictions round-trip and keep the engine wanted on their own`() {
+    val store = store()
+    assertEquals(Restrictions.NONE, store.restrictions)
+    store.restrictions = Restrictions(removal = true)
+    assertEquals(Restrictions(removal = true, installation = false), store().restrictions)
+    store.update { document -> store.syncEngineDesired(document) }
+    assertTrue("a restriction alone keeps the engine wanted", store.engineDesired)
+    store.restrictions = Restrictions.NONE
+    store.update { document -> store.syncEngineDesired(document) }
+    assertFalse(store.engineDesired)
+    assertFalse("no restriction leaves no key", store.read { it.has("restrictions") })
+  }
+
+  @Test
+  fun `the admin's deactivation is stamped beside the restrictions and survives their toggling`() {
+    val store = store()
+    assertNull(store.adminDisabledAt)
+    store.adminDisabledAt = 1_700_000_000_000L
+    assertEquals(1_700_000_000_000L, store().adminDisabledAt)
+    assertEquals("a stamp alone turns no restriction on", Restrictions.NONE, store.restrictions)
+    store.restrictions = Restrictions(removal = true)
+    assertEquals(1_700_000_000_000L, store.adminDisabledAt)
+    store.restrictions = Restrictions.NONE
+    assertEquals("the stamp outlives the flags", 1_700_000_000_000L, store.adminDisabledAt)
+    store.adminDisabledAt = null
+    assertFalse("nothing left leaves no key", store.read { it.has("restrictions") })
+  }
+
+  @Test
   fun `the document round-trips between two instances, as between two processes`() {
     store().engineDesired = true
     store().markPermissionRequested("usageAccess")

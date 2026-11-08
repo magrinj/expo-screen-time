@@ -9,14 +9,14 @@ App blocking, schedules, shields and usage reports for Expo and React Native, on
 
 📚 **[Full documentation → magrinj.github.io/expo-screen-time](https://magrinj.github.io/expo-screen-time/)**
 
-> **Note:** iOS restrictions are enforced by the OS. On Android the engine is `friction`: a foreground service draws the shield, and the user can stop it from the system settings, which `getEnforcementGaps()` reports. Categories, web domains and the app-removal and installation restrictions are iOS-only today — see [Platform support](https://magrinj.github.io/expo-screen-time/platform-support).
+> **Note:** iOS restrictions are enforced by the OS. On Android the engine is `friction`: a foreground service draws the shield, and the user can stop it from the system settings, which `getEnforcementGaps()` reports. Categories and web domains are iOS-only today — see [Platform support](https://magrinj.github.io/expo-screen-time/platform-support).
 
 ## Features
 
 - **Permissions** — one call site; the steps the user must allow come back as data (iOS: the Family Controls prompt; Android: the Settings toggles, one screen at a time)
 - **App blocking** — block the apps the user picks in the native picker, as a blocklist or an allowlist (categories and web domains: iOS)
 - **Web domain blocking** — block specific domains without user selection (iOS)
-- **App Store restrictions** — prevent app installation and removal (iOS)
+- **App Store restrictions** — prevent app installation and removal (Android: a shield over the stores, the package installer and the uninstall dialog)
 - **Schedule monitoring** — time-based blocking and usage thresholds, with events
 - **Shields** — customize the blocking screen and its buttons (close, snooze, unblock, open app)
 - **Earned time** — usage-based temporary unlocks that re-lock automatically

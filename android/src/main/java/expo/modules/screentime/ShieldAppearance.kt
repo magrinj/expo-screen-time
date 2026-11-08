@@ -26,6 +26,25 @@ internal data class ShieldAppearance(
 ) {
   data class Label(val text: String, val color: Int?)
 
+  /**
+   * This appearance over a restriction target: the library's [title] and
+   * [subtitle] in place of the configured texts (the user did not choose
+   * these apps, so the shield says what happened and where to turn it off),
+   * with the configured colours, icon and buttons kept, except a button
+   * whose action a restriction ignores (a "Snooze" label that only closes
+   * would lie): the primary one then reads [primaryText] (the library's
+   * close label) in its configured colour, the secondary one is left out
+   * ([keepSecondaryButton] false). The iOS flags have no shield, so there
+   * is no iOS text to match.
+   */
+  fun forRestriction(title: String, subtitle: String, keepSecondaryButton: Boolean = true, primaryText: String? = null): ShieldAppearance =
+    copy(
+      title = Label(title, this.title?.color),
+      subtitle = Label(subtitle, this.subtitle?.color),
+      primaryButton = if (primaryText != null) Label(primaryText, primaryButton?.color) else primaryButton,
+      secondaryButton = if (keepSecondaryButton) secondaryButton else null,
+    )
+
   sealed class Icon {
     /** No `icon` key: the shielded app's own icon, as the iOS default shield shows it. */
     object App : Icon()

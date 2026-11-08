@@ -149,6 +149,14 @@ internal class EngineLoop(private val context: Context) {
   private var lastPersistAt = 0L
   private var blocks: List<MonitoringBlock>? = null
   private var sources: List<BlockSource> = emptyList()
+  /** The app-control restrictions as last read from the document (`denyAppRemoval`, `denyAppInstallation`). */
+  private var restrictions: Restrictions = Restrictions.NONE
+  /** When the device admin was last deactivated, as last read: the removal shield is held off after it ([RestrictionSources.heldOff]). */
+  private var adminDisabledAt: Long? = null
+  /** The restriction targets as resolved on this device, null until a restriction needs them and after a package change. */
+  private var restrictionTargets: RestrictionTargets? = null
+  /** The restriction sources the last composition held. */
+  private var appliedRestrictions: List<BlockSource> = emptyList()
   /** The whole-block unlock in progress (active today, budget left), with its meter; null otherwise. */
   private var grant: UnlockGrant? = null
   /** The snoozes in force (granted today, not spent), with their meters. */
@@ -325,6 +333,9 @@ internal class EngineLoop(private val context: Context) {
           Intent.ACTION_PACKAGE_ADDED, Intent.ACTION_PACKAGE_REMOVED, Intent.ACTION_PACKAGE_CHANGED -> {
             // Its label or icon may have changed: the face is dropped, and loaded again if it is shielded.
             intent.data?.schemeSpecificPart?.let(ShieldCache::dropFace)
+            // A store installed or removed, an installer updated: the restriction targets are resolved again.
+            restrictionTargets = null
+            if (restrictions.any) act(intent.action!!.substringAfterLast('.'), System.currentTimeMillis())
             if (sources.isNotEmpty()) {
               reloadSets()
               rescope(intent.action!!.substringAfterLast('.'))
@@ -503,6 +514,8 @@ internal class EngineLoop(private val context: Context) {
     store.read { document ->
       manual = store.manualBlock
       monitoring = store.monitoring
+      restrictions = store.restrictions
+      adminDisabledAt = store.adminDisabledAt
       readUnlockState(document)
     }
     ShieldCache.refresh(store)
@@ -664,9 +677,26 @@ internal class EngineLoop(private val context: Context) {
   }
 
   /**
+   * The restriction sources in force ([RestrictionSources]): the targets
+   * are resolved from the OS the first time a restriction needs them and
+   * again after a package change, never per poll.
+   */
+  private fun restrictionSources(now: Long): List<BlockSource> {
+    if (!restrictions.any) return emptyList()
+    val targets = restrictionTargets ?: RestrictionTargetResolver.resolve(context).also {
+      restrictionTargets = it
+      Log.i(TAG, "restriction targets resolved: $it")
+      if (it.installer.isEmpty()) Log.w(TAG, "restriction targets: no system package installer resolved; the uninstall dialog and the install flow are not shielded")
+    }
+    if (RestrictionSources.heldOff(now, adminDisabledAt)) Log.i(TAG, "installer shield held off: admin deactivated ${now - adminDisabledAt!!} ms ago")
+    return RestrictionSources.compose(restrictions, targets, now, adminDisabledAt)
+  }
+
+  /**
    * Composes the sources from the manual block and the monitoring state —
    * minus what the grant suspended, with the lifted set taken out by the
-   * policy — and brings the shield, the polling and the alarm in line. A
+   * policy — plus the restriction sources (never suspended, never lifted),
+   * and brings the shield, the polling and the alarm in line. A
    * change of the composed sources drops the shield's unblocks ("until a
    * block is applied again"); a change of the lifted set alone re-applies
    * the same sources (a shield over a lifted app goes, an app whose snooze
@@ -677,14 +707,16 @@ internal class EngineLoop(private val context: Context) {
     val current = monitoring.activeBlocks()
     val suspended = grant?.suspended?.takeIf { !it.isEmpty }
     val liftedNow = snoozed() + lifts.under(sources)
-    if (current != blocks || suspended != appliedSuspension || liftedNow != lifted || lifts.apps != liftedApplied) {
+    val restricting = restrictionSources(now)
+    if (current != blocks || suspended != appliedSuspension || liftedNow != lifted || lifts.apps != liftedApplied || restricting != appliedRestrictions) {
       val before = sources
       val liftedBefore = lifted
-      val all = BlockComposition.sources(manual, monitoring, selections::get)
-      sources = if (suspended == null) all else BlockComposition.sources(manual, monitoring, selections::get, suspended)
+      val all = BlockComposition.sources(manual, monitoring, selections::get) + restricting
+      sources = if (suspended == null) all else BlockComposition.sources(manual, monitoring, selections::get, suspended) + restricting
       metered = BlockComposition.union(all) - BlockComposition.union(sources)
       blocks = current
       appliedSuspension = suspended
+      appliedRestrictions = restricting
       ShieldActivity.sourcesKey = BlockComposition.fingerprint(sources)
       // An unblock pressed under another composition is void: "until a block is applied again".
       if (!lifts.isEmpty && lifts.under(sources).isEmpty()) dropLifts(reason)
@@ -700,6 +732,8 @@ internal class EngineLoop(private val context: Context) {
         // A budget is void at midnight: the composition is re-run then.
         grant?.let { UsageMeter.dayEndMs(it.grantedAt, zone) },
         snoozes.minOfOrNull { UsageMeter.dayEndMs(it.grantedAt, zone) },
+        // The removal shield comes back when its hold-off after the admin's deactivation ends.
+        RestrictionSources.holdOffEndMs(restrictions, now, adminDisabledAt),
       ).minOrNull(),
     )
     val observing = monitoring.observesUsage || grant != null || snoozes.isNotEmpty()
@@ -983,11 +1017,11 @@ internal class EngineLoop(private val context: Context) {
       return
     }
     lockTaskRecorded = false
-    // The owner's configuration draws the shield: threshold > latest schedule > manual > default.
-    val owner = ShieldPolicy.owner(target, sources)
+    // The owner's configuration draws the shield: threshold > latest schedule > manual > restriction > default.
+    val owner = ShieldPolicy.owner(target, sources, lifted)
     lastShieldTarget = target
     shownSinceLaunch = false
-    ShieldActivity.launch(context, target, owner = owner?.kind?.activityName)
+    ShieldActivity.launch(context, target, owner = owner?.kind?.activityName, restriction = (owner?.kind as? BlockSourceKind.Restriction)?.kind)
   }
 
   private fun isLockTaskActive(): Boolean {

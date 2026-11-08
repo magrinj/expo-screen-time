@@ -46,6 +46,29 @@ internal sealed class ShieldAction {
     const val PRIMARY = "primary"
     const val SECONDARY = "secondary"
 
+    /**
+     * The action a button takes on a RESTRICTION target (the uninstall
+     * dialog, a store, the installer: [BlockSourceKind.Restriction]):
+     * `openApp` is honoured (the host app is where the restriction is turned
+     * off), everything else closes. `unblock` and `snooze` would lift a
+     * restriction from a button a child can reach, which iOS has no
+     * counterpart for (the flags have no shield), and `defer` would keep a
+     * dialog's shield up for nothing. The press is still recorded as
+     * configured.
+     */
+    fun forRestriction(configured: ShieldAction?): ShieldAction = if (configured == OpenApp) OpenApp else Close
+
+    /**
+     * Whether a button configured for [configured] still does what its label
+     * says on a restriction target: `close` (also what a button with no
+     * action does) and `openApp` do; `unblock`, `snooze` and `defer` only
+     * close there ([forRestriction]), so their label would lie.
+     */
+    fun keepsMeaningOnRestriction(configured: ShieldAction?): Boolean {
+      val action = configured ?: Close
+      return forRestriction(action) == action
+    }
+
     /** The action configured for [button] (`primary` or `secondary`) in [config], or null when none is. */
     fun configured(config: JSONObject?, button: String): ShieldAction? {
       if (config == null) return null

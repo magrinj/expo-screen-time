@@ -259,7 +259,9 @@ internal fun interface EnforcementIntent {
 
     /**
      * The intent the document describes: everything while a manual block
-     * shields something (an allowlist always does; a blocklist with apps);
+     * shields something (an allowlist always does; a blocklist with apps)
+     * or a restriction is in force (`denyAppRemoval` / `denyAppInstallation`
+     * shield the system's UIs at every instant, as a manual block does);
      * otherwise each monitored activity's occurrences inside the range,
      * when the activity blocks (a schedule block with a `selectionId`, or a
      * `blockOnThreshold` event: the interval is the honest bound of a block
@@ -268,9 +270,9 @@ internal fun interface EnforcementIntent {
      * next start). Evaluated in [zone], the one current when the gap is
      * folded, as the engine evaluates the schedules.
      */
-    fun of(manual: ManualBlock?, monitoring: MonitoringState, zone: java.util.TimeZone): EnforcementIntent = EnforcementIntent { from, to ->
+    fun of(manual: ManualBlock?, monitoring: MonitoringState, zone: java.util.TimeZone, restrictions: Restrictions = Restrictions.NONE): EnforcementIntent = EnforcementIntent { from, to ->
       if (from >= to) return@EnforcementIntent emptyList()
-      if (manual != null && manual.source.shieldsSomething) return@EnforcementIntent listOf(Occurrence(from, to))
+      if ((manual != null && manual.source.shieldsSomething) || restrictions.any) return@EnforcementIntent listOf(Occurrence(from, to))
       val windows = ArrayList<Occurrence>()
       for ((name, activity) in monitoring.activities) {
         val blocks = activity.config.selectionId != null || activity.config.events.any { it.blockOnThreshold }

@@ -317,6 +317,12 @@ when that happened.
   iOS projects them into its store: editing the selection afterwards changes
   nothing until the next `blockSelection`. Web domains are not blocked on
   Android (`webDomainBlocking` is `false`).
+- **The app restrictions are block sources too.**
+  [`denyAppRemoval()` and `denyAppInstallation()`](./restrictions.md#android)
+  add, below your blocks, a source over the system's uninstall dialog, the
+  stores and the package installer. They are not blocks: `unblockAll()`,
+  `isBlocked()`, the temporary unlock and the snoozes leave them alone, and a
+  restriction alone keeps the engine polling exactly as a block does.
 - **How it is enforced** (`"friction"`, not `"enforced"`): a foreground
   service in its own process reads the apps on screen from UsageStats every
   100 ms while the screen is on and a block is in force, and starts a

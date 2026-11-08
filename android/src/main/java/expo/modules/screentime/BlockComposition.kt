@@ -6,8 +6,8 @@ import org.json.JSONObject
 /**
  * Which source a [BlockSource] is: the twin of `BlockSourceKind` in
  * `ios/BlockComposition.swift`. Lower [precedence] wins the shield
- * configuration of a shared target: threshold > schedule > manual (the
- * default config applies when nothing owns a target).
+ * configuration of a shared target: threshold > schedule > manual >
+ * restriction (the default config applies when nothing owns a target).
  */
 internal sealed class BlockSourceKind(val precedence: Int) {
   /** `blockSelection` — a single selection, replaced by the next call. */
@@ -21,10 +21,22 @@ internal sealed class BlockSourceKind(val precedence: Int) {
   /** A usage threshold with `blockOnThreshold` that fired inside an interval. */
   data class Threshold(val name: String) : BlockSourceKind(0)
 
-  /** The activity behind a schedule or threshold; null for the manual block — the owner `ShieldActivity` resolves its config from. */
+  /**
+   * `denyAppRemoval` / `denyAppInstallation` over the system UIs that
+   * remove or install apps ([RestrictionSources]). No iOS twin: there the
+   * flags are enforced by the OS without a shield. Lowest precedence, so a
+   * user's own block of a store owns the shield and its configuration when
+   * both cover it. Composed by the engine only: the module's compositions
+   * (`isBlocked`, the unlock judge) never hold one.
+   */
+  data class Restriction(val kind: RestrictionKind) : BlockSourceKind(3) {
+    override fun toString() = "restriction:${kind.name}"
+  }
+
+  /** The activity behind a schedule or threshold; null for the manual block and a restriction — the owner `ShieldActivity` resolves its config from. */
   val activityName: String?
     get() = when (this) {
-      is Manual -> null
+      is Manual, is Restriction -> null
       is Schedule -> name
       is Threshold -> name
     }
@@ -137,10 +149,13 @@ internal object BlockComposition {
    * `unblock` is recorded against it ([ShieldLifts]) and lasts exactly as
    * long as the same sources are in force — "until a block is applied
    * again". Any source starting, ending or changing its apps (an edit a
-   * `blockSelection` captured, a suspension ending) is a new key.
+   * `blockSelection` captured, a suspension ending) is a new key. The
+   * restriction sources are left out: a restriction is not a block, so
+   * toggling one does not void an unblock, and the engine (which composes
+   * them) and the module (which does not) agree on the key.
    */
   fun fingerprint(sources: List<BlockSource>): String =
-    sources.joinToString("|") { "${it.kind}:${it.startedAtMs}:${it.mode}:${it.applications.sorted().joinToString(",")}" }
+    sources.filter { it.kind !is BlockSourceKind.Restriction }.joinToString("|") { "${it.kind}:${it.startedAtMs}:${it.mode}:${it.applications.sorted().joinToString(",")}" }
 
   /**
    * `isBlocked()` with the [lifted] targets (snoozed apps, the shield's

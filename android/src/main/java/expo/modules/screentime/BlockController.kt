@@ -74,13 +74,45 @@ internal class BlockController(private val context: Context, private val store: 
    * here. A whole-block unlock in progress suspends its sources and a
    * snooze or a shield unblock lifts its app, so `isBlocked()` is false
    * during a grant that suspended everything, as iOS reads its emptied
-   * stores (the conformance suite's C08 asserts it).
+   * stores (the conformance suite's C08 asserts it). The restrictions
+   * (`denyAppRemoval`, `denyAppInstallation`) do not count, as on iOS: they
+   * are not blocks ([activeSources] never composes them).
    */
   fun isBlocked(): Boolean = store.read { document ->
     val now = System.currentTimeMillis()
     val zone = TimeZone.getDefault()
     val sources = activeSources(store, selections)
     BlockComposition.shieldsSomething(sources, UnlockController.lifted(document, sources, now, zone))
+  }
+
+  // MARK: - App control
+
+  /**
+   * `denyAppRemoval` / `allowAppRemoval` / `denyAppInstallation` /
+   * `allowAppInstallation`: the flag is written with the engine's desire
+   * in one `update` (as a block is), and the engine is told to look again.
+   * Not a block: the unlock state, the snoozes and the manual block are
+   * untouched, `isBlocked()` does not count it, and a release fold runs
+   * only when nothing else keeps the engine wanted. Idempotent: setting
+   * what is already set writes the same document.
+   */
+  fun setRestriction(kind: RestrictionKind, enabled: Boolean) {
+    store.update { document ->
+      val intentBefore = gaps.intent(document)
+      store.restrictions = store.restrictions.with(kind, enabled)
+      gaps.syncDesired(document, intentBefore)
+    }
+    EngineController.sync(context, "restriction:${kind.name}:${if (enabled) "on" else "off"}")
+  }
+
+  /** Every restriction off (a build without the shield lifting what a fuller build left in the store). */
+  fun clearRestrictions() {
+    store.update { document ->
+      val intentBefore = gaps.intent(document)
+      store.restrictions = Restrictions.NONE
+      gaps.syncDesired(document, intentBefore)
+    }
+    EngineController.sync(context, "restrictions:cleared")
   }
 
   // MARK: - Shield configuration

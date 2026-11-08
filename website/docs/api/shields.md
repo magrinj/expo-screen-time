@@ -288,6 +288,10 @@ else the manual block).
   the title colour.
 - **`backgroundBlurStyle`** is accepted and ignored: the shield is opaque,
   there is nothing behind it to blur.
+- **Restriction targets** (the uninstall dialog, the stores, the installer
+  under [`denyAppRemoval()` / `denyAppInstallation()`](./restrictions.md#android))
+  draw the default configuration's colours and icon with the library's own
+  texts, and honour `openApp` only.
 - **Buttons** do what `setShieldActions` / `setShieldActionsForActivity`
   configured for the owner, with the same precedence; the default, and Back,
   is `close` (Home first, so the blocked app does not come back on its own).

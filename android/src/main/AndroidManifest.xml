@@ -28,8 +28,11 @@
     Package visibility (Android 11+): the launchable apps the picker lists,
     and the home apps, so the usage report and the shield policy can tell a
     launcher from an app (a launcher is not visible otherwise: it has no
-    launcher icon of its own). Deliberately not QUERY_ALL_PACKAGES, which
-    Play restricts.
+    launcher icon of its own); then the targets of the app-control
+    restrictions (RestrictionTargets): the uninstall dialog (ACTION_DELETE
+    on a package), the package installer (ACTION_INSTALL_PACKAGE of an APK)
+    and the stores (ACTION_VIEW of a market://details link). Deliberately
+    not QUERY_ALL_PACKAGES, which Play restricts.
   -->
   <queries>
     <intent>
@@ -39,6 +42,18 @@
     <intent>
       <action android:name="android.intent.action.MAIN" />
       <category android:name="android.intent.category.HOME" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.DELETE" />
+      <data android:scheme="package" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.INSTALL_PACKAGE" />
+      <data android:scheme="content" android:mimeType="application/vnd.android.package-archive" />
+    </intent>
+    <intent>
+      <action android:name="android.intent.action.VIEW" />
+      <data android:scheme="market" android:host="details" />
     </intent>
   </queries>
 
@@ -57,7 +72,7 @@
       android:stopWithTask="false">
       <property
         android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-        android:value="Blocks the apps the user chose to restrict, on the schedule they set, while a restriction is active" />
+        android:value="Blocks the apps the user chose to restrict, on the schedule they set, while a restriction is active, and, when the user turns it on, the screens that remove or install apps" />
     </service>
 
     <!--

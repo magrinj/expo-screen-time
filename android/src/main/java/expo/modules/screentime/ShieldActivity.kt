@@ -45,6 +45,15 @@ import java.util.UUID
  *   contrast against it ([ShieldTextColors], the same rule as iOS), and
  *   the primary button's label, chosen the same way against the colour the
  *   button is painted in, the default accent included.
+ * - **Restriction targets** (`denyAppRemoval`, `denyAppInstallation`:
+ *   [BlockSourceKind.Restriction], named by [EXTRA_RESTRICTION]): the
+ *   texts are the library's (`expo_st_shield_removal_title` and co., the
+ *   host app's label in the subtitle: the user did not choose these apps,
+ *   so the shield says what happened and where to turn it off), the
+ *   colours, icon and buttons the owner's configuration; of the actions,
+ *   `openApp` is honoured and everything else closes
+ *   ([ShieldAction.forRestriction]). A user's own block of the same target
+ *   owns the shield instead, texts included.
  * - **Buttons**: every press is recorded for
  *   `drainShieldInteractions` ([ShieldInteractionQueue]: the pressed app's
  *   handle and the owning activity) and does what `setShieldActions` /
@@ -152,7 +161,15 @@ class ShieldActivity : Activity() {
     var mark = SystemClock.uptimeMillis()
     fun lap(): Long { val now = SystemClock.uptimeMillis(); val d = now - mark; mark = now; return d }
     // From the cache the engine keeps current (one stat to check it): no file read on the way to the first frame.
-    val appearance = ShieldCache.appearance(StateStore(this), intent.getStringExtra(EXTRA_OWNER))
+    val configured = ShieldCache.appearance(StateStore(this), intent.getStringExtra(EXTRA_OWNER))
+    val appearance = when (val kind = restriction()) {
+      null -> configured
+      else -> {
+        val (primaryKeeps, secondaryKeeps) = restrictionButtons()
+        val title = getString(if (kind == RestrictionKind.removal) R.string.expo_st_shield_removal_title else R.string.expo_st_shield_installation_title)
+        configured.forRestriction(title, restrictionSubtitle(), keepSecondaryButton = secondaryKeeps, primaryText = if (primaryKeeps) null else getString(R.string.expo_st_shield_close))
+      }
+    }
     val storeMs = lap()
     val colors = ShieldLayout.colors(this, appearance)
     window.setBackgroundDrawable(ColorDrawable(colors.background))
@@ -171,13 +188,41 @@ class ShieldActivity : Activity() {
     phases = "storeMs=$storeMs windowMs=$windowMs faceMs=$faceMs viewsMs=${lap()}"
   }
 
+  /** The restriction this shield enforces, when the target is a restriction's and no block of the user's owns it. */
+  private fun restriction(): RestrictionKind? = intent.getStringExtra(EXTRA_RESTRICTION)?.let { name -> RestrictionKind.entries.firstOrNull { it.name == name } }
+
+  private fun restrictionSubtitle(): String = getString(R.string.expo_st_shield_restriction_subtitle, applicationInfo.loadLabel(packageManager))
+
+  /**
+   * Whether the configured primary and secondary actions keep their meaning
+   * on a restriction target ([ShieldAction.keepsMeaningOnRestriction]): a
+   * primary button whose action does not reads the library's close label,
+   * a secondary one is left out, so neither shows a label that lies. One
+   * document read, for restriction targets only (the configurations are
+   * small; the appearance itself comes from the cache). A failed read keeps
+   * the primary label and leaves the secondary button out.
+   */
+  private fun restrictionButtons(): Pair<Boolean, Boolean> {
+    val owner = intent.getStringExtra(EXTRA_OWNER)
+    val store = StateStore(this)
+    return try {
+      store.read { document ->
+        val actions = store.shieldActions(document, owner)
+        ShieldAction.keepsMeaningOnRestriction(ShieldAction.configured(actions, ShieldAction.PRIMARY)) to
+          ShieldAction.keepsMeaningOnRestriction(ShieldAction.configured(actions, ShieldAction.SECONDARY))
+      }
+    } catch (e: Exception) {
+      true to false
+    }
+  }
+
   // MARK: - Actions
 
   /** A button press: recorded, then the configured action (see the class comment). */
   private fun onButton(button: String) {
     val owner = intent.getStringExtra(EXTRA_OWNER)
     val action = try {
-      record(button, owner)
+      record(button, owner, restriction() != null)
     } catch (e: Exception) {
       // A document that cannot be written right now: the press is lost, the
       // shield behaves like the default. Never a crash in front of the user.
@@ -201,7 +246,7 @@ class ShieldActivity : Activity() {
    * activity), a lift for `unblock`, a snooze grant for `snooze` (replacing
    * one over the same app; the others run on). Returns the action to act on.
    */
-  private fun record(button: String, owner: String?): ShieldAction {
+  private fun record(button: String, owner: String?, restricted: Boolean): ShieldAction {
     val store = StateStore(this)
     // Resolved before the critical section (a first draw writes the document).
     val selections = SelectionStore(store)
@@ -212,7 +257,9 @@ class ShieldActivity : Activity() {
       // interaction's target can be passed back to temporaryUnlock.
       val handle = ShieldInteractionQueue.Target(TokenHandles.APPLICATION, selections.rememberToken(document, TokenHandles.APPLICATION, target))
       ShieldInteractionQueue.record(document, ShieldInteractionQueue.Entry.press(button, now, handle, owner))
-      when (val action = ShieldAction.configured(store.shieldActions(document, owner), button) ?: ShieldAction.Close) {
+      val configured = ShieldAction.configured(store.shieldActions(document, owner), button) ?: ShieldAction.Close
+      // A restriction target: nothing a button does lifts it.
+      when (val action = if (restricted) ShieldAction.forRestriction(configured) else configured) {
         ShieldAction.Unblock -> {
           // Recorded against the composition on screen: the lift lasts while these sources do.
           ShieldLifts.write(document, ShieldLifts.read(document).plus(sourcesKey, target))
@@ -271,6 +318,8 @@ class ShieldActivity : Activity() {
   companion object {
     const val EXTRA_TARGET = "target"
     const val EXTRA_OWNER = "owner"
+    /** The [RestrictionKind] whose source owns this shield, if one does (absent when a block of the user's owns the target). */
+    const val EXTRA_RESTRICTION = "restriction"
 
     @Volatile
     private var current: WeakReference<ShieldActivity>? = null
@@ -293,7 +342,7 @@ class ShieldActivity : Activity() {
     var sourcesKey: String = ""
 
     /** Starts the shield for [target]; a refusal (no overlay permission) is logged, never thrown. */
-    fun launch(context: Context, target: String, owner: String?) {
+    internal fun launch(context: Context, target: String, owner: String?, restriction: RestrictionKind? = null) {
       val intent = Intent(context, ShieldActivity::class.java)
         // LAUNCH_ADJACENT has no source activity here, so it does not place
         // the shield in a pane, but measured on Android 17 it keeps a split
@@ -301,6 +350,7 @@ class ShieldActivity : Activity() {
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
         .putExtra(EXTRA_TARGET, target)
         .putExtra(EXTRA_OWNER, owner)
+        .putExtra(EXTRA_RESTRICTION, restriction?.name)
       try {
         context.startActivity(intent)
         Log.i(EngineController.TAG, "shield-launch target=$target at=${System.currentTimeMillis()}")

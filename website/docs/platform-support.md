@@ -101,12 +101,14 @@ The Android module declares the same functions, event and views as iOS, so a
 screen shared between the platforms does not crash at import or at render:
 
 - **`getCapabilities()`** answers: `blocking: "friction"`,
+  `appRemovalProtection: "friction"`, `appInstallationBlocking: "friction"`
+  (the engine shields the uninstall dialog, the stores and the package
+  installer: [restrictions](./api/restrictions.md#android)),
   `selectableKinds.applications: true`, `usageReports: true`,
   `shieldOpenApp: "direct"`, the cross-platform `limits`; `categories`,
-  `webDomains`, `webDomainBlocking`, `openApplication`,
-  `appRemovalProtection` and `appInstallationBlocking` are off.
+  `webDomains`, `webDomainBlocking` and `openApplication` are off.
 - **Every function behind an off capability** fails with a coded error.
-  Synchronous functions (`blockWebDomains`, `denyAppRemoval`…) throw it;
+  Synchronous functions (`blockWebDomains`…) throw it;
   asynchronous ones (`openApplication`…) reject with it. `error.code` is
   `"UNSUPPORTED"` and the message names the function.
 - **Components**: `CategoryLabel` and `WebDomainLabel` render their

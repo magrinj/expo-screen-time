@@ -40,7 +40,8 @@ import kotlin.io.encoding.Base64
  * the sources it suspended), the snoozes (`snoozes`), the shield's unblocks
  * (`lifts`) and the interaction queue (`shieldInteractions`), each read and
  * written through its pure codec ([UnlockGrant], [ShieldSnoozes],
- * [ShieldLifts], [ShieldInteractionQueue]) inside one `update`.
+ * [ShieldLifts], [ShieldInteractionQueue]) inside one `update`; stage 4
+ * adds the app-control restrictions (`restrictions`, [Restrictions]).
  */
 internal class StateStore(private val directory: File) {
   constructor(context: Context) : this(File(context.noBackupFilesDir, "expo_screen_time"))
@@ -155,6 +156,36 @@ internal class StateStore(private val directory: File) {
       if (value == null) blocks.remove(MANUAL) else blocks.put(MANUAL, value.toJson())
     }
 
+  // MARK: - Restrictions
+
+  /**
+   * `denyAppRemoval` / `denyAppInstallation` ([Restrictions]): written by
+   * the module together with [engineDesired] in one `update`, as the
+   * manual block is; read by the engine process on every change. Persist
+   * across engine deaths and reboots, as ManagedSettings persists the iOS
+   * flags.
+   */
+  var restrictions: Restrictions
+    get() = read { Restrictions.fromJson(it.optJSONObject(RESTRICTIONS)) }
+    set(value) = update { document ->
+      val admin = adminDisabledAt
+      if (value.any || admin != null) document.put(RESTRICTIONS, value.toJson().also { json -> admin?.let { json.put(ADMIN_DISABLED_AT, it) } }) else document.remove(RESTRICTIONS)
+    }
+
+  /**
+   * When the device admin was last deactivated (Unix ms; null if never, or
+   * cleared), written by the admin receiver's `onDisabled`: the engine holds
+   * the removal shield off for [RestrictionSources.HOLD_OFF_MS] after it.
+   * Kept beside the restrictions it qualifies.
+   */
+  var adminDisabledAt: Long?
+    get() = read { it.optJSONObject(RESTRICTIONS)?.optLong(ADMIN_DISABLED_AT, 0L)?.takeIf { at -> at > 0 } }
+    set(value) = update { document ->
+      val json = document.optJSONObject(RESTRICTIONS) ?: JSONObject().also { document.put(RESTRICTIONS, it) }
+      if (value == null) json.remove(ADMIN_DISABLED_AT) else json.put(ADMIN_DISABLED_AT, value)
+      if (value == null && !Restrictions.fromJson(json).any) document.remove(RESTRICTIONS)
+    }
+
   // MARK: - Monitoring
 
   /**
@@ -171,15 +202,17 @@ internal class StateStore(private val directory: File) {
 
   /**
    * Whether the engine should run, derived from the state: a manual block
-   * in force or any monitored activity (thresholds need usage observation,
-   * schedule boundaries need the alarm). Written by every module mutation
-   * in the same `update` as the state it follows from, so the engine
-   * process never reads a block or a schedule without the desire to run,
+   * in force, any monitored activity (thresholds need usage observation,
+   * schedule boundaries need the alarm) or a restriction in force (its
+   * shield is the engine's). Written by every module mutation in the same
+   * `update` as the state it follows from, so the engine process never
+   * reads a block, a schedule or a restriction without the desire to run,
    * or the reverse.
    */
   fun syncEngineDesired(document: JSONObject) {
     val desired = ManualBlock.fromJson(document.optJSONObject(BLOCKS)?.optJSONObject(MANUAL)) != null ||
-      MonitoringDocument.read(document).activities.isNotEmpty()
+      MonitoringDocument.read(document).activities.isNotEmpty() ||
+      Restrictions.fromJson(document.optJSONObject(RESTRICTIONS)).any
     engine(document).put(DESIRED, desired)
   }
 
@@ -391,6 +424,8 @@ internal class StateStore(private val directory: File) {
     private const val ERRORS = "errors"
     private const val BLOCKS = "blocks"
     private const val MANUAL = "manual"
+    private const val RESTRICTIONS = "restrictions"
+    private const val ADMIN_DISABLED_AT = "adminDisabledAt"
     private const val SHIELD = "shield"
     private const val SHIELD_ACTIONS = "shieldActions"
     private const val DEFAULT = "default"

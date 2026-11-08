@@ -13,10 +13,9 @@ the module ships its own enforcement engine (Kotlin, `android/`).
 - **Both platforms ship.** iOS is OS-enforced and implements every API but
   `openApplication` (iOS cannot launch another app). Android is `friction`: a
   foreground service draws the shield, the user can stop it, and
-  `getEnforcementGaps()` reports such periods. Categories, web domains and the
-  app-removal / installation restrictions are iOS-only, and `openApplication`
-  is off on Android too (the capability is off; the functions fail with
-  `UNSUPPORTED`).
+  `getEnforcementGaps()` reports such periods. Categories and web domains are
+  iOS-only, and `openApplication` is off on Android too (the capability is
+  off; the functions fail with `UNSUPPORTED`).
   `website/docs/platform-support.md` is the user-facing status; the per-API
   plan and its decisions live in
   the platform support page. Read it before

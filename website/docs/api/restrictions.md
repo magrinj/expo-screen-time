@@ -25,3 +25,115 @@ ExpoScreenTime.denyAppRemoval();
 // Later...
 ExpoScreenTime.allowAppRemoval();
 ```
+
+## Android {#android}
+
+Both functions work on Android when `getCapabilities().appRemovalProtection`
+and `appInstallationBlocking` read `"friction"`: every build whose config
+plugin keeps the shield ([`android.features`](../configuration.md#android-features)
+with `blocking`). The mechanism is the same engine that draws the
+[shield](./shields.md#android) over a blocked app, so the restriction holds
+exactly as a block does, and lifts the same way.
+
+### What is shielded
+
+- **`denyAppRemoval()`** shields the system's **uninstall dialog**: the
+  package installer's confirmation that every removal route ends in, whether
+  the user came from Settings › Apps › *app* › Uninstall, from the launcher
+  (drag to "Uninstall", long-press › Uninstall) or from a file manager.
+  Settings and the launcher themselves stay reachable.
+- **`denyAppInstallation()`** shields the **stores** (every app that handles
+  `market://details` links: the Play Store, the Galaxy Store on Samsung, any
+  other store installed) and the **package installer**, which is what an APK
+  opened from a browser download, Files or a messaging app launches.
+
+:::caution Play's screens inside other apps
+The whole store package is shielded, and Play draws its in-app purchase
+sheet, in-app review and in-app update screens as activities of the Play Store
+package. Under `denyAppInstallation()` those are expected to be shielded too,
+in every app, yours included. Not measured yet: the emulator image used so far
+has no Play Store.
+:::
+
+The targets are resolved from intents on the device when the restriction is
+turned on and whenever a package changes, never from hard-coded names, so an
+OEM installer or a third store is covered; the installer is looked up among
+the system's apps only, so a third-party app the user made the default for
+APKs is not shielded whole. They are **package-level**: the
+installer hosts both the uninstall dialog and the install flow, so under
+`denyAppRemoval()` alone opening an APK is also shielded, and under
+`denyAppInstallation()` alone so is the uninstall dialog.
+
+The restriction is a block source of the engine, below the user's own blocks:
+a `blockSelection` that also covers a store owns that shield and its
+[configuration](./shields.md); when either the block or the restriction goes,
+the other keeps the store shielded. `unblockAll()`, `isBlocked()`, the
+[temporary unlock](./blocking.md#temporary-unlock-earned-time) and the shield's
+`unblock` and `snooze` actions concern blocks only: a restriction is never
+lifted by them (a store the user unblocks from its block's shield stays
+shielded by the restriction, with the restriction's texts and buttons), and
+`isBlocked()` is `false` with a restriction alone, as on iOS. The flags persist across engine deaths and reboots. There is no getter on
+either platform.
+
+### The shield's text and buttons
+
+A restriction target is not an app the user chose, so its shield says what
+happened and where to turn it off, in the library's strings (override them in
+your app's `res/values`, as for `expo_st_shield_title`): the title
+`expo_st_shield_removal_title` ("Removing apps is turned off") or
+`expo_st_shield_installation_title` ("Installing apps is turned off"), and the
+subtitle `expo_st_shield_restriction_subtitle` ("Turn it back on in %1$s.",
+with your app's name). Colours, icon and button labels come from the default
+[`ShieldConfig`](./shields.md) (`setShieldConfig`); when a block of yours
+covers the same target, that block owns the shield, texts included. Of the
+[shield actions](./shields.md#shield-actions), `openApp` is honoured (it opens
+your app, where the switch is) and every other action closes the shield:
+`unblock` and `snooze` never lift a restriction, since nothing a child can
+reach should. The primary button is always shown, with the library's close label
+(`expo_st_shield_close`, "OK") when its action is `unblock`, `snooze` or
+`defer`; a secondary button with one of those actions is left out. Neither
+shows a label that would not do what it says. Presses are recorded for
+[`drainShieldInteractions()`](./blocking.md#shield-interactions) with the
+target's handle, like any other.
+
+### This app's own removal
+
+The host app is never shielded. Its removal is guarded by the
+[`deviceAdmin` permission step](./permissions.md#android): while the admin is
+active, Settings › Apps › *your app* › Uninstall opens the device-admin page
+("Deactivate & uninstall"), which is Settings, always reachable; the shield
+never meets that path: "Deactivate & uninstall" stops your app before the
+system shows its uninstall dialog. A user who turns the admin off in Settings ›
+Device admin apps instead, then uninstalls from App info, keeps your app (and
+its engine) running in between, so for two minutes after the admin is
+deactivated the engine leaves the package installer unshielded under both
+restrictions (the stores stay shielded): that path stays clear too, whichever
+restrictions are on. A re-activation ends the window. Without the admin, the
+host's own uninstall dialog is shielded like any other: the user turns the
+restrictions off in your app (both, when both are on: the uninstall dialog and
+the install flow are one installer package), or stops the engine in Settings
+(a recorded gap). Give the user an off switch in
+your UI and request the `deviceAdmin` step first: Google Play's Unwanted
+Software rules ask that removing *your* app stays clear, and the shield's text
+names your app as the place to turn the restriction off.
+
+### What stays possible (`"friction"`)
+
+| Stays possible | Why |
+|---|---|
+| Play Store › *app* › Uninstall, "Manage apps & device" | Play removes apps through its own privileged permission, without the system dialog. `denyAppRemoval()` does not shield the stores (iOS keeps the App Store too); a parental app calls both functions. |
+| Play's remote installs, store **auto-updates**, enterprise pushes | No UI on the phone. |
+| `adb install` / `adb uninstall` | No UI; the host is protected only by an active admin. |
+| A tap faster than the shield | The dialog can be on screen before the shield lands. Measured on the Android 17 emulator, on a host shared with other jobs: the shield drew a median 277 ms and a p95 739 ms (max 751) after the installer started, while the dialog's confirm button did not act before about 600 ms, and 0 of 100 scripted taps at 100–1500 ms removed the package (without the restriction, the same taps removed it from 600 ms on). A fast phone draws its dialog sooner; the window is small, not zero. |
+| Another profile's store or installer (work profile, Private Space, Secure Folder, cloned apps) | Usage access sees the main profile only; the opt-in [accessibility engine](../configuration.md#android-accessibility-engine) covers them. |
+| Stopping the engine (Task Manager "Stop", force stop, revoking usage access or the overlay) | The `friction` level of every Android block; each is recorded by [`getEnforcementGaps()`](./capabilities.md#android-gaps) and the restart chain repairs what it can. |
+| Deactivating the device admin, then removing the host app | Two deliberate steps in Settings with the library's warning. Not a gap: friction lifted on purpose. |
+| Removing or installing any app in the two minutes after the admin's deactivation | The package installer is left unshielded in that window, so that "Deactivate & uninstall" stays clear (above); the admin can then be re-activated from Settings. Not recorded as a gap. |
+
+A restriction alone keeps the engine polling at 100 ms while the screen is
+on, the same cost as a block (about 0.05 % of battery per 8 h of screen-on
+use, measured).
+
+Hard blocking (`setUninstallBlocked`, `DISALLOW_INSTALL_APPS`) needs a Device
+Owner, which a consumer app cannot be; that is why the capability is
+`"friction"` and not `"enforced"`.

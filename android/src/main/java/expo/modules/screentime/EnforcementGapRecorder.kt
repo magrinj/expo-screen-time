@@ -31,8 +31,8 @@ import java.util.TimeZone
  * | `getEnforcementGaps(since)` | app | [gaps] |
  *
  * The intent ([EnforcementIntent.of]) is read from the document the fold
- * runs on: the manual block and the monitoring state as they are, in the
- * device's current zone. A release reads it **before** the caller clears
+ * runs on: the manual block, the monitoring state and the restrictions as
+ * they are, in the device's current zone. A release reads it **before** the caller clears
  * the block or the activities ([released] takes it as an argument).
  */
 internal class EnforcementGapRecorder(private val context: Context, private val store: StateStore) {
@@ -185,7 +185,7 @@ internal class EnforcementGapRecorder(private val context: Context, private val 
 
   /** The intent the document describes, in the device's current zone. */
   fun intent(document: JSONObject): EnforcementIntent =
-    EnforcementIntent.of(store.manualBlock, MonitoringDocument.read(document), TimeZone.getDefault())
+    EnforcementIntent.of(store.manualBlock, MonitoringDocument.read(document), TimeZone.getDefault(), store.restrictions)
 
   /**
    * The boot: `BOOT_COUNT` (API 24+; null when the setting cannot be read)

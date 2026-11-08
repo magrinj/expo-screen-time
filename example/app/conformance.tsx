@@ -19,9 +19,13 @@
  *   `selectableKinds.categories` is on (C05 skips its category half otherwise).
  */
 import {
+  allowAppInstallation,
+  allowAppRemoval,
   blockSelection,
   clearMonitorEvents,
   deleteSelection,
+  denyAppInstallation,
+  denyAppRemoval,
   drainShieldInteractions,
   exportSelection,
   getCapabilities,
@@ -511,6 +515,38 @@ const scenarios: Scenario[] = [
       setReportTemplate(<Report.VStack><Report.Text text="conformance" /></Report.VStack>);
       clearReportTemplate();
       return "serializer checked, 1 rejected template; template set and cleared";
+    },
+  },
+  {
+    id: "C15",
+    title: "App restrictions follow their capability",
+    async run(caps) {
+      // No getter on either platform: each restriction is turned on, then off,
+      // and `isBlocked()` must not count it (a restriction is not a block).
+      // Enforcement (the shield over the uninstall dialog and the stores on
+      // Android) is a device run, not an API-observable fact.
+      const parts: string[] = [];
+      if (caps.appRemovalProtection === "none") {
+        await expectCode("UNSUPPORTED", () => denyAppRemoval());
+        await expectCode("UNSUPPORTED", () => allowAppRemoval());
+        parts.push("removal UNSUPPORTED");
+      } else {
+        denyAppRemoval();
+        if (caps.blocking !== "none") expect(!isBlocked(), "isBlocked() ignores denyAppRemoval");
+        allowAppRemoval();
+        parts.push(`removal denied then allowed (${caps.appRemovalProtection})`);
+      }
+      if (caps.appInstallationBlocking === "none") {
+        await expectCode("UNSUPPORTED", () => denyAppInstallation());
+        await expectCode("UNSUPPORTED", () => allowAppInstallation());
+        parts.push("installation UNSUPPORTED");
+      } else {
+        denyAppInstallation();
+        if (caps.blocking !== "none") expect(!isBlocked(), "isBlocked() ignores denyAppInstallation");
+        allowAppInstallation();
+        parts.push(`installation denied then allowed (${caps.appInstallationBlocking})`);
+      }
+      return parts.join(", ");
     },
   },
 ];

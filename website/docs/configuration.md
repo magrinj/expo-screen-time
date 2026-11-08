@@ -72,10 +72,16 @@ To include only specific targets, use `expo.extra.expoScreenTime.targets`:
 The plugin needs nothing on Android: the permissions the engine uses
 (`PACKAGE_USAGE_STATS`, `SYSTEM_ALERT_WINDOW`, the foreground service and its
 `specialUse` type, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`), the
-launcher and home `<queries>` intents (never `QUERY_ALL_PACKAGES`), the enforcement
+`<queries>` intents (never `QUERY_ALL_PACKAGES`), the enforcement
 service in its own `:screentime` process, the boot and update receivers and
 the device-admin receiver come from the library's own manifest, merged into
-yours by Gradle.
+yours by Gradle. The `<queries>` intents are the launcher and home intents
+(the picker's list, and telling a launcher from an app) and the four the
+[app restrictions](./api/restrictions.md#android) resolve their targets by:
+`ACTION_DELETE` on a `package:` URI (the uninstall dialog),
+`ACTION_INSTALL_PACKAGE` and `ACTION_VIEW` of an APK (the package installer),
+and `ACTION_VIEW` of a `market://details` link (the stores). Targeted
+`<queries>` is the form Google Play prefers.
 
 Three options, under `expo.extra.expoScreenTime.android`:
 

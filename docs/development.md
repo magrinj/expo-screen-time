@@ -112,8 +112,8 @@ wire it into the matching tab.
 
 Settings › **Conformance suite** (`example/app/conformance.tsx`) runs scripted
 scenarios through the public API. Each scenario branches on `getCapabilities()`,
-never on `Platform.OS`: where a capability is off (categories, web domains,
-`openApplication` and the app-removal / installation restrictions on Android),
+never on `Platform.OS`: where a capability is off (categories, web domains and
+`openApplication` on Android),
 it asserts the coded `UNSUPPORTED` error instead. The screen ends with
 `CONFORMANCE PASS n/n` or `CONFORMANCE FAIL k/n`.
 

@@ -26,4 +26,13 @@
   <string name="expo_st_shield_title">Blocked</string>
   <string name="expo_st_shield_subtitle">This app is blocked right now.</string>
   <string name="expo_st_shield_close">OK</string>
+  <!--
+    The shield over a restriction target (denyAppRemoval: the uninstall dialog;
+    denyAppInstallation: the stores and the package installer). The user did not
+    choose these apps, so the texts say what happened and where to turn it off:
+    %1$s is this app's label. Consumers override them in their own res/values.
+  -->
+  <string name="expo_st_shield_removal_title">Removing apps is turned off</string>
+  <string name="expo_st_shield_installation_title">Installing apps is turned off</string>
+  <string name="expo_st_shield_restriction_subtitle">Turn it back on in %1$s.</string>
 </resources>

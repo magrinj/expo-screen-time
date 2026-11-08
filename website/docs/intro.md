@@ -16,9 +16,8 @@ has no Screen Time API, it ships its own enforcement engine.
 :::note How enforcement differs
 iOS restrictions are enforced by the OS. On Android the engine is `friction`:
 a foreground service draws the shield, and the user can stop it from the
-system settings, which `getEnforcementGaps()` reports. Categories, web
-domains and the app-removal and installation restrictions are iOS-only
-today — see [Platform support](./platform-support.md).
+system settings, which `getEnforcementGaps()` reports. Categories and web
+domains are iOS-only today — see [Platform support](./platform-support.md).
 :::
 
 ## Features
@@ -26,7 +25,7 @@ today — see [Platform support](./platform-support.md).
 - **Permissions** — one call site; the steps the user must allow come back as data (iOS: the Family Controls prompt; Android: the Settings toggles, one screen at a time)
 - **App blocking** — block the apps the user picks in the native picker, as a blocklist or an allowlist (categories and web domains: iOS)
 - **Web domain blocking** — block specific domains without user selection (iOS)
-- **App Store restrictions** — prevent app installation and removal (iOS)
+- **App Store restrictions** — prevent app installation and removal (Android: a shield over the stores, the package installer and the uninstall dialog)
 - **Schedule monitoring** — time-based blocking and usage thresholds, with events
 - **Shield customization** — customize the blocking screen appearance
 - **Shield actions** — configure button behaviors (close, snooze, unblock, open app)
