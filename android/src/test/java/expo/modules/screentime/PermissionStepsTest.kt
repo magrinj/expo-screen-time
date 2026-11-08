@@ -118,11 +118,36 @@ class PermissionStepsTest {
   }
 
   @Test
+  fun `the accessibility step is listed only in a build that declares the service, for blocking, recommended, after usage access`() {
+    val optedIn = BuildManifest.full.copy(accessibility = true)
+    val plans = PermissionSteps.plan(PermissionSteps.defaultFeatures, child = false, device = stock, build = optedIn)
+    assertEquals(listOf(StepId.overlay, StepId.usageAccess, StepId.accessibility, StepId.notifications, StepId.deviceAdmin, StepId.batteryOptimization), ids(plans))
+    // Recommended, whatever the member: the main profile is enforced without it.
+    assertEquals(listOf(StepId.overlay, StepId.usageAccess), required(plans))
+    assertEquals(listOf(StepId.overlay, StepId.usageAccess, StepId.notifications, StepId.deviceAdmin), required(PermissionSteps.plan(PermissionSteps.defaultFeatures, child = true, device = stock, build = optedIn)))
+    assertEquals(Kind.settings, plans.first { it.id == StepId.accessibility }.kind)
+    // Not in the default build.
+    assertFalse(StepId.accessibility in ids(PermissionSteps.plan(PermissionSteps.defaultFeatures, child = false, device = stock)))
+    // Only the shield uses it: not for monitoring, usage reports or removal protection alone.
+    assertFalse(StepId.accessibility in ids(PermissionSteps.plan(listOf(Feature.monitoring), child = false, device = stock, build = optedIn)))
+    assertFalse(StepId.accessibility in ids(PermissionSteps.plan(listOf(Feature.usageReports), child = false, device = stock, build = optedIn)))
+    assertFalse(StepId.accessibility in ids(PermissionSteps.plan(listOf(Feature.appRemovalProtection), child = false, device = stock, build = optedIn)))
+    assertTrue(StepId.accessibility in ids(PermissionSteps.plan(listOf(Feature.blocking), child = false, device = stock, build = optedIn)))
+    // A hand-trimmed manifest that kept the service but lost the shield has nothing for it to serve.
+    assertFalse(StepId.accessibility in ids(PermissionSteps.plan(listOf(Feature.blocking), child = false, device = stock, build = optedIn.copy(shield = false))))
+    assertFalse(StepId.accessibility in ids(PermissionSteps.plan(listOf(Feature.blocking), child = false, device = stock, build = optedIn.copy(engine = false))))
+    // Android 12: no notification step, the coverage step still right after usage access.
+    assertEquals(listOf(StepId.overlay, StepId.usageAccess, StepId.accessibility, StepId.deviceAdmin, StepId.batteryOptimization), ids(PermissionSteps.plan(PermissionSteps.defaultFeatures, child = false, device = android12, build = optedIn)))
+  }
+
+  @Test
   fun `a requested step is classified`() {
     assertEquals(PermissionSteps.RequestedStep.Next, PermissionSteps.requestedStep(null))
     assertEquals(PermissionSteps.RequestedStep.Step(StepId.usageAccess), PermissionSteps.requestedStep("usageAccess"))
     assertEquals(PermissionSteps.RequestedStep.NotOnThisPlatform("screenTime"), PermissionSteps.requestedStep("screenTime"))
-    assertEquals(PermissionSteps.RequestedStep.NotOnThisPlatform("accessibility"), PermissionSteps.requestedStep("accessibility"))
+    // The accessibility step exists only in a build that declares the service (today's INVALID_CONFIG elsewhere).
+    assertEquals(PermissionSteps.RequestedStep.NotInBuild("accessibility"), PermissionSteps.requestedStep("accessibility"))
+    assertEquals(PermissionSteps.RequestedStep.Step(StepId.accessibility), PermissionSteps.requestedStep("accessibility", BuildManifest.full.copy(accessibility = true)))
     assertEquals(PermissionSteps.RequestedStep.Unknown("usage"), PermissionSteps.requestedStep("usage"))
   }
 

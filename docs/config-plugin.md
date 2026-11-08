@@ -82,10 +82,17 @@ no `path`. New wiring ⇒ new assertion.
   `<queries>` intent, the engine service, the receivers. Gradle's manifest
   merger adds them once, so they are idempotent by construction and do not
   depend on the plugin running. The plugin writes **only optional, app-level
-  entries** (today `isMonitoringTool` for `android.parentalControl`), each
+  entries** (`isMonitoringTool` for `android.parentalControl`; the
+  accessibility `<service>` and its `QUERY_ADVANCED_PROTECTION_MODE`
+  permission for `android.accessibilityEngine`), each
   looked up by name before it is added and removed when its option is off
   (no stale entry on `--no-clean`). Same split as expo-widgets (its receiver
   is in its library manifest; `POST_NOTIFICATIONS` is a plugin option).
+- **The accessibility service is added, never gated.** It changes a
+  consumer's Play review, so it is not in the library manifest and has no
+  row in `ANDROID_MANIFEST_GATES`: the default build stays byte-identical
+  (the jest test asserts it, plus the off → on → off round trip). The
+  option needs `blocking` in `features`; the resolver throws otherwise.
 - **`android.features` gates the library manifest.** `ANDROID_MANIFEST_GATES`
   in `withScreenTimeAndroid.ts` is the one table mapping each library
   component and permission to the features that need it; the plugin writes

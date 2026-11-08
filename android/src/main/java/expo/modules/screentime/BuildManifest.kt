@@ -34,6 +34,15 @@ internal data class BuildManifest(
   val usageAccess: Boolean,
   /** `POST_NOTIFICATIONS`: the `notifications` permission step (the engine's notice). */
   val notifications: Boolean,
+  /**
+   * `ScreenTimeAccessibilityService`: the accessibility detector the config
+   * plugin's `android.accessibilityEngine` option declares (added on
+   * opt-in, never removed by a feature, so [full] does not have it). The
+   * `accessibility` permission step is listed iff this holds, with the
+   * shield. The engine never asks: if the service is declared, Android
+   * binds it when the user enables it; if not, nothing runs.
+   */
+  val accessibility: Boolean = false,
 ) {
   /** `getCapabilities().blocking` is `friction` iff this holds; else `none`. */
   val blocking: Boolean get() = engine && shield
@@ -62,6 +71,7 @@ internal data class BuildManifest(
         deviceAdmin = ScreenTimeDeviceAdminReceiver::class.java.name in receivers,
         usageAccess = Manifest.permission.PACKAGE_USAGE_STATS in permissions,
         notifications = Manifest.permission.POST_NOTIFICATIONS in permissions,
+        accessibility = ScreenTimeAccessibilityService::class.java.name in services,
       )
 
     /**
@@ -83,6 +93,14 @@ internal data class BuildManifest(
         Log.w(EngineController.TAG, "build manifest: $what not resolved (${e.javaClass.simpleName}: ${e.message}); assuming declared")
         true
       }
+      fun declaredOrAbsent(what: String, lookup: () -> Any?): Boolean = try {
+        lookup() != null
+      } catch (e: PackageManager.NameNotFoundException) {
+        false
+      } catch (e: Exception) {
+        Log.w(EngineController.TAG, "build manifest: $what not resolved (${e.javaClass.simpleName}: ${e.message}); assuming absent")
+        false
+      }
       val permissions: Collection<String> = try {
         packageInfo(pm, pkg).requestedPermissions?.toList() ?: emptyList()
       } catch (e: Exception) {
@@ -90,7 +108,11 @@ internal data class BuildManifest(
         listOf(Manifest.permission.SYSTEM_ALERT_WINDOW, Manifest.permission.PACKAGE_USAGE_STATS, Manifest.permission.POST_NOTIFICATIONS)
       }
       return from(
-        services = listOfNotNull(ScreenTimeEngineService::class.java.name.takeIf { declared("engine service") { serviceInfo(pm, ComponentName(pkg, it)) } }),
+        services = listOfNotNull(
+          ScreenTimeEngineService::class.java.name.takeIf { declared("engine service") { serviceInfo(pm, ComponentName(pkg, it)) } },
+          // Added by the plugin on opt-in: "not declared" is the default build, so a failed probe reads as absent here.
+          ScreenTimeAccessibilityService::class.java.name.takeIf { declaredOrAbsent("accessibility service") { serviceInfo(pm, ComponentName(pkg, it)) } },
+        ),
         activities = listOfNotNull(ShieldActivity::class.java.name.takeIf { declared("shield activity") { activityInfo(pm, ComponentName(pkg, it)) } }),
         receivers = listOfNotNull(ScreenTimeDeviceAdminReceiver::class.java.name.takeIf { declared("device admin receiver") { receiverInfo(pm, ComponentName(pkg, it)) } }),
         permissions = permissions,

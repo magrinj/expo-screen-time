@@ -39,6 +39,9 @@ internal class EnforcementGapRecorder(private val context: Context, private val 
   /** The engine process's name as `ApplicationExitInfo` reports it (`android/src/main/AndroidManifest.xml`, `:screentime`). */
   val engineProcess: String = "${context.packageName}:screentime"
 
+  /** The build declares the accessibility detector; without it no scoped gap is kept ([EnforcementGapTracker.observeAccessibility]). */
+  private val detectorDeclared by lazy { BuildManifest.resolve(context).accessibility }
+
   /** Engine process: the service is up and promoted. Inside the caller's `update`, only when the engine is wanted. */
   fun engineStarted(document: JSONObject, pid: Int) {
     val now = System.currentTimeMillis()
@@ -80,12 +83,16 @@ internal class EnforcementGapRecorder(private val context: Context, private val 
   fun heartbeat(pid: Int, reason: String, shutdown: Boolean = false) = store.update { document ->
     val now = System.currentTimeMillis()
     val missing = EnforcementGapTracker.ENFORCEMENT_STEPS - granted()
+    val coverage = accessibility()
     val before = EnforcementGapTracker.load(document)
     val after = EnforcementGapTracker.update(document) {
-      it.heartbeat(now, pid, permissionsApproved = missing.isEmpty(), missing = missing.map { step -> step.name }, shutdown = shutdown, intent = intent(document))
+      val intent = intent(document)
+      it.heartbeat(now, pid, permissionsApproved = missing.isEmpty(), missing = missing.map { step -> step.name }, shutdown = shutdown, intent = intent)
+        .observeAccessibility(now, coverage.enabled, coverage.bound, coverage.blocked, intent, declared = detectorDeclared)
     }
     if (after.hasOpenPermissionGap && !before.hasOpenPermissionGap) Log.w(TAG, "enforcement gap open: permission revoked (${missing.joinToString()}; $reason)")
     if (!after.hasOpenPermissionGap && before.hasOpenPermissionGap) Log.i(TAG, "enforcement gap closed: permissions back ($reason)")
+    logCoverage(before, after, coverage, reason)
     if (shutdown) Log.i(TAG, "shutdown beat at $now")
   }
 
@@ -142,15 +149,25 @@ internal class EnforcementGapRecorder(private val context: Context, private val 
     val boot = boot()
     val intent = intent(document)
     val granted = granted()
+    val coverage = accessibility()
     val before = EnforcementGapTracker.load(document)
     val after = EnforcementGapTracker.update(document) { tracker ->
       val exits = exits()
       val withExits = if (exits == null) tracker else tracker.recordExits(exits, engineProcess, now, intent)
       val run = withExits.run
       val alive = run?.pid?.let { engineAlive(it) } ?: false
-      withExits.observeEngine(now, alive, boot.timeMs, boot.count).observePermissions(granted, now, intent).settle(now, intent)
+      withExits.observeEngine(now, alive, boot.timeMs, boot.count)
+        .observePermissions(granted, now, intent)
+        .observeAccessibility(now, coverage.enabled, coverage.bound, coverage.blocked, intent, declared = detectorDeclared)
+        .settle(now, intent)
     }
     if (after.gaps != before.gaps) Log.i(TAG, "enforcement gaps observed ($reason): ${after.gaps.size} (${after.gaps.count { it.isOpen }} open)")
+    logCoverage(before, after, coverage, reason)
+  }
+
+  private fun logCoverage(before: EnforcementGapTracker, after: EnforcementGapTracker, coverage: AccessibilityCoverage, reason: String) {
+    if (after.hasOpenAccessibilityGap && !before.hasOpenAccessibilityGap) Log.w(TAG, "enforcement gap open: other profiles not covered ($coverage; $reason)")
+    if (!after.hasOpenAccessibilityGap && before.hasOpenAccessibilityGap) Log.i(TAG, "enforcement gap closed: other profiles covered again ($reason)")
   }
 
   /** `getEnforcementGaps(since)`: the stored gaps, open ones clipped to the intent as of now, as JS records. */
@@ -225,6 +242,21 @@ internal class EnforcementGapRecorder(private val context: Context, private val 
     }
   }
 
+  /**
+   * The accessibility detector's state: enabled in Settings, bound (its
+   * store record says so and that process is alive; in the engine process
+   * the bound instance itself), blocked by Advanced Protection. Also logs
+   * whether `AccessibilityManager` lists it, the proposal's open check
+   * (§2.6), beside the record the decision rests on.
+   */
+  fun accessibility(): AccessibilityCoverage {
+    val record = store.accessibilityRecord()
+    val enabled = AccessibilityHealth.isEnabled(context)
+    val bound = ScreenTimeAccessibilityService.current != null || AccessibilityHealth.isBound(record) { pid -> engineAlive(pid) }
+    val blocked = enabled && AccessibilityHealth.isBlockedByAdvancedProtection(context)
+    return AccessibilityCoverage(enabled, bound, blocked, listedByManager = if (enabled) AccessibilityHealth.isListedByManager(context) else false)
+  }
+
   /** The enforcement steps granted right now: usage access and the overlay, read as the permission requester reads them. */
   fun granted(): Set<PermissionSteps.StepId> {
     val granted = LinkedHashSet<PermissionSteps.StepId>()
@@ -238,6 +270,11 @@ internal class EnforcementGapRecorder(private val context: Context, private val 
   companion object {
     const val TAG = EngineController.TAG
   }
+}
+
+/** What [EnforcementGapRecorder.accessibility] read; `listedByManager` is logged, never decided on. */
+internal data class AccessibilityCoverage(val enabled: Boolean, val bound: Boolean, val blocked: Boolean, val listedByManager: Boolean) {
+  override fun toString() = "enabled=$enabled bound=$bound blocked=$blocked listedByManager=$listedByManager"
 }
 
 /** The OS reads of the two enforcement steps, shared by the permission requester and the gap recorder. */

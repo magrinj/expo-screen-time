@@ -1,4 +1,4 @@
-import { AndroidConfig, ConfigPlugin, withAndroidManifest } from 'expo/config-plugins';
+import { AndroidConfig, ConfigPlugin, WarningAggregator, withAndroidManifest } from 'expo/config-plugins';
 
 /**
  * The contract's `ScreenTimeFeature` names (`src/ExpoScreenTime.types.ts`),
@@ -50,12 +50,30 @@ export type ScreenTimeAndroidOptions = {
    * Android only: the iOS build is shaped by `expo.extra.expoScreenTime.targets`.
    */
   features?: AndroidFeature[];
+  /**
+   * Adds the library's `AccessibilityService` to the app manifest, so the
+   * blocking engine also receives foreground events from every profile: a
+   * blocked app opened from a work profile, Private Space or a cloned copy
+   * (Samsung Dual Messenger) is shielded too, which the usage-access engine
+   * alone cannot see. The engine runs as before; the service is one more
+   * detector, enabled by the user in Settings › Accessibility through the
+   * recommended `accessibility` permission step. Default `false`.
+   *
+   * **Declares `BIND_ACCESSIBILITY_SERVICE` to Google Play**: the
+   * AccessibilityService API declaration, a video and an in-app prominent
+   * disclosure shown before the user is sent to Settings become mandatory
+   * (`docs/proposals/android-accessibility-engine.md`, §4). Needs
+   * `blocking` among `features`; the prebuild fails otherwise. Turning the
+   * option off removes the entry again.
+   */
+  accessibilityEngine?: boolean;
 };
 
 /** The options with their defaults applied. */
 export type ResolvedScreenTimeAndroidOptions = {
   parentalControl: boolean;
   features: AndroidFeature[];
+  accessibilityEngine: boolean;
 };
 
 /**
@@ -75,6 +93,34 @@ export const IS_MONITORING_TOOL_CHILD = 'child_monitoring';
  * so a `--no-clean` prebuild after an upgrade keeps one flag, spelled right.
  */
 export const LEGACY_IS_MONITORING_TOOL = 'IsMonitoringTool';
+
+/**
+ * The accessibility detector (`android.accessibilityEngine`): the service
+ * class the library ships, declared in the app manifest on opt-in (never in
+ * the library manifest: it changes a consumer's Play review, so the default
+ * build must stay byte-identical). Its XML (`@xml/expo_st_accessibility_service`:
+ * window-state events only, no window content, `isAccessibilityTool="false"`)
+ * and its strings come from the library's `res/`; the app overrides the
+ * strings in its own `res/values` as it does for `expo_st_notice_*`. The
+ * query permission is what lets the module read Android 17's Advanced
+ * Protection mode, which disables every non-tool accessibility service
+ * (the step then reads `restricted`); it is a `normal` permission, shown
+ * to nobody.
+ */
+export const ACCESSIBILITY_SERVICE = 'expo.modules.screentime.ScreenTimeAccessibilityService';
+export const ACCESSIBILITY_SERVICE_META_DATA = 'android.accessibilityservice';
+export const ACCESSIBILITY_SERVICE_RESOURCE = '@xml/expo_st_accessibility_service';
+export const ACCESSIBILITY_SERVICE_LABEL = '@string/expo_st_accessibility_label';
+export const ACCESSIBILITY_SERVICE_INTENT_ACTION = 'android.accessibilityservice.AccessibilityService';
+export const BIND_ACCESSIBILITY_SERVICE = 'android.permission.BIND_ACCESSIBILITY_SERVICE';
+export const QUERY_ADVANCED_PROTECTION_MODE = 'android.permission.QUERY_ADVANCED_PROTECTION_MODE';
+
+/** What the prebuild prints once when the option is on. */
+export const ACCESSIBILITY_ENGINE_WARNING =
+  '`android.accessibilityEngine` declares an AccessibilityService (BIND_ACCESSIBILITY_SERVICE). ' +
+  'Google Play then requires the AccessibilityService API declaration form, a video of the consent flow, ' +
+  'and a prominent disclosure shown in the app before the user is sent to Settings › Accessibility ' +
+  '(docs: configuration › Android › accessibilityEngine).';
 
 
 /** A manifest element of the library that only some features need. */
@@ -151,9 +197,19 @@ export function getScreenTimeAndroidOptions(config: {
   extra?: Record<string, any>;
 }): ResolvedScreenTimeAndroidOptions {
   const options = (config.extra?.expoScreenTime?.android ?? {}) as ScreenTimeAndroidOptions;
+  const features = resolveFeatures(options.features);
+  const accessibilityEngine = options.accessibilityEngine === true;
+  if (accessibilityEngine && !features.includes('blocking')) {
+    throw new Error(
+      `[expo-screen-time] \`expo.extra.expoScreenTime.android.accessibilityEngine\` needs "blocking" in ` +
+        `\`expo.extra.expoScreenTime.android.features\` (got ${JSON.stringify(features)}): the accessibility ` +
+        `service only serves the shield. Add "blocking" to \`features\`, or turn \`accessibilityEngine\` off.`
+    );
+  }
   return {
     parentalControl: options.parentalControl === true,
-    features: resolveFeatures(options.features),
+    features,
+    accessibilityEngine,
   };
 }
 
@@ -213,7 +269,9 @@ const isRemoveNode = (element: ManifestElement, gate: ManifestGate) =>
  * launcher intent, the engine service, the receivers) is declared in the
  * library's own `android/src/main/AndroidManifest.xml` and merged by Gradle,
  * which is idempotent by construction. The app manifest gets only optional
- * entries: the `isMonitoringTool` flag, and one `tools:node="remove"` per
+ * entries: the `isMonitoringTool` flag, the accessibility service of
+ * `accessibilityEngine` ([applyAccessibilityService]), and one
+ * `tools:node="remove"` per
  * library element the chosen `features` do not need (`ANDROID_MANIFEST_GATES`),
  * which Gradle's merger then drops from the merged manifest together with
  * the element, from whichever library manifest declared it (the semantics
@@ -247,6 +305,8 @@ export function applyScreenTimeAndroidManifest(
     AndroidConfig.Manifest.removeMetaDataItemFromMainApplication(application, IS_MONITORING_TOOL);
   }
 
+  applyAccessibilityService(manifest, application, options.accessibilityEngine, declaredPermissions);
+
   const removed = removedGates(options.features);
   for (const gate of ANDROID_MANIFEST_GATES) {
     const parent = parentOf(manifest, gate);
@@ -274,8 +334,65 @@ export function applyScreenTimeAndroidManifest(
   return manifest;
 }
 
+/**
+ * The `<service>` entry of the accessibility detector, as the proposal
+ * writes it: exported (the system binds it), in the engine's `:screentime`
+ * process (the hint to the engine is a direct call), guarded by
+ * `BIND_ACCESSIBILITY_SERVICE` so only the system can bind it, with its
+ * intent filter and the pointer to the library's XML.
+ */
+export function accessibilityServiceElement(): ManifestElement & Record<string, unknown> {
+  return {
+    $: {
+      'android:name': ACCESSIBILITY_SERVICE,
+      'android:exported': 'true',
+      'android:process': ':screentime',
+      'android:label': ACCESSIBILITY_SERVICE_LABEL,
+      'android:permission': BIND_ACCESSIBILITY_SERVICE,
+    },
+    'intent-filter': [{ action: [{ $: { 'android:name': ACCESSIBILITY_SERVICE_INTENT_ACTION } }] }],
+    'meta-data': [{ $: { 'android:name': ACCESSIBILITY_SERVICE_META_DATA, 'android:resource': ACCESSIBILITY_SERVICE_RESOURCE } }],
+  };
+}
+
+/**
+ * `android.accessibilityEngine`: the service entry and the Advanced
+ * Protection query permission, looked up by name before they are added and
+ * removed when the option is off, like the `isMonitoringTool` entry (a
+ * consumer who declared the service by hand keeps one entry, the one the
+ * option implies). A permission the app requests itself
+ * (`android.permissions`) is never removed.
+ */
+function applyAccessibilityService(
+  manifest: AndroidConfig.Manifest.AndroidManifest,
+  application: Record<string, any>,
+  enabled: boolean,
+  declaredPermissions: readonly string[]
+): void {
+  const services: ManifestElement[] = Array.isArray(application.service) ? application.service : [];
+  const others = services.filter((s) => s.$['android:name'] !== ACCESSIBILITY_SERVICE);
+  if (enabled) {
+    application.service = [...others, accessibilityServiceElement()];
+  } else if (others.length !== services.length) {
+    if (others.length > 0) application.service = others;
+    else delete application.service;
+  }
+
+  const permissions: AndroidConfig.Manifest.ManifestUsesPermission[] = Array.isArray(manifest.manifest['uses-permission']) ? manifest.manifest['uses-permission'] : [];
+  const isQuery = (p: AndroidConfig.Manifest.ManifestUsesPermission) => p.$['android:name'] === QUERY_ADVANCED_PROTECTION_MODE && !(p.$ as Record<string, string | undefined>)[TOOLS_NODE];
+  const has = permissions.some(isQuery);
+  if (enabled) {
+    if (!has) manifest.manifest['uses-permission'] = [...permissions, { $: { 'android:name': QUERY_ADVANCED_PROTECTION_MODE } }];
+  } else if (has && !declaredPermissions.includes(QUERY_ADVANCED_PROTECTION_MODE)) {
+    const kept = permissions.filter((p) => !isQuery(p));
+    if (kept.length > 0) manifest.manifest['uses-permission'] = kept;
+    else delete manifest.manifest['uses-permission'];
+  }
+}
+
 const withScreenTimeAndroid: ConfigPlugin = (config) => {
   const options = getScreenTimeAndroidOptions(config);
+  if (options.accessibilityEngine) WarningAggregator.addWarningAndroid('expo-screen-time', ACCESSIBILITY_ENGINE_WARNING);
   return withAndroidManifest(config, (modConfig) => {
     modConfig.modResults = applyScreenTimeAndroidManifest(
       modConfig.modResults,

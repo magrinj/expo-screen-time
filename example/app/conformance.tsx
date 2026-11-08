@@ -212,6 +212,42 @@ const scenarios: Scenario[] = [
     },
   },
   {
+    id: "C14",
+    title: "The accessibility step is listed iff the build declares the service, recommended",
+    async run(caps) {
+      const response = await permissionsIfImplemented({ features: ["blocking"] });
+      if (!response) {
+        expect(caps.blocking === "none", "permissions must be implemented wherever blocking is");
+        return "UNSUPPORTED (not implemented)";
+      }
+      const step = response.steps.find((s) => s.id === "accessibility");
+      if (!step) {
+        // iOS, and an Android build without android.accessibilityEngine: the step does not exist here.
+        await expectCode("INVALID_CONFIG", () => requestScreenTimePermissionsAsync({ features: ["blocking"], step: "accessibility" }));
+        return "not listed; requesting it rejects INVALID_CONFIG";
+      }
+      expect(step.required === false, "the accessibility step is recommended, never required");
+      expect(step.kind === "settings", `kind=${step.kind}`);
+      expect(STEP_STATUSES.includes(step.status), `status=${step.status}`);
+      // The step serves the shield only.
+      const monitoring = await getScreenTimePermissionsAsync({ features: ["monitoring"] });
+      expect(!monitoring.steps.some((s) => s.id === "accessibility"), "not listed for monitoring alone");
+      // Listed after usageAccess, before the reliability steps.
+      const ids = response.steps.map((s) => s.id);
+      expect(ids.indexOf("usageAccess") < ids.indexOf("accessibility"), `order: ${ids.join(" ")}`);
+      // The response's granted never depends on it (C02 checks the derivation; here with the step present).
+      expect(response.granted === response.steps.filter((s) => s.required).every((s) => s.status === "granted"), "granted iff every required step is granted");
+      // A granted step is not requested again: the call resolves at once. An off one would open
+      // Settings, which the suite does not drive (enabling the service is a device run).
+      if (step.status === "granted") {
+        const again = await requestScreenTimePermissionsAsync({ features: ["blocking"], step: "accessibility" });
+        expect(again.steps.find((s) => s.id === "accessibility")?.status === "granted", "a granted step is not requested again");
+        return "listed, granted (recommended); re-request resolved at once";
+      }
+      return `listed, ${step.status} (recommended); not requested (the suite does not drive Settings)`;
+    },
+  },
+  {
     id: "C12",
     title: "Selections round-trip",
     async run(caps) {

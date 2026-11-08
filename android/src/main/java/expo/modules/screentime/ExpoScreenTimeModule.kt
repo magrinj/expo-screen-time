@@ -126,7 +126,7 @@ class ExpoScreenTimeModule : Module() {
       val features = PermissionSteps.features(options?.get("features"), build)
       requireInBuild("requestScreenTimePermissionsAsync", features)
       val child = PermissionSteps.isChild(options?.get("member"))
-      val step = when (val requested = PermissionSteps.requestedStep(options?.get("step"))) {
+      val step = when (val requested = PermissionSteps.requestedStep(options?.get("step"), build)) {
         is PermissionSteps.RequestedStep.Next -> null
         is PermissionSteps.RequestedStep.Step -> {
           val device = PermissionSteps.Device(android.os.Build.VERSION.SDK_INT, VendorAutostart.screens().isNotEmpty())
@@ -140,6 +140,11 @@ class ExpoScreenTimeModule : Module() {
         }
         is PermissionSteps.RequestedStep.NotOnThisPlatform ->
           throw ScreenTimeException(ScreenTimeException.INVALID_CONFIG, "The permission step '${requested.name}' does not exist on Android; request the steps the response lists")
+        is PermissionSteps.RequestedStep.NotInBuild ->
+          throw ScreenTimeException(
+            ScreenTimeException.INVALID_CONFIG,
+            "The permission step '${requested.name}' needs the accessibility service, which this build does not declare (config plugin option android.accessibilityEngine); request the steps the response lists"
+          )
         is PermissionSteps.RequestedStep.Unknown ->
           throw ScreenTimeException(ScreenTimeException.INVALID_CONFIG, "Unknown permission step '${requested.name}'")
       }

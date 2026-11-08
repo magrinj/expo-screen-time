@@ -45,6 +45,21 @@ class BuildManifestTest {
   }
 
   @Test
+  fun `the accessibility service is read from the declared services and is off in the full build`() {
+    val a11y = "expo.modules.screentime.ScreenTimeAccessibilityService"
+    assertFalse(BuildManifest.full.accessibility)
+    assertFalse(build(Feature.blocking).accessibility)
+    val optedIn = BuildManifest.from(listOf(service, a11y), listOf(shield), listOf(admin), everything)
+    assertTrue(optedIn.accessibility)
+    assertTrue(optedIn.blocking)
+    // The service alone changes no feature: what the build serves is unchanged.
+    assertEquals(BuildManifest.full.missing(Feature.values().toList()), optedIn.missing(Feature.values().toList()))
+    assertEquals(BuildManifest.full, optedIn.copy(accessibility = false))
+    // A hand-trimmed manifest that kept the service but lost the engine: declared, but the step is not planned (PermissionStepsTest).
+    assertTrue(BuildManifest.from(listOf(a11y), emptyList(), emptyList(), emptyList()).accessibility)
+  }
+
+  @Test
   fun `blocking needs the engine, the shield activity and the overlay permission`() {
     assertTrue(build(Feature.blocking).blocking)
     assertFalse(BuildManifest.from(listOf(service), listOf(shield), listOf(admin), everything - overlay).blocking)

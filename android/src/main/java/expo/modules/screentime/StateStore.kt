@@ -117,6 +117,29 @@ internal class StateStore(private val directory: File) {
     List(failures.length()) { failures.getJSONObject(it) }
   }
 
+  // MARK: - Accessibility detector
+
+  /**
+   * The accessibility service's own record of its life (the twin of
+   * [engineRunning]): when the system last bound it and in which process,
+   * and when it was last unbound. "Enabled in Settings but not bound" is
+   * how the module tells a crashed or stopped service from a running one
+   * (`AccessibilityHealth`). A process death leaves `unboundAt` behind
+   * `boundAt` with a dead pid, which the reader checks.
+   */
+  fun accessibilityBound(pid: Int) = update { document ->
+    accessibility(document).put(BOUND_AT, System.currentTimeMillis()).put(PID, pid)
+    Unit
+  }
+
+  fun accessibilityUnbound() = update { document ->
+    accessibility(document).put(UNBOUND_AT, System.currentTimeMillis())
+    Unit
+  }
+
+  /** The record as stored: `(boundAt, pid, unboundAt)`, each null when never written. */
+  fun accessibilityRecord(): AccessibilityRecord = read { AccessibilityRecord.read(it.optJSONObject(ACCESSIBILITY)) }
+
   // MARK: - Blocks
 
   /**
@@ -345,6 +368,7 @@ internal class StateStore(private val directory: File) {
   fun signature(): DocumentSignature = DocumentSignature(file.lastModified(), file.length())
 
   private fun engine(document: JSONObject) = document.optJSONObject(ENGINE) ?: JSONObject().also { document.put(ENGINE, it) }
+  private fun accessibility(document: JSONObject) = document.optJSONObject(ACCESSIBILITY) ?: JSONObject().also { document.put(ACCESSIBILITY, it) }
   private fun permissions(document: JSONObject) = document.optJSONObject(PERMISSIONS) ?: JSONObject().also { document.put(PERMISSIONS, it) }
   private fun shield(document: JSONObject) = document.optJSONObject(SHIELD) ?: JSONObject().also { document.put(SHIELD, it) }
   private fun shieldActions(document: JSONObject) = document.optJSONObject(SHIELD_ACTIONS) ?: JSONObject().also { document.put(SHIELD_ACTIONS, it) }
@@ -355,6 +379,10 @@ internal class StateStore(private val directory: File) {
     private const val RUNNING = "running"
     private const val RETRIES = "retries"
     private const val FAILURES = "failures"
+    private const val ACCESSIBILITY = "accessibility"
+    private const val BOUND_AT = "boundAt"
+    private const val UNBOUND_AT = "unboundAt"
+    private const val PID = "pid"
     private const val INSTALL = "install"
     private const val SECRET = "secret"
     private const val SECRET_BYTES = 32
@@ -374,6 +402,23 @@ internal class StateStore(private val directory: File) {
 
     private fun slot(directory: File): Slot = synchronized(slots) {
       slots.getOrPut(directory.absolutePath) { Slot() }
+    }
+  }
+}
+
+/** The accessibility service's record in the document ([StateStore.accessibilityRecord]). */
+internal data class AccessibilityRecord(val boundAt: Long?, val pid: Int?, val unboundAt: Long?) {
+  /** Whether the record says bound: a bind not followed by an unbind (the process may still have died). */
+  val saysBound: Boolean
+    get() = boundAt != null && (unboundAt == null || unboundAt < boundAt)
+
+  companion object {
+    val NONE = AccessibilityRecord(null, null, null)
+
+    fun read(json: JSONObject?): AccessibilityRecord {
+      json ?: return NONE
+      fun long(key: String): Long? = if (json.has(key) && !json.isNull(key)) json.optLong(key).takeIf { it > 0 } else null
+      return AccessibilityRecord(long("boundAt"), long("pid")?.toInt(), long("unboundAt"))
     }
   }
 }

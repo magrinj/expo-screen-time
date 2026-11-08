@@ -10,8 +10,11 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
@@ -38,7 +41,9 @@ import expo.modules.screentime.PermissionSteps.StepId
  *   without it".
  * - `restricted`: Android 13+ "restricted settings" for sideloaded apps
  *   (AppOps `access_restricted_settings` in error mode); overlay on a
- *   low-RAM (Go) device, where the system never grants it.
+ *   low-RAM (Go) device, where the system never grants it; `accessibility`
+ *   under Android 17's Advanced Protection, which disables every non-tool
+ *   accessibility service ([AccessibilityHealth]).
  * - `unknown`: the vendor autostart screen, which nothing reads back.
  *
  * Requests: a settings step opens its screen and resolves when the activity
@@ -46,7 +51,9 @@ import expo.modules.screentime.PermissionSteps.StepId
  * `OnActivityEntersForeground`), with fresh statuses. For `usageAccess` and
  * `overlay` the library also watches the AppOps toggle and brings the app
  * back as soon as it flips, which works once the overlay permission is held
- * (the background-activity-launch exemption), hence `overlay` first. The
+ * (the background-activity-launch exemption), hence `overlay` first; for
+ * `accessibility` a `ContentObserver` on the enabled-services setting does
+ * the same. The
  * notification step is a runtime prompt through Expo's permission service.
  * Never rejects for a refused permission: a screen that could not be opened
  * is kept as the step's `error`.
@@ -62,6 +69,9 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
   /** Set on the module thread, cleared from the main thread or the AppOps callback thread. */
   @Volatile
   private var appOpsWatch: AppOpsManager.OnOpChangedListener? = null
+  /** The `accessibility` step's return-after-permission watch; same lifetime rules as [appOpsWatch]. */
+  @Volatile
+  private var accessibilityWatch: ContentObserver? = null
 
   // MARK: - Entry points
 
@@ -93,6 +103,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
   /** The host activity is back in the foreground: resolve the pending requests. */
   fun onForeground() {
     stopWatchingAppOps()
+    stopWatchingAccessibility()
     val pending = synchronized(waiters) { waiters.toList().also { waiters.clear() } }
     pending.forEach { it() }
   }
@@ -103,6 +114,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
    */
   fun dispose() {
     stopWatchingAppOps()
+    stopWatchingAccessibility()
     synchronized(waiters) { waiters.clear() }
   }
 
@@ -126,7 +138,13 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
     StepId.batteryOptimization -> toggle(id, isIgnoringBatteryOptimizations(), restricted = false)
     StepId.notifications -> notificationsStatus()
     StepId.backgroundAutostart -> Status.unknown to true
-    StepId.screenTime, StepId.accessibility -> Status.unknown to false
+    // Advanced Protection first: it blocks the service whatever the toggle says. Restricted
+    // settings lock the accessibility toggle from Android 13 (two releases before the others).
+    StepId.accessibility -> when {
+      AccessibilityHealth.isBlockedByAdvancedProtection(context) -> Status.restricted to true
+      else -> toggle(id, AccessibilityHealth.isEnabled(context), restricted = isRestrictedSettings(since = Build.VERSION_CODES.TIRAMISU))
+    }
+    StepId.screenTime -> Status.unknown to false
   }
 
   /**
@@ -149,16 +167,16 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
    * "Restricted settings": Android 13 keeps sideloaded apps out of the
    * accessibility and notification-listener toggles until the user allows
    * them from App info, and Android 15 extends that to the overlay, usage
-   * access and device-admin toggles,
-   * the three steps this is read for. The op is not in the public
+   * access and device-admin toggles;
+   * [since] is the release the asking step's toggle got it. The op is not in the public
    * constants, and checking it is not always permitted: Android 17 answers
    * with a SecurityException (`verifyIncomingOp`), an older build may not
    * know the op at all. Best effort: any refusal reads as not restricted,
    * so the step then reads `undetermined` / `denied`; either way the
    * Settings screen (which explains the restriction itself) is opened.
    */
-  private fun isRestrictedSettings(): Boolean {
-    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.VANILLA_ICE_CREAM) return false
+  private fun isRestrictedSettings(since: Int = Build.VERSION_CODES.VANILLA_ICE_CREAM): Boolean {
+    if (Build.VERSION.SDK_INT < since) return false
     val appOps = context.getSystemService(AppOpsManager::class.java) ?: return false
     return try {
       appOps.unsafeCheckOpNoThrow(OPSTR_ACCESS_RESTRICTED_SETTINGS, context.applicationInfo.uid, context.packageName) == AppOpsManager.MODE_ERRORED
@@ -242,6 +260,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
     when (id) {
       StepId.usageAccess -> watchAppOps(AppOpsManager.OPSTR_GET_USAGE_STATS)
       StepId.overlay -> watchAppOps(AppOpsManager.OPSTR_SYSTEM_ALERT_WINDOW)
+      StepId.accessibility -> watchAccessibility()
       else -> Unit
     }
   }
@@ -267,7 +286,18 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
       StepId.batteryOptimization -> listOf(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
       StepId.backgroundAutostart -> VendorAutostart.screens().map { Intent().setComponent(it) } +
         Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, packageUri)
-      StepId.notifications, StepId.screenTime, StepId.accessibility -> emptyList()
+      // The service's own page (Android 10+; Settings falls back to the list itself when it
+      // will not show the page for this component), then the list.
+      StepId.accessibility -> listOfNotNull(
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+          Intent(ACTION_ACCESSIBILITY_DETAILS_SETTINGS)
+            .putExtra(Intent.EXTRA_COMPONENT_NAME, AccessibilityHealth.component(context).flattenToString())
+        } else {
+          null
+        },
+        Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
+      )
+      StepId.notifications, StepId.screenTime -> emptyList()
     }
   }
 
@@ -317,6 +347,44 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
     }
   }
 
+  /**
+   * The accessibility twin of [watchAppOps]: the enabled-services setting is
+   * what the Settings toggle writes (after its confirmation dialog), so the
+   * app comes back the moment the user allowed the service. Honoured under
+   * the same condition (the overlay permission held).
+   */
+  private fun watchAccessibility() {
+    val app = context.applicationContext
+    stopWatchingAccessibility()
+    val observer = object : ContentObserver(Handler(Looper.getMainLooper())) {
+      override fun onChange(selfChange: Boolean) {
+        try {
+          if (!AccessibilityHealth.isEnabled(app)) return
+          stopWatchingAccessibility(app)
+          bringAppBack(app)
+        } catch (e: Exception) {
+          Log.i(EngineController.TAG, "accessibility watch: ${e.javaClass.simpleName}: ${e.message}")
+        }
+      }
+    }
+    accessibilityWatch = observer
+    try {
+      app.contentResolver.registerContentObserver(Settings.Secure.getUriFor(Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES), false, observer)
+    } catch (e: Exception) {
+      accessibilityWatch = null
+    }
+  }
+
+  private fun stopWatchingAccessibility(app: Context? = appContext.reactContext?.applicationContext) {
+    val observer = accessibilityWatch ?: return
+    accessibilityWatch = null
+    try {
+      app?.contentResolver?.unregisterContentObserver(observer)
+    } catch (e: Exception) {
+      // never registered: nothing to stop
+    }
+  }
+
   private fun bringAppBack(app: Context) {
     val activity: Activity? = appContext.currentActivity
     val intent = if (activity != null) {
@@ -333,6 +401,8 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
 
   companion object {
     private const val OPSTR_ACCESS_RESTRICTED_SETTINGS = "android:access_restricted_settings"
+    /** `Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS` (Android 10+), not in the public SDK: the one service's page, by `EXTRA_COMPONENT_NAME`. */
+    private const val ACTION_ACCESSIBILITY_DETAILS_SETTINGS = "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"
   }
 }
 

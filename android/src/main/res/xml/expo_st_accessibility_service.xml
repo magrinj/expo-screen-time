@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The accessibility detector (config plugin option `android.accessibilityEngine`;
+  docs/proposals/android-accessibility-engine.md §2.7, §4.1): window-state
+  events only, no window content (nothing of any app's screen ever exists in
+  the process), `isAccessibilityTool="false"` (Google Play reserves `true` for
+  tools that serve people with disabilities; a blocker is not one), delivered
+  at once. The packages it listens to are narrowed at runtime to the apps the
+  block sources cover (`ScreenTimeAccessibilityService.scope`), the host
+  package alone while nothing is shielded. The description is what Settings
+  shows next to the toggle and what Play reads: override the strings in the
+  app's own `res/values` to localise them.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+  android:accessibilityEventTypes="typeWindowStateChanged"
+  android:accessibilityFeedbackType="feedbackGeneric"
+  android:canRetrieveWindowContent="false"
+  android:description="@string/expo_st_accessibility_description"
+  android:isAccessibilityTool="false"
+  android:notificationTimeout="0" />

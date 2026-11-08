@@ -57,6 +57,7 @@ option removes them).
 |---|---|---|---|---|
 | `overlay` | `blocking`, `monitoring` (in a build with the shield) | yes | `settings` | Settings › Display over other apps. The shield is an Activity the engine launches from the background, which Android allows once this is held. Requested first: it also lets the library bring the user back to the app from the next screens. |
 | `usageAccess` | `blocking`, `monitoring`, `usageReports` | yes | `settings` | Settings › Usage access. How the engine sees which app is in the foreground. |
+| `accessibility` | `blocking`, in a build whose config plugin declared the accessibility service ([`android.accessibilityEngine`](../configuration.md#android-accessibility-engine)) | no | `settings` | Settings › Accessibility: the service's own page where Android shows it (Android 10+), else the list. Turns on the second detector, which hears a blocked app opened from a work profile, Private Space or a cloned app; the main profile is enforced without it, which is why it is recommended, not required. **Show your disclosure first** ([below](#android-accessibility)). `restricted` when Android 17's Advanced Protection is on (it disables every accessibility service that is not an accessibility tool) or under restricted settings. |
 | `notifications` | `blocking`, `monitoring` (Android 13+) | for `member: 'child'` | `prompt` | The runtime notification permission for the engine's persistent notice. Without it the service still runs; the notice moves to the Task Manager. |
 | `deviceAdmin` | `blocking`, `monitoring` (in a build with the device admin), `appRemovalProtection` | for `appRemovalProtection` and `member: 'child'` | `settings` | Device admin activation (no policy). While active, Settings disables "Force stop", "Uninstall" asks to deactivate the admin first, and the system's Task Manager hides the engine's "Stop" button. Deactivating takes the toggle in Settings › Security › Device admin apps plus a confirmation whose text is the `expo_st_device_admin_disable_warning` string resource (override it in your app's `res/values` to localise it); it does not stop the engine. |
 | `batteryOptimization` | `blocking`, `monitoring` | no | `settings` | The system's battery-optimization list. The library opens the list and never requests `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` (not an acceptable use for a blocker on Google Play). With the exemption, an engine the system killed restarts directly from the background; without it, the library restarts it through the overlay permission, which is why `overlay` is required (see [blocking](./blocking.md#android)). This step or `deviceAdmin` keeps the restart within minutes on battery: either one exempts the app from the standby buckets' alarm limit. |
@@ -66,9 +67,10 @@ A settings toggle that is off reads `undetermined` until the app has sent the
 user to that screen once, and `denied` after, so an onboarding UI can tell
 "never asked" from "went there and came back without it". `restricted` is
 reported when Android 13+ keeps the toggles locked for a sideloaded app
-("restricted settings", lifted from App info), and for `overlay` on a low-RAM
-device, where the system never grants it. `accessibility` and `screenTime`
-are never listed on Android.
+("restricted settings", lifted from App info), for `overlay` on a low-RAM
+device, where the system never grants it, and for `accessibility` under
+Android 17's Advanced Protection. `screenTime` is never listed on Android,
+and `accessibility` only in a build that opts into the accessibility engine.
 
 A step's `status` adds two values to Expo's:
 
@@ -102,10 +104,70 @@ On Android a `settings` or `guide` step opens its screen and the promise
 resolves when the user comes back to the app, with fresh statuses. For
 `usageAccess` and `overlay` the library also watches the toggle and brings
 the app back the moment it flips, which Android honours once `overlay` is
-held. A screen that could not be opened (an `ActivityNotFoundException` on
+held. For `accessibility` it watches the enabled-services setting the same way.
+A screen that could not be opened (an `ActivityNotFoundException` on
 an unusual device) is not an error: the step keeps it in `error` and the
-response says so. A `step` the platform does not have (`screenTime`,
-`accessibility`) rejects with `INVALID_CONFIG`.
+response says so. A `step` the platform does not have (`screenTime`), or
+`accessibility` in a build that does not declare the service, rejects with
+`INVALID_CONFIG`.
+
+### The `accessibility` step and its disclosure {#android-accessibility}
+
+Google Play requires a **prominent disclosure inside the app**, before the
+user is sent to Settings › Accessibility, during normal use (the store
+listing or a website is not enough): what the service does, and the user's
+consent. The library cannot show it for you (it is UI), and the step is
+never part of the "first required step" default, so the only way to reach
+it is an explicit `step: "accessibility"` call, which is where your
+disclosure belongs:
+
+```tsx
+import { Alert } from "react-native";
+import { requestScreenTimePermissionsAsync } from "expo-screen-time";
+
+function askForAccessibility() {
+  Alert.alert(
+    "Block apps everywhere on this phone",
+    "To block the apps you chose in your work profile, Private Space and " +
+      "cloned apps too, this app uses Android's Accessibility service. " +
+      "Android tells it when one of those apps opens, so it can show the " +
+      "blocking screen. It does not read what is on your screen, collects " +
+      "no personal data and sends nothing off your phone. You can turn it " +
+      "off at any time in Settings › Accessibility.",
+    [
+      { text: "Not now", style: "cancel" },
+      {
+        text: "Continue to Settings",
+        onPress: () => requestScreenTimePermissionsAsync({ step: "accessibility" }),
+      },
+    ],
+  );
+}
+```
+
+A French listing ships the same text in French:
+
+> **Bloquer les applis partout sur ce téléphone** — Pour bloquer aussi les
+> applis choisies dans votre profil professionnel, votre Espace privé et vos
+> applis clonées, cette appli utilise le service d'accessibilité d'Android.
+> Android la prévient quand l'une de ces applis s'ouvre, afin d'afficher
+> l'écran de blocage. Elle ne lit pas ce qui est à l'écran, ne collecte
+> aucune donnée personnelle et n'envoie rien hors du téléphone. Vous pouvez
+> la désactiver à tout moment dans Réglages › Accessibilité.
+> [Continuer vers les Réglages] [Pas maintenant]
+
+The disclosure's data sentence is this example's: keep it only if it is true
+of your whole app. The Settings page shows the `expo_st_accessibility_description`
+string next to the toggle; the library's default says only what the service
+does (the window-state events, no screen content, the off switch), so add your
+app's data practices in your override, and only true ones: Play reads it
+against your declaration, so keep the two in step. Ask
+the users who need the coverage (an app can check for other profiles
+itself) rather than everyone: a chained settings screen loses users. The
+response's `granted` never depends on this step. Once enabled, the lost
+coverage while the service is down is reported by
+[`getEnforcementGaps`](./capabilities.md#android-gaps) with
+`scope: "otherProfiles"`.
 
 On iOS 16 and later it never rejects for a refused prompt: a failed request
 resolves with the resulting status, and the reason in the step's `error`. A
@@ -182,6 +244,7 @@ const titles: Record<string, string> = {
   notifications: "Allow notifications",
   overlay: "Allow display over other apps",
   usageAccess: "Allow usage access",
+  accessibility: "Block apps in every profile",
   deviceAdmin: "Activate device admin",
   batteryOptimization: "Exempt from battery optimization",
   backgroundAutostart: "Allow autostart",

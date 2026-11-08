@@ -33,31 +33,58 @@ internal data class EnforcementGap(
    * with another revocation, only with its own pieces).
    */
   val origin: Long = from,
+  /**
+   * The contract's `EnforcementGap.scope`: absent for a whole-device gap;
+   * `otherProfiles` when only the blocked apps opened from a work profile,
+   * Private Space or a clone went unenforced, because the accessibility
+   * detector, which alone sees those profiles, was down while the
+   * UsageStats engine ran ([Source.accessibility]).
+   */
+  val scope: Scope? = null,
 ) {
   /** The contract's `EnforcementGap.reason`. `authorizationRevoked` is iOS-only; Android never records it. */
   enum class Reason { stoppedByUser, permissionRevoked, killedBySystem, authorizationRevoked, unknown }
+
+  /** The contract's `EnforcementGap.scope` values. */
+  enum class Scope { otherProfiles }
 
   /**
    * What produced the gap. `exit` and `heartbeat` are two readings of one
    * fact, "the engine process was not running", so they merge; `permission`
    * is another fact ("the engine ran but could not act") and never merges
-   * with them: the two can overlap, and a consumer adding up gap time must
-   * merge overlaps first.
+   * with them; `accessibility` is a third ("the engine ran, the other
+   * profiles were not covered"). The three can overlap, and a consumer
+   * adding up gap time must merge overlaps first.
    */
-  enum class Source { exit, heartbeat, permission }
+  enum class Source { exit, heartbeat, permission, accessibility }
+
+  /** The merge families: gaps merge within one family only. */
+  enum class Family { engine, permission, accessibility }
 
   val isOpen: Boolean
     get() = to == null
 
-  val isEngineFamily: Boolean
-    get() = source != Source.permission
+  val family: Family
+    get() = when (source) {
+      Source.exit, Source.heartbeat -> Family.engine
+      Source.permission -> Family.permission
+      Source.accessibility -> Family.accessibility
+    }
 
-  /** What merging keys on: the run for engine-family gaps, the origin for permission gaps. */
+  val isEngineFamily: Boolean
+    get() = family == Family.engine
+
+  /** What merging keys on: the run for engine-family gaps, the origin for the others. */
   val mergeKey: Long?
     get() = if (isEngineFamily) run else origin
 
-  /** The JS shape: `{ from, to: number | null, reason }`. */
-  fun toMap(): Map<String, Any?> = mapOf("from" to from, "to" to to, "reason" to reason.name)
+  /** The JS shape: `{ from, to: number | null, reason, scope? }`. */
+  fun toMap(): Map<String, Any?> = buildMap {
+    put("from", from)
+    put("to", to)
+    put("reason", reason.name)
+    scope?.let { put("scope", it.name) }
+  }
 
   fun toJson(): JSONObject = JSONObject()
     .put(FROM, from)
@@ -67,6 +94,7 @@ internal data class EnforcementGap(
     .put(DETAIL, detail)
     .put(RUN, run ?: JSONObject.NULL)
     .put(ORIGIN, origin)
+    .apply { scope?.let { put(SCOPE, it.name) } }
 
   companion object {
     private const val FROM = "from"
@@ -76,11 +104,13 @@ internal data class EnforcementGap(
     private const val DETAIL = "detail"
     private const val RUN = "run"
     private const val ORIGIN = "origin"
+    private const val SCOPE = "scope"
 
     /**
      * The gap a stored entry holds, or null when it is malformed (dropped,
      * the rest of the log is kept). `to` must be present: an entry without
-     * it is truncated, not open.
+     * it is truncated, not open. A scope this build does not know drops
+     * the entry too: reported without it, it would read as a whole-device gap.
      */
     fun fromJson(json: JSONObject): EnforcementGap? {
       val from = json.optLongOrNull(FROM) ?: return null
@@ -89,9 +119,11 @@ internal data class EnforcementGap(
       if (to != null && to < from) return null
       val reason = Reason.values().firstOrNull { it.name == json.optString(REASON) } ?: return null
       val source = Source.values().firstOrNull { it.name == json.optString(SOURCE) } ?: return null
+      val scope = if (json.has(SCOPE) && !json.isNull(SCOPE)) (Scope.values().firstOrNull { it.name == json.optString(SCOPE) } ?: return null) else null
       return EnforcementGap(
         from, to, reason, source, json.optString(DETAIL), json.optLongOrNull(RUN),
         origin = json.optLongOrNull(ORIGIN) ?: from,
+        scope = scope,
       )
     }
   }
@@ -336,6 +368,26 @@ internal data class Boot(val timeMs: Long?, val count: Int?) {
  *   the run, which is where Android departs from iOS: iOS cannot tell
  *   whether a block was intended, Android can), and closes at the first
  *   check that sees access back, or at the release.
+ * - **The accessibility detector** ([observeAccessibility]): in a build
+ *   that declares it, the apps opened from a work profile, Private Space
+ *   or a clone are covered only while the service is enabled in Settings
+ *   **and** bound. "Covered" moves [lastCoveredAt]; never having been
+ *   covered is not a gap (as on iOS). Seen down afterwards while the
+ *   engine runs and no whole-device engine gap is open, a gap with
+ *   `scope: otherProfiles` opens at the later of the last covered check
+ *   and the run's start: `permissionRevoked` when the toggle is off (a
+ *   force stop removes the service from the enabled list; the user turned
+ *   it off; Android 17's Advanced Protection keeps it from binding), else the reason
+ *   of the death that took the service with the engine (the engine-family
+ *   gap closed at this run's start: a Task Manager stop reads
+ *   `stoppedByUser`), else `unknown`. It closes at the first check that
+ *   sees the service covered again, or at the release; one that lasted
+ *   under [MIN_ENGINE_GAP_MS] in all is dropped (a rebind within seconds),
+ *   and settling waits until it is that old, so an outage the app looks at
+ *   repeatedly stays one gap. While the engine itself is down the whole-device gap speaks
+ *   and no scoped gap opens; one already open stays open across the
+ *   engine's death and return (coverage was down throughout) and overlaps
+ *   the whole-device gap, as a permission gap can.
  *
  * **Clipping and settling.** A gap is stored as observed, open, and is
  * **settled** ([settle]) at every later look of the app and before every
@@ -366,7 +418,8 @@ internal data class Boot(val timeMs: Long?, val count: Int?) {
  *
  * **Retention.** Closed gaps older than [MAX_AGE_MS] are dropped, then the
  * oldest closed ones past [MAX_GAPS]. Open gaps are never dropped (at most
- * one engine gap and one permission gap are open at a time).
+ * one engine gap, one permission gap and one `otherProfiles` gap are open
+ * at a time).
  *
  * **Multi-process.** The tracker is an immutable value; every fold returns a
  * new one. The app process (launch, foreground, `getEnforcementGaps`,
@@ -390,6 +443,11 @@ internal data class EnforcementGapTracker(
    * until the first: never having had access is not a gap.
    */
   val lastApprovedAt: Long? = null,
+  /**
+   * The last check that saw the accessibility detector enabled and bound,
+   * Unix ms. Null until the first: never having been covered is not a gap.
+   */
+  val lastCoveredAt: Long? = null,
 ) {
   /**
    * One life of the engine, from `engineStarted` to `engineStopped` or to
@@ -416,10 +474,14 @@ internal data class EnforcementGapTracker(
 
   /** Whether a permission gap is open (iOS `hasOpenGap`). */
   val hasOpenPermissionGap: Boolean
-    get() = gaps.any { !it.isEngineFamily && it.isOpen }
+    get() = gaps.any { it.family == EnforcementGap.Family.permission && it.isOpen }
 
   val hasOpenEngineGap: Boolean
     get() = gaps.any { it.isEngineFamily && it.isOpen }
+
+  /** Whether an `otherProfiles` gap is open. */
+  val hasOpenAccessibilityGap: Boolean
+    get() = gaps.any { it.family == EnforcementGap.Family.accessibility && it.isOpen }
 
   // MARK: - Queries
 
@@ -460,15 +522,25 @@ internal data class EnforcementGapTracker(
    * drift between an open gap and the intent it is judged by stays bounded.
    */
   fun settle(now: Long, intent: EnforcementIntent): EnforcementGapTracker {
-    if (gaps.none { it.isOpen && it.from < now }) return this
+    if (gaps.none { settles(it, now) }) return this
     var folded = gaps
-    for (open in gaps.filter { it.isOpen && it.from < now }) {
+    for (open in gaps.filter { settles(it, now) }) {
       folded = folded - open
       for (piece in clip(open.copy(to = now), now, intent)) folded = mergeGap(folded, piece)
       folded = sorted(folded + open.copy(from = now))
     }
     return copy(gaps = retain(folded, now))
   }
+
+  /**
+   * Whether settling at [now] commits [gap]'s part so far. An accessibility
+   * gap younger than [MIN_ENGINE_GAP_MS] waits: whether it is kept depends
+   * on its whole length ([clip]), unknown until it lasts that long or ends,
+   * and committing a younger piece would drop it and leave a hole.
+   */
+  private fun settles(gap: EnforcementGap, now: Long): Boolean =
+    gap.isOpen && gap.from < now &&
+      !(gap.family == EnforcementGap.Family.accessibility && now - gap.origin < MIN_ENGINE_GAP_MS)
 
   // MARK: - Permission checks (the iOS tracker)
 
@@ -489,7 +561,7 @@ internal data class EnforcementGapTracker(
     intent: EnforcementIntent = EnforcementIntent.ALWAYS,
   ): EnforcementGapTracker {
     if (approved) {
-      val closed = closeGaps(gaps, now, intent) { !it.isEngineFamily }
+      val closed = closeGaps(gaps, now, intent) { it.family == EnforcementGap.Family.permission }
       return copy(gaps = retain(closed, now), lastApprovedAt = now)
     }
     val since = lastApprovedAt ?: return this
@@ -510,6 +582,73 @@ internal data class EnforcementGapTracker(
     val missing = ENFORCEMENT_STEPS - granted
     return observePermissions(approved = missing.isEmpty(), now = now, missing = missing.map { it.name }, intent = intent)
   }
+
+  // MARK: - The accessibility detector
+
+  /**
+   * What the accessibility detector looks like at `now`: `enabled` (the
+   * component is in the enabled-services setting), `bound` (its own record
+   * says bound and that process is alive), `blocked` (Android 17's Advanced
+   * Protection says no non-tool service may run). Covered is enabled **and
+   * bound**, whatever the protection says: measured on the Android 17
+   * emulator (2026-11-08), a service bound before the protection was turned
+   * on kept running and delivering events, and the gap must report what
+   * happened, not what the policy intends; `blocked` only names the cause
+   * when the service is down. Call from every look of the app and every
+   * engine heartbeat. A build that does not declare the service
+   * ([declared] false, an update that turned the option off included) has
+   * no coverage to lose: an open scoped gap ends there and [lastCoveredAt]
+   * is forgotten, since Settings may keep the component enabled and would
+   * otherwise read "enabled, not bound" for ever, a gap the build can no
+   * longer close.
+   */
+  fun observeAccessibility(
+    now: Long,
+    enabled: Boolean,
+    bound: Boolean,
+    blocked: Boolean = false,
+    intent: EnforcementIntent = EnforcementIntent.ALWAYS,
+    declared: Boolean = true,
+  ): EnforcementGapTracker {
+    if (!declared) {
+      if (lastCoveredAt == null && !hasOpenAccessibilityGap) return this
+      val closed = closeGaps(gaps, now, intent) { it.family == EnforcementGap.Family.accessibility }
+      return copy(gaps = retain(closed, now), lastCoveredAt = null)
+    }
+    if (enabled && bound) {
+      val closed = closeGaps(gaps, now, intent) { it.family == EnforcementGap.Family.accessibility }
+      return copy(gaps = retain(closed, now), lastCoveredAt = now)
+    }
+    val since = lastCoveredAt ?: return this
+    val live = run?.takeIf { it.isLive } ?: return this
+    if (hasOpenAccessibilityGap || hasOpenEngineGap) return this
+    val reason = if (!enabled || blocked) EnforcementGap.Reason.permissionRevoked else deathReason(live) ?: EnforcementGap.Reason.unknown
+    val detail = when {
+      blocked -> "accessibility service blocked (advanced protection)"
+      !enabled -> "accessibility service not enabled"
+      else -> "accessibility service enabled but not bound"
+    }
+    val gap = EnforcementGap(
+      from = maxOf(since, live.startedAt),
+      to = null,
+      reason = reason,
+      source = EnforcementGap.Source.accessibility,
+      detail = detail,
+      scope = EnforcementGap.Scope.otherProfiles,
+    )
+    return copy(gaps = retain(gaps + gap, now))
+  }
+
+  /**
+   * The reason of the engine-family gap closed at [live]'s start (the death
+   * that took the service down with the engine), if any. The app's look
+   * that precedes the revival settles the gap a few milliseconds before
+   * the run starts (launch: observe, then the SYNC that starts the engine),
+   * and the sliver between the two is dropped as under [MIN_ENGINE_GAP_MS],
+   * so a gap ending within that margin of the start counts.
+   */
+  private fun deathReason(live: EngineRun): EnforcementGap.Reason? =
+    gaps.filter { it.isEngineFamily && it.to != null && it.to >= live.startedAt - MIN_ENGINE_GAP_MS }.maxByOrNull { it.to!! }?.reason
 
   // MARK: - Exit records
 
@@ -721,7 +860,7 @@ internal data class EnforcementGapTracker(
    */
   fun clockShifted(deltaMs: Long): EnforcementGapTracker {
     if (deltaMs == 0L) return this
-    val current = run ?: return copy(lastApprovedAt = lastApprovedAt?.plus(deltaMs))
+    val current = run ?: return copy(lastApprovedAt = lastApprovedAt?.plus(deltaMs), lastCoveredAt = lastCoveredAt?.plus(deltaMs))
     val shifted = current.copy(
       startedAt = current.startedAt + deltaMs,
       heartbeatAt = current.heartbeatAt + deltaMs,
@@ -732,6 +871,7 @@ internal data class EnforcementGapTracker(
       run = shifted,
       gaps = gaps.map { gap -> if (gap.run == current.startedAt) gap.copy(run = shifted.startedAt) else gap },
       lastApprovedAt = lastApprovedAt?.plus(deltaMs),
+      lastCoveredAt = lastCoveredAt?.plus(deltaMs),
     )
   }
 
@@ -809,10 +949,12 @@ internal data class EnforcementGapTracker(
   /**
    * The pieces of [gap] inside the intent windows up to [now]: a closed gap
    * yields closed pieces (engine-family ones under [MIN_ENGINE_GAP_MS]
-   * dropped); an open gap yields closed pieces for the windows that ended
-   * and one open piece when a window is in force at now. A piece of no
-   * length is kept only when the gap itself has none (a grant and a
-   * revocation at the same instant, as on iOS).
+   * dropped; accessibility ones dropped only when the whole observation,
+   * from its origin, lasted under it: a rebind within seconds, never a
+   * settled piece of a longer outage); an open gap yields closed pieces for
+   * the windows that ended and one open piece when a window is in force at
+   * now. A piece of no length is kept only when the gap itself has none (a
+   * grant and a revocation at the same instant, as on iOS).
    */
   private fun clip(gap: EnforcementGap, now: Long, intent: EnforcementIntent): List<EnforcementGap> {
     val end = gap.to ?: now
@@ -827,6 +969,7 @@ internal data class EnforcementGapTracker(
       val open = gap.isOpen && now in window
       if (!open && to == from && end != gap.from) continue
       if (!open && gap.isEngineFamily && to - from < MIN_ENGINE_GAP_MS) continue
+      if (!open && gap.family == EnforcementGap.Family.accessibility && to - gap.origin < MIN_ENGINE_GAP_MS) continue
       pieces.add(gap.copy(from = from, to = if (open) null else to))
     }
     return pieces
@@ -843,7 +986,7 @@ internal data class EnforcementGapTracker(
    */
   private fun mergeGap(gaps: List<EnforcementGap>, gap: EnforcementGap, reporting: Boolean = false): List<EnforcementGap> {
     val touching = gaps.filter {
-      it.isEngineFamily == gap.isEngineFamily && it.mergeKey == gap.mergeKey && touches(it, gap) &&
+      it.family == gap.family && it.mergeKey == gap.mergeKey && touches(it, gap) &&
         (reporting || gap.isOpen || !it.isOpen || it.origin != gap.origin)
     }
     if (touching.isEmpty()) return sorted(gaps + gap)
@@ -894,6 +1037,7 @@ internal data class EnforcementGapTracker(
       },
     )
     lastApprovedAt?.let { json.put(LAST_APPROVED_AT, it) }
+    lastCoveredAt?.let { json.put(LAST_COVERED_AT, it) }
     return json
   }
 
@@ -955,6 +1099,7 @@ internal data class EnforcementGapTracker(
     private const val SEEN_EXITS = "seenExits"
     private const val TIMESTAMP = "timestamp"
     private const val LAST_APPROVED_AT = "lastApprovedAt"
+    private const val LAST_COVERED_AT = "lastCoveredAt"
 
     /** The tracker a stored object holds; an empty one for null or garbage, with malformed entries dropped. */
     fun fromJson(json: JSONObject?): EnforcementGapTracker {
@@ -992,6 +1137,7 @@ internal data class EnforcementGapTracker(
         run = run,
         seenExits = seen,
         lastApprovedAt = json.optLongOrNull(LAST_APPROVED_AT),
+        lastCoveredAt = json.optLongOrNull(LAST_COVERED_AT),
       )
     }
 

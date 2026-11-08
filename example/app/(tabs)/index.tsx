@@ -9,7 +9,7 @@ import ExpoScreenTime, {
   type ScreenTimePermissionResponse,
 } from "expo-screen-time";
 import { useCallback, useEffect, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { SELECTION_ID, useNativeSelection } from "../_layout";
 import {
@@ -34,10 +34,35 @@ const STEP_TITLE: Partial<Record<PermissionStep["id"], string>> = {
   notifications: "Notifications (shield → open app)",
   overlay: "Display over other apps",
   usageAccess: "Usage access",
+  accessibility: "Block apps in every profile",
   deviceAdmin: "Device admin",
   batteryOptimization: "Battery optimization",
   backgroundAutostart: "Autostart (vendor screen)",
 };
+
+/**
+ * Google Play's prominent disclosure for the AccessibilityService API: shown
+ * in the app, before the user is sent to Settings › Accessibility, with an
+ * explicit consent. The `accessibility` step is listed only in a build
+ * whose `android.accessibilityEngine` option is on, and is never part of
+ * "the next required step", so this dialog is the one way to reach it.
+ * The text is the pattern the docs give (permissions › Android); the
+ * Settings page then shows the same facts from its second sentence on.
+ */
+function showAccessibilityDisclosure(onConsent: () => void) {
+  Alert.alert(
+    "Block apps everywhere on this phone",
+    "To block the apps you chose in your work profile, Private Space and cloned apps too, " +
+      "this app uses Android's Accessibility service. Android tells it when one of those apps " +
+      "opens, so it can show the blocking screen. It does not read what is on your screen, " +
+      "collects no personal data and sends nothing off your phone. You can turn it off at any " +
+      "time in Settings › Accessibility.",
+    [
+      { text: "Not now", style: "cancel" },
+      { text: "Continue to Settings", onPress: onConsent },
+    ],
+  );
+}
 
 export default function HomeScreen() {
   const { tokens, metadata, refresh } = useNativeSelection(SELECTION_ID);
@@ -69,11 +94,16 @@ export default function HomeScreen() {
 
   const permissionGranted = permissions?.granted ?? false;
   const requestStep = async (step?: PermissionStep["id"]) => {
-    const res = await ExpoScreenTime.requestScreenTimePermissionsAsync({
-      ...PERMISSION_OPTIONS,
-      step,
-    });
-    setPermissions(res);
+    const request = async () => {
+      const res = await ExpoScreenTime.requestScreenTimePermissionsAsync({
+        ...PERMISSION_OPTIONS,
+        step,
+      });
+      setPermissions(res);
+    };
+    // The disclosure first, then Settings: never the other way round.
+    if (step === "accessibility") showAccessibilityDisclosure(() => void request());
+    else await request();
   };
 
   return (

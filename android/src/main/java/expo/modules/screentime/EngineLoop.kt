@@ -94,6 +94,26 @@ import java.util.TimeZone
  * lifted set (snoozed apps, the shield's unblocks); the grant survives the
  * process (it is read back from the document with its meter).
  *
+ * **The accessibility detector.** When the config plugin
+ * declared [ScreenTimeAccessibilityService] and the user enabled it, the
+ * system pushes a `TYPE_WINDOW_STATE_CHANGED` event for every window of a
+ * restricted app that comes forward, from every profile (the work profile,
+ * Private Space and clones, which UsageStats never reports: research
+ * §3.2). The event is a **hint into this loop** ([hint]), never a second
+ * state machine: on the engine thread, [ShieldPolicy.shields] judges the
+ * package against the same sources, launchable set, exemptions and lifted
+ * set, the same [shield] draws it (the poll and the hint both see a
+ * main-profile app: the second sighting of an arrival the first already
+ * answered is skipped, [ShieldPolicy.isSameArrival], only in a build that
+ * declares the detector), and one poll runs at once so the tracker, the
+ * meters and the follow-up see the change at the event instant. For a
+ * profile app the poll sees nothing and the hint alone shielded it; the
+ * follow-up then finds it neither resumed nor visible and leaves it. The
+ * poll keeps its rates: the detector adds triggers and removes none, so
+ * the shipped path is the floor. The service is scoped to the packages the
+ * sources cover ([ShieldPolicy.covered], re-applied on every source and
+ * package change; the host package alone when nothing is shielded).
+ *
  * **Enforcement gaps.** The loop is the engine's heartbeat for
  * [EnforcementGapTracker]: one beat every [EnforcementGapTracker.HEARTBEAT_INTERVAL_MS]
  * on the engine thread (a timer that sleeps with the CPU, which is why a
@@ -158,8 +178,20 @@ internal class EngineLoop(private val context: Context) {
   private var lastEnd = 0L
   private val seen = HashMap<String, Long>()
   private var lastShieldAt = 0L
+  /** Wall ms of the last shield launch: an arrival at or before it was already answered ([ShieldPolicy.isSameArrival]). */
+  private var lastShieldWall = 0L
+  /** The target of the last shield launched, with [lastShieldAt] and [lastShieldWall]. */
+  private var lastShieldTarget: String? = null
+  /** The last launched shield has resumed since (its own report): after that, a fresh arrival relaunches. */
+  private var shownSinceLaunch = false
+  /** The build declares the accessibility detector: the only builds where two detectors can report one arrival. */
+  private val detectorDeclared by lazy { BuildManifest.resolve(context).accessibility }
   private var errorStreak = 0
   private var polls = 0L
+  /** Window-state hints received from the accessibility detector. */
+  private var hints = 0L
+  /** The packages the accessibility detector was last scoped to. */
+  private var scoped: Set<String> = emptySet()
   /** When the running poll was due (uptime), and how late it ran. */
   private var pollDueAt = 0L
   private var pollLateMs = 0L
@@ -295,6 +327,7 @@ internal class EngineLoop(private val context: Context) {
             intent.data?.schemeSpecificPart?.let(ShieldCache::dropFace)
             if (sources.isNotEmpty()) {
               reloadSets()
+              rescope(intent.action!!.substringAfterLast('.'))
               ShieldWarmer.warm(context, BlockComposition.union(sources), intent.action!!.substringAfterLast('.'))
             }
           }
@@ -341,6 +374,8 @@ internal class EngineLoop(private val context: Context) {
     // ahead of the next poll, so the app the user is returned to is not
     // shielded again from a stale lifted set.
     ShieldActivity.refreshListener = { reason -> refresh(reason) }
+    // The accessibility detector's window-state events, when the service is declared and bound (same process).
+    ScreenTimeAccessibilityService.hintListener = { packageName, eventAtUptime -> hint(packageName, eventAtUptime) }
   }
 
   /**
@@ -388,6 +423,9 @@ internal class EngineLoop(private val context: Context) {
     }
     ShieldActivity.shownListener = null
     ShieldActivity.refreshListener = null
+    ScreenTimeAccessibilityService.hintListener = null
+    // No engine, nothing to hear: the detector goes back to the host package alone.
+    ScreenTimeAccessibilityService.scope(setOf(context.packageName))
     try {
       context.unregisterReceiver(receiver)
     } catch (e: IllegalArgumentException) {
@@ -407,6 +445,57 @@ internal class EngineLoop(private val context: Context) {
 
   /** One beat of the gap tracker from this process, with the engine's own permission check. */
   private fun beat(reason: String) = gaps.heartbeat(Process.myPid(), reason)
+
+  // MARK: - The accessibility detector's hint
+
+  /**
+   * A window of [packageName] came forward, says the accessibility service
+   * (`eventTime`, uptime ms, stamped at the source). From the service's
+   * thread; judged on the engine thread.
+   */
+  fun hint(packageName: String, eventAtUptime: Long) {
+    handler.post { guarded("hint") { onHint(packageName, eventAtUptime) } }
+  }
+
+  private fun onHint(packageName: String, eventAtUptime: Long) {
+    hints++
+    if (sources.isEmpty()) return
+    val now = SystemClock.uptimeMillis()
+    if (ShieldPolicy.shields(packageName, sources, launchable, exempt, lifted)) {
+      when {
+        ShieldActivity.showing == packageName -> Log.i(TAG, "hint target=$packageName already shielded ageMs=${now - eventAtUptime}")
+        now <= evictingUntil -> Log.i(TAG, "hint target=$packageName during an eviction; left to the follow-up")
+        else -> {
+          Log.i(TAG, "detected target=$packageName via=accessibility ageMs=${now - eventAtUptime} hints=$hints recentPolls=$recentPolls")
+          // The event's instant on the wall clock, the clock of the poll's UsageStats events.
+          shield(packageName, arrivedAt = System.currentTimeMillis() - (now - eventAtUptime))
+        }
+      }
+    }
+    // The stream at the event instant: the tracker, the meters and the
+    // follow-up see the change now rather than at the next tick (a
+    // main-profile app makes the two paths agree; a profile app is
+    // invisible to the poll, and the hint alone shielded it).
+    if (polling) {
+      handler.removeCallbacks(poll)
+      pollDueAt = SystemClock.uptimeMillis()
+      handler.post(poll)
+    }
+  }
+
+  /**
+   * Scopes the accessibility detector to the packages the sources cover
+   * (the host package alone when that is nothing), when the set changed.
+   * Cheap when the service is not declared or not bound: the scope is kept
+   * for its next connect.
+   */
+  private fun rescope(reason: String) {
+    val covered = ShieldPolicy.covered(sources, launchable, exempt).ifEmpty { setOf(context.packageName) }
+    if (covered == scoped) return
+    scoped = covered
+    ScreenTimeAccessibilityService.scope(covered)
+    Log.i(TAG, "accessibility detector scoped to ${covered.size} package(s) ($reason)")
+  }
 
   // MARK: - The monitoring step
 
@@ -632,9 +721,11 @@ internal class EngineLoop(private val context: Context) {
     if (sources.isEmpty()) {
       Log.i(TAG, "no block in force ($reason)")
       ShieldActivity.dismiss()
+      rescope(reason)
       return
     }
     reloadSets()
+    rescope(reason)
     reenforced.clear()
     evicted.clear()
     // What the first shield will need is loaded now, on the main thread, ahead of it.
@@ -801,7 +892,7 @@ internal class EngineLoop(private val context: Context) {
     if (targets.isNotEmpty()) {
       val target = targets.first()
       Log.i(TAG, "detected target=$target eventAt=${cameForward[target]} ageMs=${now - cameForward[target]!!} pollLateMs=$pollLateMs queryMs=$queryMs recentPolls=$recentPolls")
-      shield(target)
+      shield(target, arrivedAt = cameForward[target])
       return
     }
     // Still on screen with no shield on it: the block started while the app
@@ -859,8 +950,22 @@ internal class EngineLoop(private val context: Context) {
     return usage.queryEvents(begin, end)
   }
 
-  private fun shield(target: String) {
-    lastShieldAt = SystemClock.uptimeMillis()
+  /**
+   * Launches the shield over [target]. [arrivedAt] is when it came forward
+   * (wall ms) for a detection, null for the standing check and a replay.
+   */
+  private fun shield(target: String, arrivedAt: Long? = null) {
+    val up = SystemClock.uptimeMillis()
+    // The hint and the poll both reported this arrival, and the first launch
+    // answers it (the shield is on its way or up over the target): a second
+    // start would only reach `onNewIntent`. Never in a default build, never
+    // after a shield that was shown and has gone (a trampoline, a reopen).
+    if (ShieldPolicy.isSameArrival(target, arrivedAt, detectorDeclared, lastShieldTarget, lastShieldWall, up - lastShieldAt, SHIELD_DEDUP_MS, ShieldActivity.showing, shownSinceLaunch)) {
+      Log.i(TAG, "shield for $target launched ${up - lastShieldAt} ms ago for this arrival; not again")
+      return
+    }
+    lastShieldAt = up
+    lastShieldWall = System.currentTimeMillis()
     if (!hasOverlayPermission("shield")) {
       stopPolling("overlay permission revoked")
       return
@@ -880,6 +985,8 @@ internal class EngineLoop(private val context: Context) {
     lockTaskRecorded = false
     // The owner's configuration draws the shield: threshold > latest schedule > manual > default.
     val owner = ShieldPolicy.owner(target, sources)
+    lastShieldTarget = target
+    shownSinceLaunch = false
     ShieldActivity.launch(context, target, owner = owner?.kind?.activityName)
   }
 
@@ -974,6 +1081,7 @@ internal class EngineLoop(private val context: Context) {
   // MARK: - Follow-up after the shield drew
 
   private fun onShieldShown(target: String) {
+    if (target == lastShieldTarget) shownSinceLaunch = true
     handler.postDelayed({ followUp(target, confirmed = false) }, FOLLOW_UP_MS)
   }
 
@@ -1040,6 +1148,8 @@ internal class EngineLoop(private val context: Context) {
     const val PERSIST_MS = 30_000L
     const val SEED_MS = 6 * 60 * 60 * 1_000L
     const val REENFORCE_MS = 1_000L
+    /** How long after a launch a second sighting of the same arrival is skipped ([ShieldPolicy.isSameArrival]); a safety bound, the arrival's time decides. */
+    const val SHIELD_DEDUP_MS = 700L
 
     /**
      * How old a pause must be before the standing check takes a paused, unstopped app as on screen

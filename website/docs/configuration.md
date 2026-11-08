@@ -77,14 +77,18 @@ service in its own `:screentime` process, the boot and update receivers and
 the device-admin receiver come from the library's own manifest, merged into
 yours by Gradle.
 
-Two options, under `expo.extra.expoScreenTime.android`:
+Three options, under `expo.extra.expoScreenTime.android`:
 
 ```json
 {
   "expo": {
     "extra": {
       "expoScreenTime": {
-        "android": { "parentalControl": true, "features": ["blocking", "monitoring"] }
+        "android": {
+          "parentalControl": true,
+          "features": ["blocking", "monitoring"],
+          "accessibilityEngine": false
+        }
       }
     },
     "plugins": ["expo-screen-time"]
@@ -96,6 +100,7 @@ Two options, under `expo.extra.expoScreenTime.android`:
 |---|---|---|
 | `parentalControl` | `false` | The app is a parental-control app: adds Google Play's mandatory `isMonitoringTool` manifest flag with the value `child_monitoring` ([Play Console help](https://support.google.com/googleplay/android-developer/answer/12955211)). Play requires it in every version code of such an app; Google Play Protect then tells the user a monitoring app is installed. Turning the option off removes the entry again. |
 | `features` | every feature | The features the app uses, by the names of [`ScreenTimeFeature`](./types.md): `blocking`, `monitoring`, `usageReports`, `shieldOpenApp`, `appRemovalProtection`, `webDomainBlocking`. The plugin removes from your manifest (`tools:node="remove"`) every component and permission no listed feature needs; see below. An unknown name fails the prebuild. Android only: the iOS build is shaped by [`targets`](#target-selection). |
+| `accessibilityEngine` | `false` | Adds the library's `AccessibilityService` to your manifest, so the blocking engine also hears about apps opened from a **work profile**, **Private Space** or a **cloned app** (Samsung Dual Messenger), which usage access alone never reports. The engine runs exactly as without it; the service is one more detector, which the user turns on in Settings › Accessibility through the recommended [`accessibility` permission step](./api/permissions.md#android). **Declares `BIND_ACCESSIBILITY_SERVICE` to Google Play**: see below before turning it on. Needs `blocking` among `features`; the prebuild fails otherwise. Turning the option off removes the entry again. |
 
 ### Features {#android-features}
 
@@ -153,6 +158,65 @@ launch a block the earlier build left in its store.
 The engine's persistent notice (channel, title, text) is localized through
 string resources you can override in your own `res/values/strings.xml`:
 `expo_st_notice_channel`, `expo_st_notice_title`, `expo_st_notice_text`.
+
+### The accessibility engine {#android-accessibility-engine}
+
+Usage access reports the main profile only: a blocked app opened from a work
+profile, Private Space or a cloned copy is invisible to the engine, so it is
+never shielded. With `accessibilityEngine: true` the plugin declares an
+accessibility service in your manifest, in the engine's own process:
+
+```xml
+<service
+  android:name="expo.modules.screentime.ScreenTimeAccessibilityService"
+  android:exported="true"
+  android:process=":screentime"
+  android:label="@string/expo_st_accessibility_label"
+  android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+  <intent-filter>
+    <action android:name="android.accessibilityservice.AccessibilityService" />
+  </intent-filter>
+  <meta-data android:name="android.accessibilityservice"
+             android:resource="@xml/expo_st_accessibility_service" />
+</service>
+```
+
+plus the `QUERY_ADVANCED_PROTECTION_MODE` permission (`normal` level, shown
+to nobody), which lets the module tell when Android 17's Advanced
+Protection has disabled every non-tool accessibility service. Android tells
+the service when a window of a restricted app comes forward, from every
+profile, and the engine shields it the same way; the service asks for
+window-state events only, is scoped at runtime to the restricted apps, cannot
+read window content (`canRetrieveWindowContent` is `false`) and declares
+`isAccessibilityTool="false"`, as Google Play requires of a blocker. The
+UsageStats engine keeps running underneath: when the service is off, crashed
+or blocked, the main profile is enforced as before and the lost coverage is
+reported as an [enforcement gap](./api/capabilities.md#android-gaps) with
+`scope: "otherProfiles"`.
+
+**What the option costs.** `BIND_ACCESSIBILITY_SERVICE` is the API Google
+Play reviews hardest. Before an opted-in build can be published you must:
+
+1. fill in the **AccessibilityService API declaration** in the Play Console
+   (the use, whether personal data is collected, and a link to a short video
+   of the consent flow); the description must match what the service does,
+   which the Settings description string says;
+2. show a **prominent disclosure inside the app**, before sending the user to
+   Settings, during normal use (not only in the store listing): the
+   [permissions page](./api/permissions.md#android-accessibility) gives the
+   pattern and a draft text;
+3. keep the store listing honest about it.
+
+The prebuild prints a warning naming these whenever the option is on. A
+rejection can become a strike on the Play account: publish the build
+**without** the option first, then an opted-in build as a separate upload, so
+a rejection notice points at one cause. The service's name and description in
+Settings are the `expo_st_accessibility_label` and
+`expo_st_accessibility_description` string resources; override them in your
+own `res/values` to localise them. The default description says only what the
+service itself does; your app's data practices go in your override, and only
+when they are true, since Play reads it against your declaration. Nothing changes for apps that do not opt
+in: the default build is byte-identical.
 
 ## Using with Other Apple Targets
 

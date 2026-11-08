@@ -4,13 +4,17 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 import {
+  ACCESSIBILITY_SERVICE,
+  ACCESSIBILITY_SERVICE_RESOURCE,
   ANDROID_FEATURES,
   ANDROID_MANIFEST_GATES,
   AndroidFeature,
+  BIND_ACCESSIBILITY_SERVICE,
   IS_MONITORING_TOOL,
   IS_MONITORING_TOOL_CHILD,
   LEGACY_IS_MONITORING_TOOL,
   ManifestGate,
+  QUERY_ADVANCED_PROTECTION_MODE,
   ResolvedScreenTimeAndroidOptions,
   applyScreenTimeAndroidManifest,
   getScreenTimeAndroidOptions,
@@ -25,7 +29,11 @@ const LIBRARY_MANIFEST = path.resolve(__dirname, '..', '..', '..', '..', 'androi
 const TYPES = path.resolve(__dirname, '..', '..', '..', '..', 'src', 'ExpoScreenTime.types.ts');
 
 const ALL: AndroidFeature[] = [...ANDROID_FEATURES];
-const options = (features: AndroidFeature[], parentalControl = false): ResolvedScreenTimeAndroidOptions => ({ parentalControl, features });
+const options = (features: AndroidFeature[], parentalControl = false, accessibilityEngine = false): ResolvedScreenTimeAndroidOptions => ({
+  parentalControl,
+  features,
+  accessibilityEngine,
+});
 
 // A vanilla prebuild manifest, as `withAndroidManifest` hands it over (the
 // bare template declares the tools namespace).
@@ -49,13 +57,25 @@ const metaData = (manifest: AndroidConfig.Manifest.AndroidManifest) =>
   AndroidConfig.Manifest.getMainApplicationOrThrow(manifest)['meta-data'] ?? [];
 
 describe('getScreenTimeAndroidOptions', () => {
-  it('defaults to no parental control and every feature', () => {
-    expect(getScreenTimeAndroidOptions({})).toEqual({ parentalControl: false, features: ALL });
-    expect(getScreenTimeAndroidOptions({ extra: { expoScreenTime: { targets: [] } } })).toEqual({ parentalControl: false, features: ALL });
+  it('defaults to no parental control, every feature and no accessibility engine', () => {
+    expect(getScreenTimeAndroidOptions({})).toEqual({ parentalControl: false, features: ALL, accessibilityEngine: false });
+    expect(getScreenTimeAndroidOptions({ extra: { expoScreenTime: { targets: [] } } })).toEqual({ parentalControl: false, features: ALL, accessibilityEngine: false });
     expect(getScreenTimeAndroidOptions({ extra: { expoScreenTime: { android: { parentalControl: true } } } })).toEqual({
       parentalControl: true,
       features: ALL,
+      accessibilityEngine: false,
     });
+  });
+
+  it('reads accessibilityEngine, which needs blocking among the features', () => {
+    const read = (android: unknown) => getScreenTimeAndroidOptions({ extra: { expoScreenTime: { android } } });
+    expect(read({ accessibilityEngine: true }).accessibilityEngine).toBe(true);
+    expect(read({ accessibilityEngine: true, features: ['blocking', 'monitoring'] }).accessibilityEngine).toBe(true);
+    // Anything but `true` is off (no truthy strings: a typo must not declare a Play-reviewed service).
+    expect(read({ accessibilityEngine: 'true' }).accessibilityEngine).toBe(false);
+    expect(read({ accessibilityEngine: false, features: ['usageReports'] }).accessibilityEngine).toBe(false);
+    expect(() => read({ accessibilityEngine: true, features: ['monitoring'] })).toThrow(/accessibilityEngine.*needs "blocking".*features.*\["monitoring"\]/s);
+    expect(() => read({ accessibilityEngine: true, features: [] })).toThrow(/needs "blocking"/);
   });
 
   it('reads the features, order kept, duplicates dropped, an empty array allowed', () => {
@@ -296,6 +316,93 @@ describe('applyScreenTimeAndroidManifest — features', () => {
     const manifest = applyScreenTimeAndroidManifest(vanillaManifest(), options(['usageReports'], true));
     expect(metaData(manifest).some((m) => m.$['android:name'] === IS_MONITORING_TOOL)).toBe(true);
     expect(removeNodes(manifest).length).toBe(removedGates(['usageReports']).length);
+  });
+});
+
+describe('applyScreenTimeAndroidManifest — accessibilityEngine', () => {
+  const services = (manifest: AndroidConfig.Manifest.AndroidManifest): any[] =>
+    (AndroidConfig.Manifest.getMainApplicationOrThrow(manifest) as any).service ?? [];
+  const service = (manifest: AndroidConfig.Manifest.AndroidManifest) => services(manifest).find((s) => s.$['android:name'] === ACCESSIBILITY_SERVICE);
+  const permissionNames = (manifest: AndroidConfig.Manifest.AndroidManifest) => (manifest.manifest['uses-permission'] ?? []).map((p) => p.$['android:name']);
+
+  it('declares the service as the proposal writes it: exported, :screentime, BIND_ACCESSIBILITY_SERVICE, the intent filter and the XML pointer', () => {
+    const manifest = applyScreenTimeAndroidManifest(vanillaManifest(), options(ALL, false, true));
+    const entry = service(manifest);
+    expect(entry).toBeDefined();
+    expect(entry.$).toEqual({
+      'android:name': ACCESSIBILITY_SERVICE,
+      'android:exported': 'true',
+      'android:process': ':screentime',
+      'android:label': '@string/expo_st_accessibility_label',
+      'android:permission': BIND_ACCESSIBILITY_SERVICE,
+    });
+    expect(entry['intent-filter']).toEqual([{ action: [{ $: { 'android:name': 'android.accessibilityservice.AccessibilityService' } }] }]);
+    expect(entry['meta-data']).toEqual([{ $: { 'android:name': 'android.accessibilityservice', 'android:resource': ACCESSIBILITY_SERVICE_RESOURCE } }]);
+    expect(services(manifest)).toHaveLength(1);
+    // The Advanced Protection query permission comes with it (normal protection level).
+    expect(permissionNames(manifest)).toEqual(['android.permission.INTERNET', QUERY_ADVANCED_PROTECTION_MODE]);
+    // Nothing else moved: no feature gate is written for a full feature set.
+    expect(metaData(manifest).map((m) => m.$['android:name'])).toEqual(['expo.modules.updates.ENABLED']);
+  });
+
+  it('writes nothing when the option is off (the default build stays byte-identical)', () => {
+    const manifest = vanillaManifest();
+    const before = JSON.stringify(manifest);
+    applyScreenTimeAndroidManifest(manifest, options(ALL));
+    expect(JSON.stringify(manifest)).toBe(before);
+    expect(service(manifest)).toBeUndefined();
+  });
+
+  it('is idempotent, and survives the off → on → off and on → off → on round trips (--no-clean)', () => {
+    const vanilla = JSON.stringify(vanillaManifest());
+    const manifest = vanillaManifest();
+    // off → on → off
+    applyScreenTimeAndroidManifest(manifest, options(ALL));
+    applyScreenTimeAndroidManifest(manifest, options(ALL, false, true));
+    const on = JSON.stringify(manifest);
+    applyScreenTimeAndroidManifest(manifest, options(ALL, false, true));
+    applyScreenTimeAndroidManifest(manifest, options(ALL, false, true));
+    expect(JSON.stringify(manifest)).toBe(on);
+    expect(services(manifest)).toHaveLength(1);
+    applyScreenTimeAndroidManifest(manifest, options(ALL));
+    expect(JSON.stringify(manifest)).toBe(vanilla);
+    // on → off → on
+    applyScreenTimeAndroidManifest(manifest, options(ALL, false, true));
+    expect(JSON.stringify(manifest)).toBe(on);
+  });
+
+  it('keeps the consumer\'s own services and replaces a hand-declared entry with the one the option implies', () => {
+    const manifest = vanillaManifest();
+    const app = AndroidConfig.Manifest.getMainApplicationOrThrow(manifest) as any;
+    app.service = [
+      { $: { 'android:name': '.MyService', 'android:exported': 'false' } },
+      { $: { 'android:name': ACCESSIBILITY_SERVICE, 'android:exported': 'true' } },
+    ];
+    applyScreenTimeAndroidManifest(manifest, options(ALL, false, true));
+    expect(services(manifest).map((s) => s.$['android:name'])).toEqual(['.MyService', ACCESSIBILITY_SERVICE]);
+    expect(service(manifest).$['android:permission']).toBe(BIND_ACCESSIBILITY_SERVICE);
+    applyScreenTimeAndroidManifest(manifest, options(ALL));
+    expect(services(manifest).map((s) => s.$['android:name'])).toEqual(['.MyService']);
+  });
+
+  it('leaves a query permission the app requests itself when the option goes off', () => {
+    const manifest = applyScreenTimeAndroidManifest(vanillaManifest(), options(ALL, false, true), normalizePermissionNames(['QUERY_ADVANCED_PROTECTION_MODE']));
+    expect(permissionNames(manifest).filter((n) => n === QUERY_ADVANCED_PROTECTION_MODE)).toHaveLength(1);
+    applyScreenTimeAndroidManifest(manifest, options(ALL), normalizePermissionNames(['QUERY_ADVANCED_PROTECTION_MODE']));
+    expect(permissionNames(manifest)).toContain(QUERY_ADVANCED_PROTECTION_MODE);
+  });
+
+  it('composes with parentalControl and a reduced feature set that keeps blocking', () => {
+    const manifest = applyScreenTimeAndroidManifest(vanillaManifest(), options(['blocking'], true, true));
+    expect(service(manifest)).toBeDefined();
+    expect(metaData(manifest).some((m) => m.$['android:name'] === IS_MONITORING_TOOL)).toBe(true);
+    expect(removedGates(['blocking'])).toEqual([]);
+    applyScreenTimeAndroidManifest(manifest, options(ALL));
+    expect(JSON.stringify(manifest)).toBe(JSON.stringify(vanillaManifest()));
+  });
+
+  it('is not a feature gate: the service is added on opt-in, never removed by features, so the library manifest has no row for it', () => {
+    expect(ANDROID_MANIFEST_GATES.some((g) => g.name === ACCESSIBILITY_SERVICE)).toBe(false);
   });
 });
 

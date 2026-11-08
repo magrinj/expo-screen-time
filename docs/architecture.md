@@ -389,6 +389,26 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   engine is a gap first and a closed one next), on every foreground and in
   `getEnforcementGaps`, which answers `gaps(since, now, intent)`. The
   document key is `gaps`.
+- **The accessibility detector.**
+  `ScreenTimeAccessibilityService.kt` is declared in the *app* manifest by
+  the plugin's `android.accessibilityEngine` option (never in the library
+  manifest: it changes a consumer's Play review), in `:screentime`, with
+  `res/xml/expo_st_accessibility_service.xml` (window-state events only,
+  no window content, `isAccessibilityTool="false"`). It hears every
+  profile (work profile, Private Space, clones), which UsageStats never
+  reports, and is a **hint into `EngineLoop`** (`hint`: the same policy,
+  the same `shield()`, one immediate poll; a second launch for the same
+  target within 700 ms is skipped), never a second state machine. The
+  engine scopes it to the packages the sources cover
+  (`ShieldPolicy.covered` → `packageNames`; the host alone when nothing
+  is shielded). Its life is in the store (`accessibility.boundAt / pid /
+  unboundAt`); `AccessibilityHealth.kt` reads the enabled-services
+  setting and Advanced Protection; the `accessibility` permission step
+  (recommended, `blocking`, opted-in builds only) and the gap tracker's
+  `observeAccessibility` (a gap with `scope: otherProfiles` while the
+  service is enabled but not bound, off, or blocked, with the engine
+  running) rest on them. Proposal and rationale:
+  `docs/proposals/android-accessibility-engine.md`.
 - `ScreenTimeDeviceAdminReceiver.kt` — a no-policy device admin: while
   active, Settings disables "Force stop" and "Uninstall" goes through
   "Deactivate & uninstall" first (measured on Android 17);

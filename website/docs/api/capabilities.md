@@ -87,6 +87,29 @@ when it starts. An engine gap and a permission gap can overlap; add up gap
 time only after merging overlaps. Closed gaps are kept for 30 days, 50 at
 most.
 
+#### `scope: "otherProfiles"` {#android-gap-scope}
+
+In a build that opts into the [accessibility engine](../configuration.md#android-accessibility-engine),
+a gap can carry `scope: "otherProfiles"`: only the blocked apps opened from
+a work profile, Private Space or a cloned app went unenforced, because the
+accessibility service, which alone sees those profiles, was down while the
+engine ran; the main profile stayed shielded. A gap without `scope` is a
+whole-device gap, as before; iOS never sets it. The `reason` vocabulary is
+unchanged:
+
+| What happened | Records |
+|---|---|
+| Task Manager "Stop" (kills the engine process, both detectors) | `stoppedByUser`, no scope, until the engine is back; then `stoppedByUser` with `scope: "otherProfiles"` from that return until the system binds the service again (Android leaves it listed as enabled but crashed for minutes). |
+| Force stop | the final `stoppedByUser` gap for the engine as before; the service is removed from the enabled services, so once the engine is back a `permissionRevoked` gap with `scope: "otherProfiles"` stays open until the user re-enables it (the `accessibility` step reads `denied`). |
+| The toggle turned off, or Android 17's Advanced Protection keeping the service from running | `permissionRevoked` with `scope: "otherProfiles"`, open while the service is not running (the step reads `denied` or `restricted`). A service the protection left bound is still coverage: the gap reports what happened, not what the policy intends. |
+| The service crashes on an event | the engine's own record (same process), then `otherProfiles` until the system binds it again. |
+| Never enabled | no gap: never having had the coverage is not a gap, as on iOS. |
+
+Scoped gaps are observed, clipped to the block's intent and kept like the
+others; a scoped gap and a whole-device gap can overlap (the coverage was
+down throughout a stop and the engine's return). Scoped gaps never merge
+with whole-device ones.
+
 ## `openApplication(handle)`
 
 Bring an app to the foreground by handle. iOS cannot launch another app, so it

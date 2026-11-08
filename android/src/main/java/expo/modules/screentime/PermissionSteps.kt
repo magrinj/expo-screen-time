@@ -13,6 +13,12 @@ package expo.modules.screentime
  *   activities from the background, which lets it bring the user back from
  *   every later settings screen);
  * - `usageAccess` (required; also for `usageReports` alone);
+ * - `accessibility` (recommended, for `blocking` in a build whose config
+ *   plugin declared the accessibility service, `android.accessibilityEngine`:
+ *   the second detector, which hears apps opened from a work profile,
+ *   Private Space or a clone; never required, since the main profile is
+ *   enforced without it, and the app must show Google Play's prominent
+ *   disclosure before requesting it);
  * - `notifications` (Android 13+; recommended, required for a `child`:
  *   Google Play's parental-control rules demand the persistent notice);
  * - `deviceAdmin` (recommended for blocking: an active admin cannot be
@@ -37,9 +43,9 @@ internal object PermissionSteps {
   /** Every id of the contract's `PermissionStepId`. */
   enum class StepId { screenTime, usageAccess, overlay, accessibility, notifications, batteryOptimization, backgroundAutostart, deviceAdmin }
 
-  /** The ids Android has a step for (the usageStats engine). */
+  /** The ids Android has a step for (the usageStats engine, and the accessibility detector in a build that declares it). */
   val androidStepIds: Set<StepId> = setOf(
-    StepId.overlay, StepId.usageAccess, StepId.notifications, StepId.deviceAdmin, StepId.batteryOptimization, StepId.backgroundAutostart
+    StepId.overlay, StepId.usageAccess, StepId.accessibility, StepId.notifications, StepId.deviceAdmin, StepId.batteryOptimization, StepId.backgroundAutostart
   )
 
   enum class Status { granted, denied, undetermined, restricted, unknown }
@@ -83,8 +89,10 @@ internal object PermissionSteps {
   sealed class RequestedStep {
     object Next : RequestedStep()
     data class Step(val id: StepId) : RequestedStep()
-    /** A contract id Android has no step for (`screenTime`, `accessibility`). */
+    /** A contract id Android has no step for (`screenTime`). */
     data class NotOnThisPlatform(val name: String) : RequestedStep()
+    /** `accessibility` in a build whose manifest does not declare the accessibility service (`android.accessibilityEngine` off). */
+    data class NotInBuild(val name: String) : RequestedStep()
     data class Unknown(val name: String) : RequestedStep()
   }
 
@@ -113,11 +121,15 @@ internal object PermissionSteps {
   /** `member` from the options: `child` or (default, and anything else) `individual`. */
   fun isChild(from: Any?): Boolean = from == "child"
 
-  fun requestedStep(from: Any?): RequestedStep {
+  fun requestedStep(from: Any?, build: BuildManifest = BuildManifest.full): RequestedStep {
     if (from == null) return RequestedStep.Next
     val name = from as? String ?: return RequestedStep.Unknown(from.toString())
     val id = StepId.values().firstOrNull { it.name == name } ?: return RequestedStep.Unknown(name)
-    return if (id in androidStepIds) RequestedStep.Step(id) else RequestedStep.NotOnThisPlatform(name)
+    return when {
+      id !in androidStepIds -> RequestedStep.NotOnThisPlatform(name)
+      id == StepId.accessibility && !build.accessibility -> RequestedStep.NotInBuild(name)
+      else -> RequestedStep.Step(id)
+    }
   }
 
   // MARK: - Steps
@@ -133,6 +145,11 @@ internal object PermissionSteps {
     val plans = mutableListOf<Plan>()
     if (engine && build.shield) plans.add(Plan(StepId.overlay, required = true, kind = Kind.settings))
     if (build.usageAccess && (engine || Feature.usageReports in features)) plans.add(Plan(StepId.usageAccess, required = true, kind = Kind.settings))
+    // The coverage step, after the required ones and before the reliability
+    // ones: the detector only serves the shield (never for monitoring,
+    // usage reports or removal protection alone), and is recommended
+    // whatever `member` is.
+    if (engine && build.blocking && build.accessibility && Feature.blocking in features) plans.add(Plan(StepId.accessibility, required = false, kind = Kind.settings))
     if (engine && build.notifications && device.sdkInt >= 33) plans.add(Plan(StepId.notifications, required = child, kind = Kind.prompt))
     if (build.deviceAdmin && (engine || Feature.appRemovalProtection in features)) {
       plans.add(Plan(StepId.deviceAdmin, required = child || Feature.appRemovalProtection in features, kind = Kind.settings))

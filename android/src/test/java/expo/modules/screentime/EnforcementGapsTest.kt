@@ -866,6 +866,204 @@ class EnforcementGapsAndroidTest {
     assertEquals(2L, mixed.lastApprovedAt)
   }
 
+  // MARK: - The accessibility detector (scope: otherProfiles)
+
+  private fun List<EnforcementGap>.scoped() = map { listOf(it.from, it.to, it.reason, it.scope) }
+
+  /** One look of the app: the health check, then the settle, as `EnforcementGapRecorder.observe` runs them. */
+  private fun EnforcementGapTracker.look(at: Long, enabled: Boolean, bound: Boolean, declared: Boolean = true) =
+    observeAccessibility(at, enabled, bound, declared = declared).settle(at, EnforcementIntent.ALWAYS)
+
+  @Test
+  fun `an outage the app looks at repeatedly stays one gap, with no holes`() {
+    // The review's probe: the toggle off after coverage, then looks 1 s and 48 s apart.
+    var tracker = running(runStart, pid = 1, until = runStart + minute)
+    val covered = runStart + minute
+    tracker = tracker.look(covered, enabled = true, bound = true)
+    for (s in listOf(150L, 151L, 152L, 200L, 205L)) tracker = tracker.look(covered + s * 1_000, enabled = false, bound = false)
+    assertEquals(
+      listOf(listOf(covered, null, Reason.permissionRevoked, EnforcementGap.Scope.otherProfiles)),
+      tracker.gaps(since = null, now = covered + 205_000, intent = EnforcementIntent.ALWAYS).scoped(),
+    )
+    // Covered again: still one gap, now closed.
+    tracker = tracker.look(covered + 300_000, enabled = true, bound = true)
+    assertEquals(listOf(listOf(covered, covered + 300_000, Reason.permissionRevoked, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+  }
+
+  @Test
+  fun `a look within the first seconds of an outage does not cut its start`() {
+    var tracker = running(runStart, pid = 1, until = runStart + minute)
+    val covered = runStart + minute
+    tracker = tracker.look(covered, enabled = true, bound = true)
+    tracker = tracker.look(covered + 3_000, enabled = true, bound = false)
+    tracker = tracker.look(covered + 30_000, enabled = true, bound = false)
+    tracker = tracker.look(covered + 60_000, enabled = true, bound = true)
+    assertEquals(listOf(listOf(covered, covered + 60_000)), tracker.gaps.map { listOf(it.from, it.to) })
+  }
+
+  @Test
+  fun `a rebind within seconds leaves no gap, even when the app looked in between`() {
+    var tracker = running(runStart, pid = 1, until = runStart + minute)
+    val covered = runStart + minute
+    tracker = tracker.look(covered, enabled = true, bound = true)
+    tracker = tracker.look(covered + 2_000, enabled = true, bound = false)
+    tracker = tracker.look(covered + 5_000, enabled = true, bound = true)
+    assertTrue(tracker.gaps.isEmpty())
+  }
+
+  @Test
+  fun `a build that no longer declares the service ends the scoped gap and forgets the coverage`() {
+    var tracker = running(runStart, pid = 1, until = runStart + minute)
+    val covered = runStart + minute
+    tracker = tracker.look(covered, enabled = true, bound = true)
+    tracker = tracker.look(covered + 60_000, enabled = true, bound = false)
+    assertTrue(tracker.hasOpenAccessibilityGap)
+    // The update turned the option off; Settings still lists the component as enabled.
+    tracker = tracker.look(covered + 120_000, enabled = true, bound = false, declared = false)
+    assertFalse(tracker.hasOpenAccessibilityGap)
+    assertNull(tracker.lastCoveredAt)
+    assertEquals(listOf(listOf(covered, covered + 120_000)), tracker.gaps.map { listOf(it.from, it.to) })
+    // And none opens again in that build.
+    tracker = tracker.look(covered + 600_000, enabled = true, bound = false, declared = false)
+    assertEquals(1, tracker.gaps.size)
+    assertFalse(tracker.hasOpenAccessibilityGap)
+  }
+
+  @Test
+  fun `never having been covered is not a gap, whatever the service's state`() {
+    var tracker = running(runStart, pid = 1, until = runStart + 3 * minute)
+    tracker = tracker.observeAccessibility(runStart + 3 * minute, enabled = false, bound = false)
+    tracker = tracker.observeAccessibility(runStart + 4 * minute, enabled = true, bound = false)
+    tracker = tracker.observeAccessibility(runStart + 5 * minute, enabled = true, bound = false, blocked = true)
+    assertTrue(tracker.gaps.isEmpty())
+    assertNull(tracker.lastCoveredAt)
+  }
+
+  @Test
+  fun `the toggle turned off after coverage is a permissionRevoked gap scoped to the other profiles, from the last covered check, closed when covered again`() {
+    var tracker = running(runStart, pid = 1, until = runStart + minute)
+    tracker = tracker.observeAccessibility(runStart + minute, enabled = true, bound = true)
+    assertEquals(runStart + minute, tracker.lastCoveredAt)
+    tracker = tracker.observeAccessibility(runStart + 2 * minute, enabled = true, bound = true)
+    // Off (a force stop removed it from the enabled list, or the user did).
+    tracker = tracker.observeAccessibility(runStart + 3 * minute, enabled = false, bound = false)
+    assertEquals(listOf(listOf(runStart + 2 * minute, null, Reason.permissionRevoked, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+    assertTrue(tracker.hasOpenAccessibilityGap)
+    assertFalse(tracker.hasOpenPermissionGap)
+    assertFalse(tracker.hasOpenEngineGap)
+    // Still off: the one gap stays open.
+    tracker = tracker.observeAccessibility(runStart + 4 * minute, enabled = false, bound = false)
+    assertEquals(1, tracker.gaps.size)
+    // Re-enabled and bound: closed at that check.
+    tracker = tracker.observeAccessibility(runStart + 5 * minute, enabled = true, bound = true)
+    assertEquals(listOf(listOf(runStart + 2 * minute, runStart + 5 * minute, Reason.permissionRevoked, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+    assertEquals(mapOf("from" to runStart + 2 * minute, "to" to runStart + 5 * minute, "reason" to "permissionRevoked", "scope" to "otherProfiles"), tracker.gaps.single().toMap())
+  }
+
+  @Test
+  fun `advanced protection reads as permissionRevoked while the toggle is on and the service is down, and is no gap while it still runs`() {
+    var tracker = running(runStart, pid = 1, until = runStart + minute).observeAccessibility(runStart + minute, enabled = true, bound = true)
+    // Measured on the Android 17 emulator: a service bound before the protection came on kept delivering events. Covered is what happened.
+    tracker = tracker.observeAccessibility(runStart + 2 * minute, enabled = true, bound = true, blocked = true)
+    assertTrue(tracker.gaps.isEmpty())
+    assertEquals(runStart + 2 * minute, tracker.lastCoveredAt)
+    tracker = tracker.observeAccessibility(runStart + 3 * minute, enabled = true, bound = false, blocked = true)
+    assertEquals(listOf(listOf(runStart + 2 * minute, null, Reason.permissionRevoked, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+    assertTrue(tracker.gaps.single().detail.contains("advanced protection"))
+  }
+
+  @Test
+  fun `after a Task Manager stop the whole-device gap speaks first, then the service still down is the stop's reason scoped to the other profiles`() {
+    // Covered while the engine ran; the stop kills the process (engine and service).
+    var tracker = running(runStart, pid = 100, until = runStart + 2 * minute).observeAccessibility(runStart + 2 * minute, enabled = true, bound = true)
+    val stop = runStart + 2 * minute + 30_000
+    // The app looks: the exit record opens the whole-device gap; the service is listed enabled but dead: no scoped gap while the engine is down.
+    tracker = tracker.recordExits(listOf(stopApp(stop, 100)), engine, now = stop + minute).observeAccessibility(stop + minute, enabled = true, bound = false)
+    assertEquals(listOf(listOf(stop, null, Reason.stoppedByUser, null)), tracker.gaps.scoped())
+    // The restart chain brings the engine back 3.5 min later; the system has not rebound the service.
+    val back = stop + 210_000
+    tracker = tracker.engineStarted(back, pid = 101, exits = listOf(stopApp(stop, 100)), engineProcess = engine, bootTime = bootBefore)
+    tracker = tracker.observeAccessibility(back, enabled = true, bound = false)
+    assertEquals(
+      listOf(
+        listOf(stop, back, Reason.stoppedByUser, null),
+        listOf(back, null, Reason.stoppedByUser, EnforcementGap.Scope.otherProfiles),
+      ),
+      tracker.gaps.scoped(),
+    )
+    // The system rebinds it eventually: closed there; the two never merged (different families).
+    tracker = tracker.heartbeat(back + 6 * minute, 101).observeAccessibility(back + 6 * minute, enabled = true, bound = true)
+    assertEquals(listOf(listOf(stop, back, Reason.stoppedByUser, null), listOf(back, back + 6 * minute, Reason.stoppedByUser, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+    // Read back: the scoped piece is reported with its scope, the other without.
+    val reported = tracker.gaps(null, back + 7 * minute, EnforcementIntent.ALWAYS).map { it.toMap() }
+    assertEquals(listOf(null, "otherProfiles"), reported.map { it["scope"] })
+    assertFalse(reported[0].containsKey("scope"))
+  }
+
+  @Test
+  fun `the stop's reason is kept when the app's look settled the whole-device gap just before the revival (measured race)`() {
+    // Emulator, 2026-11-08: the launch's observe settled the stop's gap at .642, the engine started at .707, the 65 ms sliver was dropped.
+    var tracker = running(runStart, pid = 100, until = runStart + 2 * minute).observeAccessibility(runStart + 2 * minute, enabled = true, bound = true)
+    val stop = runStart + 2 * minute + 30_000
+    val look = stop + 14_000
+    tracker = tracker.recordExits(listOf(stopApp(stop, 100)), engine, now = look).observeEngine(look, engineAlive = false, bootTime = bootBefore).settle(look, EnforcementIntent.ALWAYS)
+    val back = look + 65
+    tracker = tracker.engineStarted(back, pid = 101, exits = listOf(stopApp(stop, 100)), engineProcess = engine, bootTime = bootBefore)
+    assertEquals(listOf(listOf(stop, look, Reason.stoppedByUser, null)), tracker.gaps.scoped())
+    tracker = tracker.heartbeat(back + minute, 101).observeAccessibility(back + minute, enabled = true, bound = false)
+    assertEquals(listOf(listOf(stop, look, Reason.stoppedByUser, null), listOf(back, null, Reason.stoppedByUser, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+  }
+
+  @Test
+  fun `a crash with no exit record reads unknown, and a rebind within the minimum is dropped like an engine piece`() {
+    var tracker = running(runStart, pid = 1, until = runStart + minute).observeAccessibility(runStart + minute, enabled = true, bound = true)
+    // No engine death recorded, the service just is not bound (crashed on an event).
+    tracker = tracker.observeAccessibility(runStart + 2 * minute, enabled = true, bound = false)
+    assertEquals(listOf(listOf(runStart + minute, null, Reason.unknown, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+    // A fresh observation 5 s after one that found it down: under the minimum once closed, dropped.
+    var short = running(runStart, pid = 1, until = runStart + minute).observeAccessibility(runStart + minute, enabled = true, bound = true)
+    short = short.observeAccessibility(runStart + minute + 1_000, enabled = true, bound = false)
+    assertEquals(1, short.gaps.size)
+    short = short.observeAccessibility(runStart + minute + 6_000, enabled = true, bound = true)
+    assertTrue(short.gaps.isEmpty())
+  }
+
+  @Test
+  fun `a scoped gap needs a live run, closes at the release, and is clipped to the intent like the others`() {
+    // No run: nothing to enforce.
+    val idle = EnforcementGapTracker().observeAccessibility(runStart, enabled = true, bound = true).observeAccessibility(runStart + minute, enabled = false, bound = false)
+    assertTrue(idle.gaps.isEmpty())
+    assertEquals(runStart, idle.lastCoveredAt)
+    // A run: open at the later of the last covered check and the run's start.
+    var tracker = idle.engineStarted(runStart + 2 * minute, 1, emptyList(), engine, bootTime = bootBefore).observeAccessibility(runStart + 2 * minute, enabled = false, bound = false)
+    assertEquals(listOf(listOf(runStart + 2 * minute, null, Reason.permissionRevoked, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+    // Released: closed there, nothing intended past it.
+    tracker = tracker.engineStopped(runStart + 3 * minute, engineAlive = true)
+    assertEquals(listOf(listOf(runStart + 2 * minute, runStart + 3 * minute, Reason.permissionRevoked, EnforcementGap.Scope.otherProfiles)), tracker.gaps.scoped())
+    // Clipped to a schedule's window when read.
+    val window = EnforcementIntent { from, to -> listOf(Occurrence(maxOf(from, runStart + 150_000), minOf(to, runStart + 170_000))).filter { it.startMs < it.endMs } }
+    val scheduled = idle.engineStarted(runStart + 2 * minute, 1, emptyList(), engine, bootTime = bootBefore)
+      .observeAccessibility(runStart + 2 * minute, enabled = false, bound = false)
+    assertEquals(listOf(listOf(runStart + 150_000, runStart + 170_000, Reason.permissionRevoked, EnforcementGap.Scope.otherProfiles)), scheduled.gaps(null, runStart + 4 * minute, window).scoped())
+  }
+
+  @Test
+  fun `the scope survives the codec, a foreign scope drops the entry, and the clock shift moves the last covered check`() {
+    val tracker = running(runStart, pid = 1, until = runStart + minute).observeAccessibility(runStart + minute, enabled = true, bound = true)
+      .observeAccessibility(runStart + 2 * minute, enabled = false, bound = false)
+    val json = JSONObject(tracker.toJson().toString())
+    assertEquals(tracker, EnforcementGapTracker.fromJson(json))
+    assertEquals("otherProfiles", json.getJSONArray("entries").getJSONObject(0).getString("scope"))
+    assertEquals(runStart + minute, json.getLong("lastCoveredAt"))
+    // An entry whose scope this build does not know is dropped rather than reported as whole-device.
+    json.getJSONArray("entries").getJSONObject(0).put("scope", "somethingElse")
+    assertTrue(EnforcementGapTracker.fromJson(json).gaps.isEmpty())
+    // A whole-device entry has no scope key at all.
+    val plain = running(runStart, pid = 1, until = runStart + minute).recordExits(listOf(stopApp(runStart + minute, 1)), engine, now = runStart + 2 * minute)
+    assertFalse(JSONObject(plain.toJson().toString()).getJSONArray("entries").getJSONObject(0).has("scope"))
+    assertEquals(runStart + minute + 5_000, tracker.clockShifted(5_000).lastCoveredAt)
+  }
+
   @Test
   fun `each fold is one StateStore update, shared by two instances as by two processes`() {
     val directory = folder.root.resolve("expo_screen_time")

@@ -268,6 +268,28 @@ most recently started schedule covering the target, else `null` (the manual
 block, or no active block owns the shield any more). Both are `null` for
 interactions recorded before these fields existed.
 
+## `EnforcementGap`
+
+A period during which blocks were intended but not enforced — see
+[`getEnforcementGaps`](./api/capabilities.md#getenforcementgapssince).
+
+```typescript
+type EnforcementGap = {
+  from: number;            // Unix ms
+  to: number | null;       // null while the gap is still open
+  reason:
+    | "stoppedByUser"        // Android: Task Manager "Stop", force stop
+    | "permissionRevoked"    // Android: a step turned off in Settings
+    | "killedBySystem"       // Android: the system killed the engine
+    | "authorizationRevoked" // iOS: Screen Time access revoked
+    | "unknown";
+  // Android, builds that opt into the accessibility engine: only the apps
+  // opened from a work profile, Private Space or a clone went unenforced.
+  // Absent: every blocked app.
+  scope?: "otherProfiles";
+};
+```
+
 ## `ScreenTimeErrorCode` {#screentimeerrorcode}
 
 Every rejected promise and thrown error from the module carries one of these

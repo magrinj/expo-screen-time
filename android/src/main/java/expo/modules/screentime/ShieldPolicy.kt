@@ -43,6 +43,63 @@ internal object ShieldPolicy {
   }
 
   /**
+   * Every package the sources would shield, as a set: a blocklist's apps,
+   * an allowlist's launchable complement, minus the exemptions (the lifted
+   * set is not taken out: it changes with every snooze, and [shields]
+   * applies it at decision time). What the accessibility detector is
+   * scoped to (`AccessibilityServiceInfo.packageNames`): the system then
+   * delivers events for the restricted apps only, which is less work and
+   * the honest Play story. Empty when nothing is shielded; the caller must
+   * never hand an empty list to the system, which means "every package".
+   */
+  fun covered(sources: List<BlockSource>, launchable: Set<String>, exempt: Set<String>): Set<String> {
+    val result = LinkedHashSet<String>()
+    for (source in sources) {
+      when (source.mode) {
+        BlockMode.blocklist -> result.addAll(source.applications)
+        BlockMode.allowlist -> launchable.filterTo(result) { source.covers(it) }
+      }
+    }
+    result.removeAll(exempt)
+    return result
+  }
+
+  /**
+   * Whether a shield launch for [target] is a second sighting of an arrival
+   * the last launch already answered: in a build that declares the
+   * accessibility detector, the detector and the poll both report a
+   * main-profile app, a few ms apart, and the second start would only reach
+   * the `singleTask` shield's `onNewIntent`. True only when:
+   * - the build declares the detector ([detectorDeclared]), so a default
+   *   build launches exactly as before it existed;
+   * - the arrival has a time ([arrivedAt], wall ms: the UsageStats event or
+   *   the window-state event), so the standing check and a replay always
+   *   launch (a schedule's own configuration is never dropped);
+   * - it is the same [target], within [windowMs] of the last launch;
+   * - and that launch still answers it: the arrival happened at or before
+   *   the launch ([lastLaunchAt], wall ms), or the shield is still on its
+   *   way ([shownSinceLaunch] false: the window event of the app's own
+   *   resume often lands after the poll's launch), or it is up over the
+   *   target ([showingTarget]).
+   * An arrival after a shield that was shown and has gone (a trampoline's
+   * activity over it, the user's close and an instant reopen) always
+   * relaunches.
+   */
+  fun isSameArrival(
+    target: String,
+    arrivedAt: Long?,
+    detectorDeclared: Boolean,
+    lastTarget: String?,
+    lastLaunchAt: Long,
+    sinceLastLaunchMs: Long,
+    windowMs: Long,
+    showingTarget: String?,
+    shownSinceLaunch: Boolean,
+  ): Boolean =
+    detectorDeclared && arrivedAt != null && target == lastTarget && sinceLastLaunchMs < windowMs &&
+      (arrivedAt <= lastLaunchAt || !shownSinceLaunch || showingTarget == target)
+
+  /**
    * The source that owns the shield drawn over [packageName] — its
    * configuration applies ([BlockComposition.owner]); null for the default
    * configuration. The launchable rule above is the engine's own refinement

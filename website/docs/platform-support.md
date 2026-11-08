@@ -51,6 +51,16 @@ the same templates.
   [blocking](./api/blocking.md#android)). Details on the
   [blocking](./api/blocking.md#android) and [shields](./api/shields.md#android)
   pages.
+- **Other profiles, as an opt-in.** Usage access reports the main profile
+  only, so a blocked app opened from a work profile, Private Space or a
+  cloned app is invisible to the engine. A build with
+  [`android.accessibilityEngine`](./configuration.md#android-accessibility-engine)
+  adds an accessibility service next to the engine; once the user enables
+  it (the recommended `accessibility` step, after the app's own
+  disclosure) those launches are shielded too, and the coverage lost while
+  the service is down is reported as a gap with `scope: "otherProfiles"`.
+  Off by default: it puts the build under Google Play's AccessibilityService
+  review.
 - **Monitoring.** `startMonitoring` and the rest of the
   [monitoring page](./api/monitoring.md#android): schedules evaluated by the
   engine as a function of time (midnight wrap, weekdays, the iOS limits),

@@ -195,6 +195,15 @@ export type EnforcementGap = {
     | "killedBySystem"
     | "authorizationRevoked"
     | "unknown";
+  /**
+   * What the gap covers. Absent: every blocked app. `otherProfiles`: only
+   * the blocked apps opened from a work profile, Private Space or a clone;
+   * the main profile stayed enforced (the accessibility service, which
+   * alone sees those profiles, was down while the UsageStats engine ran).
+   * Only in builds that opt into the accessibility engine.
+   * @platform android
+   */
+  scope?: "otherProfiles";
 };
 
 // ============================================================================

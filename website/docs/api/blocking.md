@@ -327,6 +327,35 @@ when that happened.
   still stop the engine (Task Manager, force stop, revoking usage access or
   the overlay permission); such periods are reported by
   `getEnforcementGaps`, which is why the capability is `"friction"`.
+- **The second detector: other profiles.** Usage access reports the main
+  profile only: a blocked app opened from a **work profile**, **Private
+  Space** or a **cloned app** (Samsung Dual Messenger) is invisible to the
+  poll and is never shielded. A build that opts into the
+  [accessibility engine](../configuration.md#android-accessibility-engine)
+  declares an accessibility service next to the engine; once the user
+  enables it (the recommended [`accessibility` step](./permissions.md#android-accessibility),
+  after your disclosure), Android tells the engine the instant a window of
+  a restricted app comes forward, from every profile, and the same shield
+  is drawn over it. The service is scoped to the restricted apps, asks for
+  window-state events only and cannot read screen content. It runs **next
+  to** the poll, never instead of it: for a main-profile app the two agree
+  and the earlier signal wins (measured on a Pixel 8a, both are as fast:
+  p95 180 ms against 176 ms); when the service is off, crashed or blocked,
+  the main profile is enforced as before and the lost coverage is reported
+  as a gap with [`scope: "otherProfiles"`](./capabilities.md#android-gaps).
+  Limits in this version:
+  - The selection still lists main-profile apps: the coverage is *the same
+    package in another profile*. An app installed only in a profile cannot
+    be picked, and an **allowlist never shields one either**, since what an
+    allowlist blocks is computed from the main profile's apps.
+  - **Use from a profile is not metered**: a temporary unlock, a snooze or a
+    usage threshold counts main-profile seconds only, while the lift applies
+    to the package in every profile.
+  - A restricted app that hands the screen to another app at once (a splash
+    screen opening an allowed app) can leave its shield over that app: the
+    window event says only that the restricted app came forward, and from
+    another profile nothing can confirm that it left. Closing the shield
+    returns to the app underneath.
 - **If the system kills the engine, it comes back.** Android restarts a
   killed foreground service by itself within seconds; when it refuses (an
   app in the background may not start a foreground service without an
