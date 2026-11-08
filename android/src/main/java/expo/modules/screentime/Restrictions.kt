@@ -59,8 +59,9 @@ internal data class Restrictions(val removal: Boolean = false, val installation:
  * Which packages each restriction shields on this device, resolved from
  * intents at block time by [RestrictionTargetResolver], never from
  * hard-coded names (as [SystemExemptions] finds the launcher, the dialer
- * and Settings): the names differ per OEM (Samsung ships its own
- * installer) and per image (a store may be absent).
+ * and Settings): the names differ per OEM and per image (the stores
+ * installed differ, and an OEM may ship its own installer; One UI 8.5
+ * measured with Google's).
  *
  * | Restriction | Resolved from |
  * |---|---|
