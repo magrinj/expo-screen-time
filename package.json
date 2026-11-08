@@ -1,7 +1,7 @@
 {
   "name": "expo-screen-time",
   "version": "0.2.0",
-  "description": "A module for accessing and managing screen time data.",
+  "description": "App blocking, schedules, shields and usage reports for Expo on iOS (Screen Time) and Android.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
   "files": [
@@ -40,7 +40,15 @@
     "react-native",
     "expo",
     "expo-screen-time",
-    "ExpoScreenTime"
+    "ExpoScreenTime",
+    "ios",
+    "android",
+    "screen-time",
+    "parental-control",
+    "app-blocker",
+    "digital-wellbeing",
+    "family-controls",
+    "usage-stats"
   ],
   "repository": "https://github.com/magrinj/expo-screen-time.git",
   "bugs": {

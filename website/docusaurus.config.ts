@@ -6,7 +6,7 @@ import {themes as prismThemes} from 'prism-react-renderer';
 
 const config: Config = {
   title: 'expo-screen-time',
-  tagline: "Apple Screen Time (FamilyControls, ManagedSettings, DeviceActivity) for Expo",
+  tagline: "App blocking, schedules, shields and usage reports for Expo, on iOS (Screen Time) and Android",
   favicon: 'img/favicon.ico',
 
   future: {

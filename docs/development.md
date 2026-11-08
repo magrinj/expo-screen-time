@@ -49,6 +49,23 @@ weekday / registration / lock tests (`scripts/swift-tests/main.swift`), runs two
 `lockprobe` processes against the real `flock` (`scripts/swift-tests/lockprobe/`),
 and fails if a per-target copy under `targets/*/` drifted from `ios/`.
 
+### Tier 1b — after any `android/` or `plugin/src/android/` change
+
+CI runs no Gradle, so these run locally. `example/android` is a gitignored
+prebuild artifact; a JDK 17 and the Android SDK (`compileSdkVersion` 36) are
+needed.
+
+```bash
+cd example && bun expo prebuild --platform android
+cd android
+./gradlew :expo-screen-time:testDebugUnitTest   # the Kotlin unit tests (android/src/test)
+./gradlew :app:assembleRelease                   # the example app builds in release
+```
+
+Touched `plugin/src/android/`? Also re-run the prebuild without `--clean` and
+confirm the merged manifest is unchanged (the manifest entries are idempotent;
+`plugin/src/android/__tests__` guards it).
+
 ### Tier 2 — after any `plugin/` or `targets/` change
 
 ```bash
@@ -95,8 +112,9 @@ wire it into the matching tab.
 
 Settings › **Conformance suite** (`example/app/conformance.tsx`) runs scripted
 scenarios through the public API. Each scenario branches on `getCapabilities()`,
-never on `Platform.OS`: where a capability is off (Android today), it asserts
-the coded `UNSUPPORTED` error instead. The screen ends with
+never on `Platform.OS`: where a capability is off (categories, web domains,
+`openApplication` and the app-removal / installation restrictions on Android),
+it asserts the coded `UNSUPPORTED` error instead. The screen ends with
 `CONFORMANCE PASS n/n` or `CONFORMANCE FAIL k/n`.
 
 1. Once per install, on that screen: **Pick apps** (at least one app) and
@@ -106,14 +124,15 @@ the coded `UNSUPPORTED` error instead. The screen ends with
 
    ```bash
    agent-device replay example/.maestro/conformance.yaml --maestro --platform ios -e APP_ID=<bundle id>
+   agent-device replay example/.maestro/conformance.yaml --maestro --platform android -e APP_ID=<application id>
    ```
 
 The suite asserts what the API can observe: state, events and error codes.
 Shields are drawn by the OS outside the accessibility tree, so what they cover
 still needs screenshots. When an API changes, add or adjust a scenario.
 
-The example screens guard their calls with `getCapabilities()` too, so the app
-launches on Android, where the module answers `UNSUPPORTED`.
+The example screens guard their calls with `getCapabilities()` too, so a
+screen shared between the platforms never calls an API whose capability is off.
 
 ## Docs site
 
