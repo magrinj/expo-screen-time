@@ -163,11 +163,196 @@ class ReportAggregationTest {
   }
 
   @Test
-  fun `a stop never closes - it follows a pause, or belongs to an older instance of the class`() {
-    val relaunched = aggregate(resumed("com.a", t(10, 0), "X"), stopped("com.a", t(10, 1), "X"), paused("com.a", t(10, 10), "X"))
-    assertEquals(10 * MINUTE, relaunched.app("com.a"))
+  fun `a stop after a pause closes nothing - the normal switch, pause A, resume B, stop A`() {
     val normal = aggregate(resumed("com.a", t(10, 0)), paused("com.a", t(10, 10)), stopped("com.a", t(10, 11)))
     assertEquals(10 * MINUTE, normal.app("com.a"))
+    val switched = aggregate(resumed("com.a", t(10, 0)), paused("com.a", t(10, 10)), resumed("com.b", t(10, 10)), stopped("com.a", t(10, 10, 1)), paused("com.b", t(10, 20)), stopped("com.b", t(10, 20, 1)))
+    assertEquals(10 * MINUTE, switched.app("com.a"))
+    assertEquals(10 * MINUTE, switched.app("com.b"))
+    assertEquals("one session: the stop in the gap changed nothing", 20 * MINUTE, switched.longestActivityMs)
+  }
+
+  @Test
+  fun `a stop with no pause before it is the process dying in the foreground - the span ends there`() {
+    // measured, the emulator's dumpsys at 04:53 (instance ids are
+    // dumpsys-only): Gmail's welcome tour was resumed and stopped in the same
+    // second, its process dead; the rule that let stops close nothing kept
+    // Gmail in use until its next pause, 142 s later: 2.4 min for 1 s of use.
+    val gmail = aggregate(
+      resumed("com.gm", t(4, 53, 2), "Mail"), paused("com.gm", t(4, 53, 3), "Mail"),
+      resumed("com.gm", t(4, 53, 3), "Welcome"), stopped("com.gm", t(4, 53, 3), "Welcome"), stopped("com.gm", t(4, 53, 3), "Mail"),
+      resumed("com.gm", t(4, 55, 25), "Welcome"), paused("com.gm", t(4, 55, 25), "Welcome"),
+    )
+    assertEquals(1 * SECOND, gmail.app("com.gm"))
+    assertEquals(1 * SECOND, gmail.totalDurationMs)
+    // The previous "relaunch" reading of the same shape is now a death: the stop found no pause to answer.
+    val died = aggregate(resumed("com.a", t(10, 0), "X"), stopped("com.a", t(10, 1), "X"), paused("com.a", t(10, 10), "X"))
+    assertEquals(1 * MINUTE, died.app("com.a"))
+    assertEquals("the trailing pause is an orphan", 1 * MINUTE, died.longestActivityMs)
+    // Another activity of the package still resumed: the death ends only its instance.
+    val oneOfTwo = aggregate(resumed("com.a", t(10, 0), "A"), resumed("com.a", t(10, 1), "B"), stopped("com.a", t(10, 2), "B"), paused("com.a", t(10, 5), "A"))
+    assertEquals(5 * MINUTE, oneOfTwo.app("com.a"))
+  }
+
+  @Test
+  fun `the same class relaunched - resume A, pause A, resume A, stop A - keeps the new instance resumed`() {
+    // The fixture's permission dialog, twice in one second. The stop answers the pause.
+    val relaunched = aggregate(resumed("com.a", t(10, 0), "D"), paused("com.a", t(10, 5), "D"), resumed("com.a", t(10, 5), "D"), stopped("com.a", t(10, 5, 1), "D"), paused("com.a", t(10, 20), "D"), stopped("com.a", t(10, 20, 1), "D"))
+    assertEquals(20 * MINUTE, relaunched.app("com.a"))
+    assertEquals(20 * MINUTE, relaunched.longestActivityMs)
+  }
+
+  @Test
+  fun `an activity back from under a dialog leaves its pause's stop owed - a later death is read as main reads it`() {
+    // The same instance paused under a translucent window and resumed again (46
+    // times in one emulator day) never stops for that pause, so the stop stays
+    // owed and pays the next stop of the class: here A's death at 10:31, which
+    // then counts until the screen-off, as main counts every death.
+    val data = aggregate(
+      resumed("com.a", t(10, 0)), paused("com.a", t(10, 5)), resumed("com.dialog", t(10, 5)), paused("com.dialog", t(10, 6)), resumed("com.a", t(10, 6)), stopped("com.dialog", t(10, 6, 1)),
+      paused("com.a", t(10, 20)), stopped("com.a", t(10, 20, 1)),
+      resumed("com.a", t(10, 30)), stopped("com.a", t(10, 31)),
+      device(SCREEN_NON_INTERACTIVE, t(10, 40)),
+    )
+    assertEquals("5 + 14 min, then 10:30 to the screen-off (the truth has 1 min there)", 29 * MINUTE, data.app("com.a"))
+    assertEquals(1 * MINUTE, data.app("com.dialog"))
+    assertEquals(30 * MINUTE, data.totalDurationMs)
+  }
+
+  @Test
+  fun `two instances of one class in multi-window - the first pause ends the class, as main does`() {
+    val data = aggregate(resumed("com.a", t(10, 0)), resumed("com.a", t(10, 1)), paused("com.a", t(10, 5)), stopped("com.a", t(10, 5, 1)), paused("com.a", t(10, 20)), stopped("com.a", t(10, 20, 1)))
+    assertEquals(5 * MINUTE, data.app("com.a"))
+    // Two instances resumed at once make the counts uncertain: a later stop with no pause is not read as a death.
+    val after = aggregate(resumed("com.a", t(10, 0)), resumed("com.a", t(10, 1)), paused("com.a", t(10, 5)), stopped("com.a", t(10, 5, 1)), resumed("com.a", t(10, 10)), stopped("com.a", t(10, 11)), device(SCREEN_NON_INTERACTIVE, t(10, 20)))
+    assertEquals(15 * MINUTE, after.app("com.a"))
+  }
+
+  @Test
+  fun `a death is not read while another class of the package is uncertain - a lost window may keep the package in use`() {
+    // X in two windows (the pause rule closes X at the first pause, one window still open), then Y,
+    // an activity of the same app in another process, dies alone: the app is still in use through X.
+    val data = aggregate(
+      resumed("com.a", t(10, 0), "X"), resumed("com.a", t(10, 1), "X"), paused("com.a", t(10, 2), "X"),
+      resumed("com.a", t(10, 3), "Y"), stopped("com.a", t(10, 4), "Y"),
+      device(SCREEN_NON_INTERACTIVE, t(10, 10)),
+    )
+    assertEquals("main's 9 min (the truth has 10), not the 3 min a read death would leave", 9 * MINUTE, data.app("com.a"))
+  }
+
+  @Test
+  fun `the documented caveats - a total that loses main's cancellation, and a stop from before the lookback`() {
+    // a in two windows, b dies: b is read right (6 min less than main), a keeps main's under-count after
+    // its first pause, and the total loses the cancellation main had (main 30 min, the truth 30).
+    val total = aggregate(
+      resumed("com.a", t(10, 0)), resumed("com.a", t(10, 0, 1)), resumed("com.b", t(10, 0, 2)),
+      paused("com.a", t(10, 5)), stopped("com.a", t(10, 5, 1)), stopped("com.b", t(10, 6)),
+      device(SCREEN_NON_INTERACTIVE, t(10, 30)),
+    )
+    assertEquals(5 * MINUTE, total.app("com.a"))
+    assertEquals(6 * MINUTE - 2 * SECOND, total.app("com.b"))
+    assertEquals(6 * MINUTE, total.totalDurationMs)
+    // A picture-in-picture instance paused before the lookback stops at 10:10:01 and pays the pause of
+    // 10:10; the relaunched instance's own late stop then reads as a death: 10 min 3 s, main 39 min 58 s.
+    val lookback = aggregate(
+      resumed("com.a", t(10, 0)), paused("com.a", t(10, 10)), stopped("com.a", t(10, 10, 1)),
+      resumed("com.a", t(10, 10, 2)), stopped("com.a", t(10, 10, 5)), paused("com.a", t(10, 40)),
+    )
+    assertEquals(10 * MINUTE + 3 * SECOND, lookback.app("com.a"))
+  }
+
+  @Test
+  fun `a stop whose pause was before the lookback is unknown - nothing ends while the class has nothing resumed`() {
+    val orphan = aggregate(stopped("com.a", t(10, 0)), resumed("com.a", t(10, 1)), paused("com.a", t(10, 5)), stopped("com.a", t(10, 5, 1)))
+    assertEquals(4 * MINUTE, orphan.app("com.a"))
+    // The residual case: an instance paused before the lookback (a PiP window
+    // open for over four hours), the class relaunched over it in the stream,
+    // then the old instance's late stop. It finds no pause in the stream and
+    // ends the new instance: an undercount (5 min of the 10), never a double
+    // count.
+    val residual = aggregate(resumed("com.a", t(10, 0), "X"), stopped("com.a", t(10, 5), "X"), paused("com.a", t(10, 10), "X"), stopped("com.a", t(10, 10, 1), "X"))
+    assertEquals(5 * MINUTE, residual.app("com.a"))
+    // A pause inside the stream owes its stop even when its resume was before the lookback.
+    val owed = aggregate(paused("com.a", t(10, 0)), resumed("com.a", t(10, 1)), stopped("com.a", t(10, 2)), paused("com.a", t(10, 5)))
+    assertEquals("the stop at 10:02 is the old instance's", 4 * MINUTE, owed.app("com.a"))
+  }
+
+  @Test
+  fun `a relaunch's old stop is paid however late it comes - no time window`() {
+    // A paused at 10:05, a new instance of its class resumed at 10:10, the old
+    // instance's stop 3 s later, then 10 min later: neither ends the new session.
+    val late = aggregate(
+      resumed("com.a", t(10, 0)), paused("com.a", t(10, 5)), resumed("com.a", t(10, 10)), stopped("com.a", t(10, 10, 3)),
+      paused("com.a", t(10, 30)), stopped("com.a", t(10, 30, 1)),
+    )
+    assertEquals(25 * MINUTE, late.app("com.a"))
+    val veryLate = aggregate(
+      resumed("com.a", t(10, 0)), paused("com.a", t(10, 5)), resumed("com.a", t(10, 6)), stopped("com.a", t(10, 16)),
+      paused("com.a", t(10, 30)), stopped("com.a", t(10, 30, 1)),
+    )
+    assertEquals(29 * MINUTE, veryLate.app("com.a"))
+  }
+
+  @Test
+  fun `an old instance's stop after the screen came back and the class resumed anew - it answers the closing, not the new session`() {
+    // The screen goes off with A resumed; after the screen-on a new instance of
+    // A resumes; the old one's stop arrives a second later. Owed since the
+    // closing, it answers that stop instead of ending the new session.
+    val data = aggregate(
+      resumed("com.a", t(10, 0)), device(SCREEN_NON_INTERACTIVE, t(10, 0, 5)),
+      device(SCREEN_INTERACTIVE, t(10, 0, 6)), resumed("com.a", t(10, 0, 7)), stopped("com.a", t(10, 0, 8)),
+      paused("com.a", t(10, 10)), stopped("com.a", t(10, 10, 1)),
+    )
+    assertEquals("5 s, then 10:00:07 to 10:10", 5 * SECOND + (10 * MINUTE - 7 * SECOND), data.app("com.a"))
+  }
+
+  @Test
+  fun `a death within seconds of a return is read as main reads it - counted until the screen-off`() {
+    val data = aggregate(
+      resumed("com.a", t(10, 0)), paused("com.a", t(10, 5)), resumed("com.a", t(10, 6)), stopped("com.a", t(10, 6, 1)),
+      device(SCREEN_NON_INTERACTIVE, t(10, 20)),
+      device(SCREEN_INTERACTIVE, t(11, 0)), resumed("com.b", t(11, 0, 1)), paused("com.b", t(11, 1, 1)),
+    )
+    assertEquals("5 min, then counted to the screen-off: the truth has 1 s there", 19 * MINUTE, data.app("com.a"))
+  }
+
+  @Test
+  fun `a chain of quick relaunches of one class - each old stop is paid, the last instance counts in full`() {
+    // A, B, C of one class: B resumes over A and pauses at once, C resumes over B; A's and B's stops follow.
+    val data = aggregate(
+      resumed("com.a", t(10, 0)), paused("com.a", t(10, 0, 10)),
+      resumed("com.a", t(10, 0, 10) + 100), paused("com.a", t(10, 0, 10) + 200), resumed("com.a", t(10, 0, 10) + 300),
+      stopped("com.a", t(10, 0, 10) + 400), stopped("com.a", t(10, 0, 10) + 500),
+      paused("com.a", t(10, 1, 40)),
+    )
+    assertEquals("the truth and main: 10 s, 0.1 s, then C to its pause", 99_800L, data.app("com.a"))
+  }
+
+  @Test
+  fun `after a boot the counts start over - a fresh death is read again`() {
+    val data = aggregate(
+      resumed("com.a", t(10, 0)), paused("com.a", t(10, 5)), resumed("com.a", t(10, 6)), stopped("com.a", t(10, 6, 1)),
+      device(DEVICE_SHUTDOWN, t(10, 10)), device(DEVICE_STARTUP, t(10, 12)), device(SCREEN_INTERACTIVE, t(10, 12, 30)),
+      resumed("com.a", t(10, 13)), stopped("com.a", t(10, 14)),
+      nowMs = t(11, 0),
+    )
+    assertEquals("5 min, 4 min to the shutdown, then 1 min to the death", 10 * MINUTE, data.app("com.a"))
+  }
+
+  @Test
+  fun `without logged stops (below API 29) the report is main's - a pause ends its class`() {
+    // The app dies at 10:00:10 with no event, the user reopens it at 10:00:20 and leaves at 10:00:30.
+    val data = aggregate(resumed("com.a", t(10, 0)), resumed("com.a", t(10, 0, 20)), paused("com.a", t(10, 0, 30)), nowMs = t(11, 0))
+    assertEquals(30 * SECOND, data.app("com.a"))
+  }
+
+  @Test
+  fun `a late stop after the screen went off changes nothing - the next session opens fresh`() {
+    val data = aggregate(
+      resumed("com.a", t(10, 0)), device(SCREEN_NON_INTERACTIVE, t(10, 10)), stopped("com.a", t(10, 10, 2)),
+      device(SCREEN_INTERACTIVE, t(10, 20)), resumed("com.a", t(10, 20, 5)), paused("com.a", t(10, 25, 5)), stopped("com.a", t(10, 25, 6)),
+    )
+    assertEquals(15 * MINUTE, data.app("com.a"))
   }
 
   @Test

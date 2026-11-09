@@ -176,15 +176,21 @@ internal data class ReportData(
  *   its orphan pause is ignored and that stretch is lost (an undercount,
  *   never a double count). Four hours outlasts any film; the screen going
  *   off ends every span, so a longer open span is continuous use.
- * - **Closing.** A package's span ends with the ACTIVITY_PAUSED of its last
- *   resumed activity. SCREEN_NON_INTERACTIVE, KEYGUARD_SHOWN and
+ * - **Closing.** A package's span ends when its last resumed activity
+ *   instance ends. SCREEN_NON_INTERACTIVE, KEYGUARD_SHOWN and
  *   DEVICE_SHUTDOWN close every span (`UsageEventKind.closesAll`);
- *   DEVICE_STARTUP too. ACTIVITY_STOPPED closes nothing: a stop follows a
- *   pause of the same instance, and the public `Event` has no instance id,
- *   so a stop for a class still resumed is an OLDER instance finishing under
- *   a new one (the fixture shows it twice in one second). A pause that never
- *   comes (the process died in the foreground; DESTROYED is not read) leaves
- *   the span open until the next closing event or the window end.
+ *   DEVICE_STARTUP too. The public `Event` has no instance id, so the
+ *   report keeps that rule (a pause ends its class) and reads an
+ *   ACTIVITY_STOPPED as a death only when it can only be one
+ *   ([ActivityInstances]): nothing owed in its class, one instance resumed,
+ *   no uncertainty there or in another class of the package. That is the
+ *   process dying in the foreground (measured: Gmail's welcome
+ *   tour, resumed and stopped within a second with no pause, read as 142 s
+ *   of use when stops closed nothing). Every other stop changes nothing.
+ *   Below API 29 there is no stop, and the report is the pause rule's. The
+ *   misreading left needs an instance already alive before the four-hour
+ *   lookback (resumed or paused there) whose stop then arrives inside the
+ *   stream.
  * - **A boot that never logged a shutdown** (battery pulled, kernel panic):
  *   the stream then shows a SCREEN_INTERACTIVE while the screen is already
  *   interactive, which cannot happen on a running device (every open span
@@ -238,8 +244,8 @@ internal class ReportAggregator(
   /** -1 before the window, [segmentCount] after it. */
   private var segmentIndex = -1
 
-  /** Counted packages in the foreground → their resumed activity classes ("" when unknown). */
-  private val resumed = HashMap<String, HashSet<String>>()
+  /** Counted packages with a live activity → per class ("" when unknown), its instances; a package in the foreground has at least one resumed. */
+  private val instances = HashMap<String, HashMap<String, ActivityInstances>>()
   /** When each foreground package's current span piece started (clipped to the segment start). */
   private val openSince = HashMap<String, Long>()
   private var unionSince = Long.MIN_VALUE
@@ -272,16 +278,12 @@ internal class ReportAggregator(
     // the last event before, the last instant the device is known alive; this
     // runs before the segments advance to `at`, so the dead hours are never
     // settled into them.
-    if (event.kind == UsageEventKind.SCREEN_INTERACTIVE && screenInteractive == true && previous != Long.MIN_VALUE) closeAll(previous)
+    if (event.kind == UsageEventKind.SCREEN_INTERACTIVE && screenInteractive == true && previous != Long.MIN_VALUE) closeAll(previous, forgetInstances = true)
     advanceTo(at)
     when (event.kind) {
       UsageEventKind.ACTIVITY_RESUMED -> resume(event.packageName, event.className, at)
       UsageEventKind.ACTIVITY_PAUSED -> pause(event.packageName, event.className, at)
-      // A stop always follows a pause of the same instance, so it closes nothing
-      // here; and the public Event has no instance id, so a stop for a class that
-      // IS resumed is an older instance finishing under a new one (the fixture:
-      // the permission dialog relaunched twice in a second), not the new one.
-      UsageEventKind.ACTIVITY_STOPPED -> Unit
+      UsageEventKind.ACTIVITY_STOPPED -> stop(event.packageName, event.className, at)
       UsageEventKind.SCREEN_INTERACTIVE -> {
         screenInteractive = true
         pickup(at)
@@ -298,11 +300,11 @@ internal class ReportAggregator(
       UsageEventKind.KEYGUARD_SHOWN -> closeSpans(at)
       UsageEventKind.DEVICE_SHUTDOWN -> {
         screenInteractive = false
-        closeAll(at)
+        closeAll(at, forgetInstances = true)
       }
       // Nothing survives a boot. The pickup of the boot's screen-on stays
       // pending: the first app opened after the boot is what it was made to.
-      UsageEventKind.DEVICE_STARTUP -> closeSpans(at)
+      UsageEventKind.DEVICE_STARTUP -> closeSpans(at, forgetInstances = true)
       UsageEventKind.OTHER -> Unit
     }
   }
@@ -422,8 +424,9 @@ internal class ReportAggregator(
   private fun resume(packageName: String?, className: String?, at: Long) {
     if (!filter.counts(packageName, className)) return
     val pkg = packageName!!
-    val classes = resumed.getOrPut(pkg) { HashSet(2) }
-    classes.add(className ?: "")
+    val classes = instances.getOrPut(pkg) { HashMap(2) }
+    val key = className ?: ""
+    classes[key] = (classes[key] ?: ActivityInstances.NONE).resume()
     lastResumedPackage = pkg
     if (pkg !in openSince) {
       openSince[pkg] = at
@@ -439,13 +442,39 @@ internal class ReportAggregator(
   }
 
   private fun pause(packageName: String?, className: String?, at: Long) {
+    // A pause ends its class (main's rule) and owes a stop, an orphan one too
+    // (its resume was before the lookback, or the class is already closed):
+    // the paused instance's stop may still come after a new one resumes.
+    if (!filter.counts(packageName, className)) return
+    val pkg = packageName!!
+    val classes = instances.getOrPut(pkg) { HashMap(2) }
+    val key = className ?: ""
+    val (next, ended) = (classes[key] ?: ActivityInstances.NONE).pause()
+    classes[key] = next
+    if (!ended || classes.values.any { it.resumed > 0 }) return
+    closePackage(pkg, at)
+  }
+
+  /**
+   * A stop ends its class only when it can only be the class's one resumed
+   * instance dying in the foreground ([ActivityInstances.stop]), and no other
+   * class of the package has uncertain counts: such a class may have an
+   * instance its count lost (a second window, closed early by the pause
+   * rule), which keeps the package in use. Every other stop changes no span.
+   * The engine keeps its coarser rule (a stop ends the class): see
+   * [ActivityInstances] for why.
+   */
+  private fun stop(packageName: String?, className: String?, at: Long) {
     val pkg = packageName ?: return
-    // An orphan pause (the resume was before the lookback, the class already
-    // closed, or an activity that never reached resumed) closes nothing.
-    val classes = resumed[pkg] ?: return
-    classes.remove(className ?: "")
-    if (classes.isNotEmpty()) return
-    resumed.remove(pkg)
+    val classes = instances[pkg] ?: return
+    val key = className ?: ""
+    val current = classes[key] ?: return
+    val (next, died) = current.stop()
+    // Read as main reads it: the package may still be in use through another class.
+    if (died && classes.any { (other, state) -> other != key && state.uncertain }) return
+    if (next.isEmpty) classes.remove(key) else classes[key] = next
+    if (classes.isEmpty()) instances.remove(pkg)
+    if (!died || classes.values.any { it.resumed > 0 }) return
     closePackage(pkg, at)
   }
 
@@ -477,17 +506,35 @@ internal class ReportAggregator(
   /** When the union last closed; a reopen later than this starts a new run. */
   private var unionClosedAt = Long.MIN_VALUE
 
-  private fun closeSpans(at: Long) {
+  /**
+   * Every span ends at [at]. The instances are forgotten across a boot
+   * (nothing from before it is coming), and otherwise kept as owed stops
+   * ([ActivityInstances.closed]), so the old instances' late pause and stop
+   * events still find what they answer.
+   */
+  private fun closeSpans(at: Long, forgetInstances: Boolean = false) {
     if (openSince.isNotEmpty()) {
       for (pkg in ArrayList(openSince.keys)) closePackage(pkg, at)
     }
-    resumed.clear()
+    if (forgetInstances) {
+      instances.clear()
+    } else {
+      for (classes in instances.values) {
+        val each = classes.entries.iterator()
+        while (each.hasNext()) {
+          val entry = each.next()
+          val owed = entry.value.closed()
+          if (owed.isEmpty) each.remove() else entry.setValue(owed)
+        }
+      }
+      instances.values.removeAll { it.isEmpty() }
+    }
     closeUnion(at)
   }
 
   /** The screen went dark or locked: every span ends, and the session's pickup, if still unattributed, saw no app. */
-  private fun closeAll(at: Long) {
-    closeSpans(at)
+  private fun closeAll(at: Long, forgetInstances: Boolean = false) {
+    closeSpans(at, forgetInstances)
     pendingPickupSegment = -2
   }
 
