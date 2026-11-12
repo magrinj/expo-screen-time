@@ -58,7 +58,7 @@ internal class UnlockController(
         is TemporaryUnlockRequest.Verdict.WholeBlock -> {
           // The suspension is keyed on the interval markers, so the
           // boundaries this process sees at now are committed first (as
-          // `startMonitoring` commits its own, review R7): an occurrence the
+          // `startMonitoring` commits its own): an occurrence the
           // engine has not recorded yet — it was dead, or has not stepped —
           // gets the marker the grant suspends, instead of one the engine
           // would stamp later with its own clock.

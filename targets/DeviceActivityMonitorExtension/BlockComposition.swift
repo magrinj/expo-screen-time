@@ -36,7 +36,7 @@ enum BlockMode: String, Equatable {
     case blocklist
     /// Shield every app EXCEPT the selection's applications — iOS
     /// `ActivityCategoryPolicy.all(except:)` — and, because that policy does
-    /// not reach Safari (spike S2), every web domain too
+    /// not reach Safari, every web domain too
     /// (`WebDomainCategoryPolicy.all(except:)`). The selection's categories
     /// and web domains, if it has any, allow nothing: `blockSelection` and
     /// `startMonitoring` reject such a selection with `INVALID_CONFIG`, and
@@ -865,13 +865,13 @@ enum UsageMeter {
     }
 }
 
-// MARK: - Shield snooze (fix 1, spike S1)
+// MARK: - Shield snooze
 
 /// A shield snooze in progress: the target whose shield the user pressed the
 /// snooze button on, lifted until it has been USED for `budgetSeconds` (the
 /// `duration` of `{ type: "snooze", duration }`). Metered by its own
 /// DeviceActivity, `expo_st_snooze_<id>`, armed by the shield action
-/// extension (spike S1 showed it may) and consumed by the monitor extension,
+/// extension (iOS lets it, checked on a device) and consumed by the monitor extension,
 /// so the budget is spent only while that target is in the foreground and
 /// the shield comes back even if the app is never launched.
 ///

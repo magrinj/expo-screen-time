@@ -1,8 +1,0 @@
-{
-  "android": {
-    "package": "com.magrinj.exposcreentime"
-  },
-  "ios": {
-    "bundleIdentifier": "com.magrinj.exposcreentime"
-  }
-}

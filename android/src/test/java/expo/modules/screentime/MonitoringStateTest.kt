@@ -16,8 +16,8 @@ import org.junit.Test
 import java.util.TimeZone
 
 /**
- * The monitoring state as the engine and the module drive it: review R7
- * (a start inside the interval applies at once), the C06 shape (one start,
+ * The monitoring state as the engine and the module drive it: a start
+ * inside the interval applies at once, the C06 shape (one start,
  * one end, unique ids), exactly-once across a process death and across
  * two processes, midnight wrap, weekdays, `repeats: false`, DST and
  * time-zone changes, a clock set backwards, and the thresholds with their
@@ -568,7 +568,7 @@ class MonitoringStateTest {
   }
 
   @Test
-  fun `two stream events at the same instant are both fed (found wiring step 4)`() {
+  fun `two stream events at the same instant are both fed`() {
     // paused(A) and resumed(B) share a millisecond routinely; the second must not read as "fed already".
     val armed = config(events = listOf(threshold("a", "SOCIAL", 300), threshold("b", "APPS", 300)))
     val state = MonitoringState().start(armed, at(10)).state

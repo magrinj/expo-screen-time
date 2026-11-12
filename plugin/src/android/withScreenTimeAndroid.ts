@@ -61,10 +61,9 @@ export type ScreenTimeAndroidOptions = {
    *
    * **Declares `BIND_ACCESSIBILITY_SERVICE` to Google Play**: the
    * AccessibilityService API declaration, a video and an in-app prominent
-   * disclosure shown before the user is sent to Settings become mandatory
-   * (`docs/proposals/android-accessibility-engine.md`, §4). Needs
-   * `blocking` among `features`; the prebuild fails otherwise. Turning the
-   * option off removes the entry again.
+   * disclosure shown before the user is sent to Settings become mandatory.
+   * Needs `blocking` among `features`; the prebuild fails otherwise. Turning
+   * the option off removes the entry again.
    */
   accessibilityEngine?: boolean;
 };
@@ -347,9 +346,8 @@ export function applyScreenTimeAndroidManifest(
 }
 
 /**
- * The `<service>` entry of the accessibility detector, as the proposal
- * writes it: exported (the system binds it), in the engine's `:screentime`
- * process (the hint to the engine is a direct call), guarded by
+ * The `<service>` entry of the accessibility detector: exported (the
+ * system binds it), in the engine's `:screentime` process (the hint to the engine is a direct call), guarded by
  * `BIND_ACCESSIBILITY_SERVICE` so only the system can bind it, with its
  * intent filter and the pointer to the library's XML.
  */

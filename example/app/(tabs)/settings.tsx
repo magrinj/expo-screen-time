@@ -11,7 +11,7 @@ import {
   Row,
   SectionHeader,
   Separator,
-} from "../components/ui";
+} from "../../components/ui";
 
 // Example domains for testing (safe, non-adult content)
 const EXAMPLE_DOMAINS = [

@@ -5,7 +5,7 @@ import org.json.JSONObject
 
 /**
  * A period during which blocks were intended but not enforced
- * (`getEnforcementGaps`, contract review R2). The Kotlin twin of
+ * (`getEnforcementGaps`). The Kotlin twin of
  * `ios/EnforcementGaps.swift`, with two fields JS never sees: where the
  * evidence came from ([source]) and what it said ([detail]), which the merge
  * rule and the logs need.
@@ -360,7 +360,7 @@ internal data class Boot(val timeMs: Long?, val count: Int?) {
  *   ran without the engine in between, e.g. safe mode ([rebootGapStart]). An exit record
  *   covering the same period wins over either estimate (see [mergeGap]).
  * - **A refused start** ([engineRefused]): the service could not be
- *   promoted to the foreground (the Pixel refused the sticky
+ *   promoted to the foreground (a Pixel 8a refused the sticky
  *   restart hours after the app was last visible): the engine is down for
  *   certain, so a gap opens at once, whatever the heartbeat says.
  * - **Permission checks**: the port of iOS `AuthorizationGapTracker`, with
@@ -593,7 +593,7 @@ internal data class EnforcementGapTracker(
    * says bound and that process is alive), `blocked` (Android 17's Advanced
    * Protection says no non-tool service may run). Covered is enabled **and
    * bound**, whatever the protection says: measured on the Android 17
-   * emulator (2026-11-08), a service bound before the protection was turned
+   * emulator, a service bound before the protection was turned
    * on kept running and delivering events, and the gap must report what
    * happened, not what the policy intends; `blocked` only names the cause
    * when the service is down. Call from every look of the app and every
@@ -1050,7 +1050,7 @@ internal data class EnforcementGapTracker(
     /**
      * 60 s: one `StateStore.update` (a few KB to flash) per minute while the
      * engine runs, about 1 ms of CPU each, 0.1 % of what the 100 ms poll
-     * costs; and the run recorded a heartbeat
+     * costs (measured on a Pixel 8a); and a run there recorded a heartbeat
      * every 60 s for 3 h 22 without one false gap at a 90 s threshold.
      * (That run was plugged in with stay-awake on: it says nothing about
      * sleep, which is why a live process is never judged stale.)

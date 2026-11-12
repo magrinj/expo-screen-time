@@ -86,11 +86,11 @@ project is the belt-and-braces check).
 npm pack --dry-run --ignore-scripts
 ```
 
-Expect ~90 files / ~320KB. Must contain: `build/`, `plugin/` (build+src), `src/`,
+Expect ~250 files / ~510 kB. Must contain: `build/`, `plugin/` (build+src), `src/`,
 `ios/`, `android/` (`build.gradle` + `src/main/**`), `targets/`, `app.plugin.js`,
 `expo-module.config.json`, `README.md`, `LICENSE`. Must NOT contain:
 `android/build`, `example/`, `website/`, `docs/`, any `__tests__`, any
-`.keystore`, or internal MD files (`TODO`, `PLAN`…). The `files`
+`.keystore`, or internal MD files. The `files`
 allowlist in `package.json` is the mechanism — update it consciously.
 
 ### Runtime caveat

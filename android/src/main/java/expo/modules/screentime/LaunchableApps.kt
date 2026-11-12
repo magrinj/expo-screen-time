@@ -14,8 +14,8 @@ internal data class LaunchableApp(val packageName: String, val label: String)
  * The apps a user can pick: those with a `MAIN`/`LAUNCHER` activity, which
  * the library manifest's `<queries>` intent makes visible on Android 11+
  * without `QUERY_ALL_PACKAGES` (Play restricts it; the launcher intent is
- * enough for a blocker). Launcher apps of the main profile
- * only: work-profile and Private Space apps are not listed in v1.
+ * enough for a blocker). Launcher apps of the main profile only:
+ * work-profile and Private Space apps are not listed.
  *
  * The host app is left out: blocking the app that holds the blocker's
  * controls would lock the user out of lifting the block, and iOS cannot

@@ -120,8 +120,8 @@ class EnforcementGapsSwiftParityTest {
 /**
  * What Android adds: exit records, the heartbeat, the engine's life, the
  * merge and retention rules, the codec, and the state-store seam. Fixtures
- * are the Pixel 8a measurements (the device tests
- * and E, and their `dumpsys activity exit-info`): the survival run started
+ * are Pixel 8a measurements (tamper and survival runs, and their
+ * `dumpsys activity exit-info`): the survival run started
  * at 2026-10-30T22:04:27Z with a heartbeat every 60 s and died at
  * 01:27:11.654Z, 3 h 22 later (a crash, pid 23197, then the refused sticky
  * restart's pid 5825 crashing twice); the tamper runs left `USER REQUESTED`
@@ -192,7 +192,7 @@ class EnforcementGapsAndroidTest {
   }
 
   @Test
-  fun `a USER_REQUESTED exit followed by a restart 3 h later is one stoppedByUser gap (run-1 timing, tamper-run record)`() {
+  fun `a USER_REQUESTED exit followed by a restart 3 h later is one stoppedByUser gap (measured timing and record)`() {
     val before = running(runStart, pid = 16904, until = death)
     assertTrue(before.gaps.isEmpty())
     // The app opens first and looks at the gaps: the death is already a gap, still open.
@@ -210,7 +210,7 @@ class EnforcementGapsAndroidTest {
   }
 
   @Test
-  fun `the run-1 death as recorded - a crash, then the refused restart crashing twice with one pid - is one unknown gap`() {
+  fun `a measured engine death as recorded - a crash, then the refused restart crashing twice with one pid - is one unknown gap`() {
     val tracker = running(runStart, pid = 23197, until = death)
     val history = listOf(
       crash(Instant.parse("2026-10-31T01:32:13.812Z").toEpochMilli(), 5825),
@@ -1002,7 +1002,7 @@ class EnforcementGapsAndroidTest {
 
   @Test
   fun `the stop's reason is kept when the app's look settled the whole-device gap just before the revival (measured race)`() {
-    // Emulator, 2026-11-08: the launch's observe settled the stop's gap at .642, the engine started at .707, the 65 ms sliver was dropped.
+    // Measured on the emulator: the launch's observe settled the stop's gap at .642, the engine started at .707, the 65 ms sliver was dropped.
     var tracker = running(runStart, pid = 100, until = runStart + 2 * minute).observeAccessibility(runStart + 2 * minute, enabled = true, bound = true)
     val stop = runStart + 2 * minute + 30_000
     val look = stop + 14_000

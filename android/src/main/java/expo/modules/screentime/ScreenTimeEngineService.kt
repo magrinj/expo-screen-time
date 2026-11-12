@@ -18,16 +18,15 @@ import android.util.Log
  * foreground with the persistent notice when the state store says the
  * engine is wanted, and leaves otherwise; while it runs, [EngineLoop]
  * detects the foreground app and launches the [ShieldActivity],
- * evaluates the schedules and usage thresholds and records their events
- *, meters the unlocks and beats for the gap tracker
- *.
+ * evaluates the schedules and usage thresholds and records their events,
+ * meters the unlocks and beats for the gap tracker.
  *
  * The engine's run is recorded for `getEnforcementGaps`
  * ([EnforcementGapRecorder]): its start (in the update that re-checks the
  * desired state), a refused promotion, and its release (`onDestroy` after
  * the module cleared the desired state).
  *
- * Two lessons from the survival run are built in:
+ * Two lessons from a survival run on a Pixel 8a are built in:
  * - `startForeground` can throw `ForegroundServiceStartNotAllowedException`
  *   (Android 12+) on the system's sticky restart: the restarted service's
  *   `startForeground` is judged on the app's state again (`ActiveServices`,

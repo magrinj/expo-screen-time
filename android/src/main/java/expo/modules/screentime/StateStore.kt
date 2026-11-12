@@ -29,20 +29,19 @@ import kotlin.io.encoding.Base64
  * same file throw `OverlappingFileLockException`, hence the in-process
  * [ReentrantLock] taken first (re-entrant, as the iOS lock is).
  *
- * Step 1 stores the engine's desired state and failures, and the permission
- * requests already made; step 2 adds the install secret and, through
- * [SelectionStore], the selections and the handle map; step 3 adds the
- * manual block (`blocks.manual`, read by the engine process on every
- * change) and the shield configurations (`shield.default`,
- * `shield.activities.<name>`); step 4 adds the monitoring layer
- * (`monitoring`: activities, intervals, the event log, the usage cursor);
- * step 5 adds the shield actions (`shieldActions.default`,
+ * The document holds the engine's desired state and failures, and the
+ * permission requests already made; the install secret and, through
+ * [SelectionStore], the selections and the handle map; the manual block
+ * (`blocks.manual`, read by the engine process on every change) and the
+ * shield configurations (`shield.default`, `shield.activities.<name>`); the
+ * monitoring layer (`monitoring`: activities, intervals, the event log, the
+ * usage cursor); the shield actions (`shieldActions.default`,
  * `shieldActions.activities.<name>`), the temporary unlock (`unlock`, with
  * the sources it suspended), the snoozes (`snoozes`), the shield's unblocks
  * (`lifts`) and the interaction queue (`shieldInteractions`), each read and
  * written through its pure codec ([UnlockGrant], [ShieldSnoozes],
- * [ShieldLifts], [ShieldInteractionQueue]) inside one `update`; stage 4
- * adds the app-control restrictions (`restrictions`, [Restrictions]).
+ * [ShieldLifts], [ShieldInteractionQueue]) inside one `update`; and the
+ * app-control restrictions (`restrictions`, [Restrictions]).
  */
 internal class StateStore(private val directory: File) {
   constructor(context: Context) : this(File(context.noBackupFilesDir, "expo_screen_time"))
@@ -239,7 +238,7 @@ internal class StateStore(private val directory: File) {
   }
 
   /**
-   * The config the shield draws, with the iOS precedence (fix 8, review R5):
+   * The config the shield draws, with the iOS precedence:
    * the config of the source that owns the shield ([owner], an activity
    * name; null for the manual block), else the default, else null (the
    * built-in shield). The owner is resolved by the engine from the block

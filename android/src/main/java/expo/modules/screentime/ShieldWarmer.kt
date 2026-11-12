@@ -12,7 +12,7 @@ import android.view.View
 /**
  * Pre-warms the shield in the engine process, off the critical path, so the
  * first shield after the engine started and the first after a long idle
- * cost what a warm one does inside `onCreate` (measured: on the Galaxy
+ * cost what a warm one does inside `onCreate` (on the Galaxy
  * A54 the shield's `onCreate` took 96 ms after 28 h and 32 ms at t0 against
  * 5 ms warm — the state document read under the file lock, the target's APK
  * opened for its label and icon, the view classes faulted in).
@@ -44,7 +44,7 @@ import android.view.View
  *   final dry run covers it.
  *
  * Nothing here is visible or needs a window: no overlay is added, the
- * `HIDE_OVERLAY_WINDOWS` constraint of measured is untouched.
+ * `HIDE_OVERLAY_WINDOWS` constraint is untouched.
  */
 internal object ShieldWarmer {
   private val main = Handler(Looper.getMainLooper())

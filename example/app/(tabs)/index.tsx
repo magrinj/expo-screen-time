@@ -21,7 +21,7 @@ import {
   SectionHeader,
   Separator,
   StatusBadge,
-} from "../components/ui";
+} from "../../components/ui";
 
 // shieldOpenApp adds the notifications step (the shield's openApp action
 // posts a notification), so both steps show up in the checklist below.

@@ -27,7 +27,7 @@ JS/TS (src/)  ──bridge──  Native module (ios/)  ──App Group──  E
   `ApplicationLabel`/`CategoryLabel`/`WebDomainLabel`).
 - `src/DeviceActivityReport.tsx` shows the **graceful non-iOS fallback pattern**:
   `Platform.OS` guard, styled fallback `<View>`, styling shipped to the extension
-  via `setReportStyle` (App Group), only layout props cross to the native view.
+  via `setReportTemplate` (App Group), only layout props cross to the native view.
 - `src/utils.ts` — 1:1 documented wrappers over selection-store functions.
 - `src/index.ts` — the **only** public surface. Everything consumers can import is
   exported here (module default, hooks, components, utils, `export * from` types).
@@ -407,8 +407,7 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   (recommended, `blocking`, opted-in builds only) and the gap tracker's
   `observeAccessibility` (a gap with `scope: otherProfiles` while the
   service is enabled but not bound, off, or blocked, with the engine
-  running) rest on them. Proposal and rationale:
-  `docs/proposals/android-accessibility-engine.md`.
+  running) rest on them.
 - `ScreenTimeDeviceAdminReceiver.kt` — a no-policy device admin: while
   active, Settings disables "Force stop" and "Uninstall" goes through
   "Deactivate & uninstall" first (measured on Android 17);
@@ -444,7 +443,7 @@ around that:
 
 **Never add an API that requires JS to understand token contents.** This is also
 what keeps the API Android-portable (there, an ID will map to a package-name
-list) — see the platform support page.
+list).
 
 ## The App Group
 

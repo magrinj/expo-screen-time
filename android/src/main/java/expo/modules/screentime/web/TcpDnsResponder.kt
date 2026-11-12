@@ -117,7 +117,7 @@ internal class TcpDnsResponder(private val family: IpPacket.Family, private val 
       return Output(sent)
     }
     if (segment.has(SYN)) {
-      // The proposal explicitly asks for SYN-ACK replay even after establishment. This differs
+      // A same-ISN duplicate SYN replays the SYN-ACK, even after establishment. This differs
       // from RFC 9293's synchronized-state ACK/challenge-ACK rule; do not advertise full TCP compliance.
       if (segment.sequence == clientSequence && !segment.has(ACK) && !segment.has(FIN) && segment.payload.isEmpty()) {
         return Output(listOf(synAck!!))

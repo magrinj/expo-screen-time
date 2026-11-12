@@ -11,7 +11,7 @@ import { useCallback } from "react";
 import { ScrollView, StyleSheet, Text, View } from "react-native";
 
 import { SELECTION_ID, useNativeSelection } from "../_layout";
-import { Card, colors, EmptyState, SectionHeader } from "../components/ui";
+import { Card, colors, EmptyState, SectionHeader } from "../../components/ui";
 
 function DisplayModeDemo({
   title,

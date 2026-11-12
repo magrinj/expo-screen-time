@@ -29,7 +29,7 @@ import {
   Row,
   SectionHeader,
   Separator,
-} from "../components/ui";
+} from "../../components/ui";
 
 // openApp posts a notification on iOS (getCapabilities().shieldOpenApp).
 const SHIELD_ACTION_CHOICES = ["close", "snooze", "unblock", "openApp"] as const;

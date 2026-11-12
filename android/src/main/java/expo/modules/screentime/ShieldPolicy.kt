@@ -122,9 +122,9 @@ internal object ShieldPolicy {
    * holds the controls that lift the block (iOS never shields it either);
    * the launcher, SystemUI and the keyboard are the way to everything else;
    * the dialer and the emergency app must stay reachable, period; Settings
-   * is where the user re-grants a revoked permission and, as on iOS (spike
-   * S2 measured it never shielded), where a focus tool must not hold the
-   * device hostage. The Settings route to lift a block (revoking usage
+   * is where the user re-grants a revoked permission and, as on iOS (where
+   * an allowlist never shields it, measured on a device), where a focus
+   * tool must not hold the device hostage. The Settings route to lift a block (revoking usage
    * access or the overlay) is the documented `friction` gap, recorded by
    * `getEnforcementGaps`, not something the shield hides.
    */

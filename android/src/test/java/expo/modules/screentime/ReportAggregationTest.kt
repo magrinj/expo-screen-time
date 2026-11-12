@@ -174,7 +174,7 @@ class ReportAggregationTest {
 
   @Test
   fun `a stop with no pause before it is the process dying in the foreground - the span ends there`() {
-    // measured, the emulator's dumpsys at 04:53 (instance ids are
+    // The emulator's dumpsys at 04:53 (instance ids are
     // dumpsys-only): Gmail's welcome tour was resumed and stopped in the same
     // second, its process dead; the rule that let stops close nothing kept
     // Gmail in use until its next pause, 142 s later: 2.4 min for 1 s of use.

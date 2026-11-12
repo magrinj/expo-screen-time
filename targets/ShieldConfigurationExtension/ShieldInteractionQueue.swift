@@ -14,10 +14,9 @@ import Foundation
 ///
 /// Presses on the SAME target within `collapseWindowMs` are one entry: a
 /// user tapping both buttons of one shield is one blocked attempt, not two.
-/// Presses on different targets within the window are separate entries
-/// (review R16: the collapse used to be global, so two apps opened back to
-/// back counted once). The last press per target survives a drain, so a
-/// press right after one still collapses. The queue is capped at `capacity`:
+/// Presses on different targets within the window are separate entries, so
+/// two apps opened back to back count twice. The last press per target
+/// survives a drain, so a press right after one still collapses. The queue is capped at `capacity`:
 /// it only grows while the app is not draining it.
 ///
 /// Entries written by builds before `target` and `activityName` existed

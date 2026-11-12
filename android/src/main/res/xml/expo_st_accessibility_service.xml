@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  The accessibility detector (config plugin option `android.accessibilityEngine`;
-  docs/proposals/android-accessibility-engine.md §2.7, §4.1): window-state
+  The accessibility detector (config plugin option `android.accessibilityEngine`): window-state
   events only, no window content (nothing of any app's screen ever exists in
   the process), `isAccessibilityTool="false"` (Google Play reserves `true` for
   tools that serve people with disabilities; a blocker is not one), delivered

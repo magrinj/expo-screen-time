@@ -8,7 +8,7 @@ package expo.modules.screentime
  * `ios/PermissionSteps.swift`; the derivation rules are the contract's
  * (`PermissionStep` in `src/ExpoScreenTime.types.ts`).
  *
- * Steps, for the usageStats engine ("Permissions"):
+ * Steps, for the usageStats engine:
  * - `overlay` (required; requested first: once held, the app may start
  *   activities from the background, which lets it bring the user back from
  *   every later settings screen);

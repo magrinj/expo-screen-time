@@ -16,10 +16,8 @@ the module ships its own enforcement engine (Kotlin, `android/`).
   `getEnforcementGaps()` reports such periods. Categories and web domains are
   iOS-only, and `openApplication` is off on Android too (the capability is
   off; the functions fail with `UNSUPPORTED`).
-  `website/content/docs/platform-support.mdx` is the user-facing status; the per-API
-  plan and its decisions live in
-  the platform support page. Read it before
-  Android work.
+  [`website/content/docs/platform-support.mdx`](./website/content/docs/platform-support.mdx)
+  is the per-API status; read it and `docs/architecture.md` before Android work.
 - Ships a **first-party config plugin** (`plugin/`) that generates 4 iOS
   app-extension targets directly in the consumer's Xcode project (no
   `@bacons/apple-targets`).
@@ -73,7 +71,7 @@ Non-negotiables (the short list):
 
 1. **Never break plugin idempotency** — re-running prebuild with `--no-clean` must
    change nothing (`bun run test` guards this; extend the test when wiring changes).
-2. **When in doubt in `plugin/src/ios/`, match expo-widgets** (`../expo-widgets`,
+2. **When in doubt in `plugin/src/ios/`, match expo-widgets** ([expo-widgets](https://github.com/expo/expo/tree/main/packages/expo-widgets),
    Expo's first-party reference). Diverging from it requires a stated reason.
 3. **Tokens are opaque, and JS must treat them that way** — JS addresses
    selections via `selectionId` strings and tokens via `TokenHandle`s. Handles
@@ -84,17 +82,10 @@ Non-negotiables (the short list):
    the changelog from them. PR titles must be conventional (CI enforces it).
 5. **Public API changed? Update `website/content/docs/`** in the same PR. README stays a
    slim quickstart; the site is the source of truth.
-6. **iOS-only APIs get `@platform ios`** in TSDoc; check
-   the platform support page before naming anything new (names should survive
-   the Android implementation).
-
+6. **iOS-only APIs get `@platform ios`** in TSDoc. Names must make sense on
+   both platforms (check `platform-support.mdx` before naming anything new).
 
 ## Key references
 
 - [`RELEASING.md`](./RELEASING.md) — release pipeline (release-please → OIDC npm publish)
-- the platform support page — iOS ↔ Android API plan
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md) — human contributor guide (setup, PR rules)
-
-Known open item: runtime behavior of the permission-rejection and shield-state
-fixes is still unverified on a **physical device** (FamilyControls doesn't run on
-the simulator).

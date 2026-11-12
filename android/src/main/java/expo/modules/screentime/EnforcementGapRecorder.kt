@@ -246,8 +246,7 @@ internal class EnforcementGapRecorder(private val context: Context, private val 
    * The accessibility detector's state: enabled in Settings, bound (its
    * store record says so and that process is alive; in the engine process
    * the bound instance itself), blocked by Advanced Protection. Also logs
-   * whether `AccessibilityManager` lists it, the proposal's open check
-   * (§2.6), beside the record the decision rests on.
+   * whether `AccessibilityManager` lists it, beside the record the decision rests on.
    */
   fun accessibility(): AccessibilityCoverage {
     val record = store.accessibilityRecord()

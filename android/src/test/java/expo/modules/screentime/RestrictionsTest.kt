@@ -11,8 +11,7 @@ import org.junit.Test
  * The app-control restrictions (`denyAppRemoval`, `denyAppInstallation`) as
  * the engine composes them: the flags' codec, the target selection and the
  * block sources they become. The iOS flags have no shield, so there is no
- * Swift case to mirror; the cases below are the proposal's
- * (`docs/proposals/android-removal-installation-friction.md` §2–3).
+ * Swift case to mirror.
  */
 class RestrictionsTest {
   private val installer = "com.google.android.packageinstaller"

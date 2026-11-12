@@ -78,8 +78,8 @@ UsageStats and draws the shield Activity over it — with its schedules,
 usage thresholds, temporary unlock, enforcement-gap recorder and the usage
 report renderer. The Android half of the config plugin is `plugin/src/android/`.
 How it fits together is in [`docs/architecture.md`](./docs/architecture.md)
-(section 4); the per-API plan and its decisions are in
-the platform support page.
+(section 4), and the per-API status in
+[`platform-support.mdx`](./website/content/docs/platform-support.mdx).
 
 The Gradle build is the example app's: the module has no standalone project.
 React Native's Gradle plugin compiles every module for Java 17, so you need a

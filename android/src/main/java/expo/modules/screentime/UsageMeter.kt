@@ -17,8 +17,8 @@ import java.util.TimeZone
  * `max(30, ceil(budget / 60))` there. Android's engine sees the foreground
  * app on every tick, so the budget is an exact accumulator of observed
  * foreground time ([UsageAccumulator]) and `meteringSeconds` is 1: the
- * remaining budget moves one second at a time, as the contract says
- * (`TemporaryUnlockGrant.meteringSeconds`, "Android: 1 [review R10]").
+ * remaining budget moves one second at a time
+ * (`TemporaryUnlockGrant.meteringSeconds`).
  *
  * The floor stays: "30 s floor on both platforms" (the contract), strictest
  * common denominator. The day boundary stays: a budget never carries across

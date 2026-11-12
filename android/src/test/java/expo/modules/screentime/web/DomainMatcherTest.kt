@@ -5,7 +5,7 @@ import org.junit.Test
 
 internal class DomainMatcherTest {
   // Plain JVM tests do not pretend java.net.IDN is UTS-46. The seam has explicit UTS-46 fixtures;
-  // AndroidDomainIdna's actual ICU mapping remains a device integration check for the later slice.
+  // AndroidDomainIdna's actual ICU mapping is left to a check on a device.
   private val idna = DomainIdna { name ->
     when (name) {
       "faß.de" -> "xn--fa-hia.de"

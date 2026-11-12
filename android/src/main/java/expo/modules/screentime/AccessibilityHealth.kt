@@ -50,8 +50,8 @@ internal object AccessibilityHealth {
   /**
    * Whether the accessibility manager lists the service among the enabled
    * ones it serves. Logged beside [isBound] on the device runs to settle
-   * whether this API reads the bound set or the setting (the proposal's
-   * open check, §2.6); the health decision rests on the store record.
+   * whether this API reads the bound set or the setting;
+   * the health decision rests on the store record.
    */
   fun isListedByManager(context: Context): Boolean {
     val manager = context.getSystemService(AccessibilityManager::class.java) ?: return false

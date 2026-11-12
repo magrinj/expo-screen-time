@@ -10,7 +10,7 @@ import android.view.accessibility.AccessibilityEvent
 
 /**
  * The accessibility detector, the opt-in second detector of the blocking
- * engine (`docs/proposals/android-accessibility-engine.md`). Declared in the
+ * engine. Declared in the
  * app manifest by the config plugin's `android.accessibilityEngine` option
  * (never in the library manifest: it changes a consumer's Google Play
  * review), in the engine's `:screentime` process, configured by
@@ -20,8 +20,8 @@ import android.view.accessibility.AccessibilityEvent
  * permission step); nothing in the library starts it.
  *
  * What it adds: UsageStats reports the calling user only, so a blocked app
- * opened from a work profile, Private Space or a cloned copy was never seen
- *; the accessibility manager "treats calls from a profile
+ * opened from a work profile, Private Space or a cloned copy was never seen;
+ * the accessibility manager "treats calls from a profile
  * as if made by its parent", so this service hears every profile. It runs
  * **next to** the UsageStats engine, never instead of it: a
  * `TYPE_WINDOW_STATE_CHANGED` event is a hint "a window of package P came
@@ -29,8 +29,8 @@ import android.view.accessibility.AccessibilityEvent
  * [hintListener], as the shield's `refreshListener`), which runs the same
  * policy, launches the same shield and polls once at the event instant.
  * No state of its own: the resumed and visible sets stay the tracker's.
- * When the service is off, crashed or blocked, the engine is what ships
- * today, and the lost coverage is reported as an enforcement gap with
+ * When the service is off, crashed or blocked, the engine runs alone, and
+ * the lost coverage is reported as an enforcement gap with
  * `scope: "otherProfiles"`.
  *
  * **Scope.** The engine narrows the packages the system reports
@@ -45,9 +45,9 @@ import android.view.accessibility.AccessibilityEvent
  * Its life is recorded in the state store ([StateStore.accessibilityBound]:
  * bound at, pid, unbound at; the twin of the engine's `engine.running`),
  * which is what the module reads to tell "enabled in Settings but not
- * running" (a Task Manager stop leaves it listed and crashed for minutes,
- *). The package names it receives stay in this process:
- * nothing of them crosses to JS.
+ * running" (a Task Manager stop leaves it listed and crashed for minutes).
+ * The package names it receives stay in this process: nothing of them
+ * crosses to JS.
  */
 class ScreenTimeAccessibilityService : AccessibilityService() {
   private val main = Handler(Looper.getMainLooper())

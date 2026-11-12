@@ -14,7 +14,7 @@ package expo.modules.screentime
  * `DEFERRAL_POLICY_UNTIL_ACTIVE` broadcasts, held back from a cached
  * process until something else makes it active (measured on a Pixel 8a,
  * Android 17: the unlock reached the chain 27.8 s later, through the floor
- * alarm;). So when a start is refused under the keyguard,
+ * alarm). So when a start is refused under the keyguard,
  * polling `KeyguardManager` every [POLL_MS] for [WINDOW_MS] is what tells
  * the process about the unlock within a poll. What keeps the process
  * active meanwhile is the alarm receiver's open broadcast (`goAsync` on

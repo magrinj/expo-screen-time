@@ -139,7 +139,7 @@ internal data class MonitoringConfig(
  * calls `validate`, then `MonitoringState.start` with the result.
  */
 internal object MonitoringValidation {
-  /** `capabilities.limits`, identical on both platforms (review R8). */
+  /** `capabilities.limits`, identical on both platforms. */
   data class Limits(
     val maxMonitoredActivities: Int = 19,
     val minIntervalSeconds: Int = 15 * 60,

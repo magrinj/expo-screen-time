@@ -16,7 +16,7 @@ import kotlin.io.encoding.Base64
  * package name is not undecodable, so the Android handle is
  * `HMAC-SHA256(secret, "<type>\0<id>")`, base64url: stable for the life of
  * the install (the same app gets the same handle after a restart), never
- * `base64(packageName)` (review R16), and useless on another install (a
+ * `base64(packageName)`, and useless on another install (a
  * different secret). Nothing in JS can get a package name out of a handle,
  * or build a handle for a package it names: the native map in
  * [SelectionStore] is the only way back.

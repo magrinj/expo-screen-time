@@ -7,7 +7,7 @@ breaking a real build. **Do not modify this area without reading this file.**
 ## Rule 0 — expo-widgets is the reference implementation
 
 The pbxproj recipe is adapted from Expo's first-party `expo-widgets`
-(`../expo-widgets` locally, MIT). When unsure how to do something, **check how
+([expo-widgets](https://github.com/expo/expo/tree/main/packages/expo-widgets), MIT). When unsure how to do something, **check how
 expo-widgets does it and match it**. Diverging requires a written reason in a
 comment. Existing deliberate divergences:
 

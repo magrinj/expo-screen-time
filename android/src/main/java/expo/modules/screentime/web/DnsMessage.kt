@@ -90,7 +90,7 @@ internal object DnsMessage {
   /**
    * Null upstream means a caller-reported timeout/failure. An unrelated or malformed datagram is
    * discarded without completing the pending query. IDs are checked, never rewritten.
-   * The optional TTL cap is W-R3's fallback hook; OPT's TTL-shaped EDNS fields are never capped.
+   * The optional TTL cap is the fallback if stale answers survive a DNS-server swap; OPT's TTL-shaped EDNS fields are never capped.
    */
   fun relay(query: Query, upstream: ByteArray?, family: IpPacket.Family, tcp: Boolean = false,
     ttlCapSeconds: Int? = null): RelayResult {

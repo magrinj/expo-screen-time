@@ -7,7 +7,7 @@ import UserNotifications
 /// Handles user interactions with the shield (blocking) screen: `close`,
 /// `defer`, `unblock` (lift the pressed target until the next block),
 /// `snooze` (lift the pressed target for a budget of its own use, metered by
-/// a DeviceActivity this extension arms — spike S1 showed it may), and
+/// a DeviceActivity this extension arms), and
 /// `openApp` (bring the host app forward: iOS lets no extension launch an
 /// app, so a local notification is posted for the user to tap).
 class ShieldActionExtension: ShieldActionDelegate {

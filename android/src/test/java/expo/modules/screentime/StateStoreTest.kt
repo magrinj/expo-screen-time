@@ -93,7 +93,7 @@ class StateStoreTest {
     assertNull(store().shieldConfig(null))
     store().setDefaultShieldConfig(JSONObject().put("title", JSONObject().put("text", "Default")))
     store().setShieldConfig("bedtime", JSONObject().put("title", JSONObject().put("text", "Bed")))
-    // The owner's config when it has one, else the default (fix 8).
+    // The owner's config when it has one, else the default.
     assertEquals("Bed", store().shieldConfig("bedtime")!!.getJSONObject("title").getString("text"))
     assertEquals("Default", store().shieldConfig("work")!!.getJSONObject("title").getString("text"))
     assertEquals("Default", store().shieldConfig(null)!!.getJSONObject("title").getString("text"))

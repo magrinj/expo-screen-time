@@ -19,7 +19,7 @@ import org.junit.Test
  * which app is shielded, by which owner — through [ShieldPolicy.shields]
  * and [BlockSource.covers], the Android reading of the same rules.
  *
- * Step 5 ports the unlock and snooze sections: "SuspendedSources — what
+ * The unlock and snooze sections are ported too: "SuspendedSources — what
  * temporaryUnlock suspends", "SuspendedSources — threshold suspension is
  * per occurrence", "storeShields — a snooze lifts the pressed target",
  * "storeShields — snoozes under an allowlist" and "targetedUnlockVerdict"
@@ -151,7 +151,7 @@ class BlockCompositionTest {
     assertEquals("without a mode it is a blocklist", BlockMode.blocklist, sources(ManualBlock("apps", BlockMode.stored(null), setOf("calendar", "contacts")), MonitoringState()).first().mode)
     assertEquals("an empty allowlist selection is a source (allow nothing)…", listOf(manual(mode = BlockMode.allowlist)), sources(ManualBlock("empty", BlockMode.allowlist, emptySet()), MonitoringState()))
     assertTrue("…while an empty blocklist selection is omitted, as before", sources(ManualBlock("empty", BlockMode.blocklist, emptySet()), MonitoringState()).isEmpty())
-    // The manual block holds the apps captured at block time; the schedule and threshold selections are read live.
+    // The manual block holds the apps captured at block time (the projection model); the schedule and threshold selections are read live.
     val scheduleAllow = sources(null, monitoring(selectionId = "apps", mode = "allowlist", fired = listOf("limit" to "mixed")))
     assertEquals("a schedule takes its mode from its config; its blockOnThreshold shields keep blocklist semantics", listOf(BlockMode.allowlist, BlockMode.blocklist), scheduleAllow.map { it.mode })
     assertEquals(listOf(BlockSourceKind.Schedule("A"), BlockSourceKind.Threshold("A")), scheduleAllow.map { it.kind })
@@ -306,7 +306,7 @@ class BlockCompositionTest {
     assertTrue("a grant persisted by name only (previous layout) suspends no threshold — fail closed, the shields come back", read?.thresholds?.isEmpty() == true && read.manual)
   }
 
-  // MARK: - Shield snooze (fix 1, spike S1): the lifted set is the Android reading of `storeShields(of:snoozed:)`
+  // MARK: - Shield snooze: the lifted set is the Android reading of `storeShields(of:snoozed:)`
 
   private fun shielded(app: String, sources: List<BlockSource>, lifted: Set<String>) = ShieldPolicy.shields(app, sources, launchable, exempt, lifted)
 

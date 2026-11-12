@@ -25,7 +25,7 @@ import android.util.Log
  *   the report renders zeros (what iOS renders without Screen Time
  *   authorization); the permission step is the host's to request
  *   (`usageAccess`, with the `usageReports` feature).
- * - **Categories** (maintainer decision, 2026-11-05): `ApplicationInfo.category`
+ * - **Categories**: `ApplicationInfo.category`
  *   with its localized title from `ApplicationInfo.getCategoryTitle`
  *   (API 26+: Game, Audio, Video, Image, Social, News, Maps, Productivity,
  *   Accessibility); `CATEGORY_UNDEFINED`, below API 26 and an uninstalled

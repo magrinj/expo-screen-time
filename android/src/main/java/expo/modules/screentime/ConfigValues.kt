@@ -9,8 +9,7 @@ import org.json.JSONObject
  * or the document the state store persisted (`org.json`, whose numbers are
  * `Int`, `Long` or `Double`). The twin of `DailySchedule.intValue` on iOS,
  * where JS numbers reach Swift as `Double` and stored ones as `NSNumber`
- * (fix 13: reading `hour` as `Int` rejected every
- * schedule on a device).
+ * (reading `hour` as `Int` there rejected every schedule on a device).
  */
 internal object ConfigValues {
   /**

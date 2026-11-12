@@ -13,7 +13,7 @@ internal enum class BlockMode {
 
   /**
    * Shield every launchable app EXCEPT the selection's apps. Apps only, on
-   * both platforms (review R3): a selection with categories or web domains
+   * both platforms: a selection with categories or web domains
    * is refused up front, and one edited into that shape afterwards is
    * applied as its applications alone (fail closed, as iOS projects it).
    */

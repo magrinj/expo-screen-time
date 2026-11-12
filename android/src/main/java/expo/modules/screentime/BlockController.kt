@@ -69,7 +69,7 @@ internal class BlockController(private val context: Context, private val store: 
    * `now` here, not read from the engine's last pass: a boundary the
    * engine has not recorded yet (its alarm is inexact) still answers as
    * the engine will. Synchronous: one shared-lock file read, nothing
-   * written. This is the *intended* state (review R2): whether the engine
+   * written. This is the *intended* state: whether the engine
    * is alive to enforce it is a gap for `getEnforcementGaps`, not a `false`
    * here. A whole-block unlock in progress suspends its sources and a
    * snooze or a shield unblock lifts its app, so `isBlocked()` is false

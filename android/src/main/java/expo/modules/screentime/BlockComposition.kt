@@ -78,7 +78,7 @@ internal data class BlockSource(
 
 /**
  * The block composition, the twin of `ios/BlockComposition.swift` over the
- * two Android block models: step 3's manual block ([ManualBlock], apps
+ * two Android block models: the manual block ([ManualBlock], apps
  * captured at block time) and the monitoring state's blocks
  * ([MonitoringState.activeBlocks]: schedules in progress and fired
  * `blockOnThreshold` events, resolved live from the selection store, as iOS

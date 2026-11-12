@@ -8,7 +8,7 @@ import java.util.TimeZone
  * A monitored activity as stored: its validated config, when it was
  * registered, and — for `repeats: false` — the one occurrence it covers:
  * the selected occurrence in progress at registration, else the next one
- * (review R7: a one-off starting now applies at once). After that
+ * (a one-off starting now applies at once). After that
  * occurrence the activity stays listed by `getMonitoredActivities` until it
  * is stopped, as a one-off DeviceActivity stays registered on iOS, but
  * never blocks again.
@@ -281,7 +281,7 @@ internal data class MonitoringState(
 
   /**
    * `startMonitoring`, after validation: register (or re-register) the
-   * activity, and apply the interval plan for now (review R7: inside an
+   * activity, and apply the interval plan for now (inside an
    * occurrence, the block applies at once and one `intervalDidStart` is
    * recorded). `selections` resolves the packages a threshold meters.
    */
@@ -396,7 +396,7 @@ internal data class MonitoringState(
    * `foreground.cursorMs` (inclusive; from the earliest occurrence start
    * when null) to now, and passes `uptoMs` = the instant every event at or
    * before it is known to be visible — now minus the pipeline lag (1–3 ms
-   * measured, 2 s in the spike;). Events after
+   * measured on a Pixel 8a, 2 s allowed). Events after
    * `uptoMs`, or at or before the cursor, are not fed: the former come back
    * in the next window, the latter were fed already. The cursor then moves
    * to `uptoMs`. A window queried twice (a restart re-queries from the

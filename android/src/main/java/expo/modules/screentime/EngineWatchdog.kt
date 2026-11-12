@@ -100,8 +100,7 @@ import android.util.Log
  * the system until a batch of wakeup alarms, so it lands at those until the
  * unlock, uselessly (on battery each landing counts against the hour's
  * quota): it is what makes an alarm due at the screen-on, which is what
- * wakes the cached process and lets the chain see the unlock (research
- * §10.2).
+ * wakes the cached process and lets the chain see the unlock.
  *
  * The user's force stop cancels the alarm with the app's other pending
  * intents (the stopped state): a force stop stays final, as intended.

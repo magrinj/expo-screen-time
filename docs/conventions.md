@@ -6,8 +6,8 @@ API design, commits/releases, dependencies, packaging, docs. The load-bearing on
 ## API design
 
 - **Platform-neutral names.** `blockSelection`, `startMonitoring`, `isBlocked` —
-  names must survive the future Android implementation. Before naming anything
-  new, check the platform support page; if the
+  names must make sense on iOS and Android. Before naming anything new, check
+  [`platform-support.mdx`](../website/content/docs/platform-support.mdx); if the
   concept is iOS-structural (tokens, shields, web-domain blocking), tag it
   `@platform ios` in TSDoc.
 - **Types live in `src/ExpoScreenTime.types.ts`**, in the existing banner

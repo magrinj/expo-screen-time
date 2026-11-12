@@ -9,18 +9,15 @@ import expo.modules.screentime.PermissionSteps.Feature
 /**
  * Android counterpart of `ios/ExpoScreenTimeModule.swift`.
  *
- * Stage 3 of the Android port. Step 1: the
- * permission steps are real, the engine service and its state store exist.
- * Step 2: the selection store, the handles, the picker and the token label.
- * Step 3: the manual block, the shield and its configuration. Step 4:
- * monitoring (schedules, thresholds, the event history and the live
- * events). Step 5: the temporary unlock (whole block and targeted), the
- * shield actions and the interaction queue. Step 6: the enforcement gaps,
- * which is where `blocking` became `"friction"` for real and the internal
- * preview switch the steps 3–5 shipped behind went away. Stage 4: the
- * usage reports (the template slot, the report view) and the app-control
- * restrictions (`denyAppRemoval`, `denyAppInstallation`: two more block
- * sources of the engine, over the system's uninstall and install UIs). Every function
+ * The permission steps, the engine service and its state store; the
+ * selection store, the handles, the picker and the token label; the manual
+ * block, the shield and its configuration; monitoring (schedules,
+ * thresholds, the event history and the live events); the temporary unlock
+ * (whole block and targeted), the shield actions and the interaction queue;
+ * the enforcement gaps; the usage reports (the template slot, the report
+ * view); and the app-control restrictions (`denyAppRemoval`,
+ * `denyAppInstallation`: two more block sources of the engine, over the
+ * system's uninstall and install UIs). Every function
  * not implemented fails with a coded `UNSUPPORTED` error, and so does every
  * function of a feature the config plugin left out of this build
  * (`android.features`, read back from the merged manifest: [BuildManifest]).
@@ -159,12 +156,10 @@ class ExpoScreenTimeModule : Module() {
     }
 
     // Apps call this at render time to decide what to show; it must answer,
-    // not throw. Each capability stays off until the step that delivers it
-    // flips its value ("Android steps"): step 2
-    // turned `selectableKinds.applications` on (the picker lists apps, the
-    // store holds them); categories and web domains stay off in v1 (review
-    // R10: `ApplicationInfo.category` is mostly unset; no web blocking).
-    // `blocking` is "friction" (review R2): the engine shields, and a user
+    // not throw. `selectableKinds.applications` is on (the picker lists
+    // apps, the store holds them); categories and web domains stay off
+    // (`ApplicationInfo.category` is mostly unset; no web blocking).
+    // `blocking` is "friction": the engine shields, and a user
     // can stop it from the Task Manager or Settings, which
     // `getEnforcementGaps` reports. The limits are the cross-platform ones
     // (the contract enforces the iOS values on both platforms). `blocking`
@@ -177,8 +172,8 @@ class ExpoScreenTimeModule : Module() {
     // under the same test as `blocking`: their mechanism is the shield (the
     // engine shields the uninstall dialog, the stores and the package
     // installer), which the user can stop; the device admin's state is a
-    // permission step, not a capability (the mapping: capabilities reflect
-    // the build, never whether a step is currently granted).
+    // permission step, not a capability (capabilities reflect the build,
+    // never whether a step is currently granted).
     Function("getCapabilities") {
       mapOf(
         "blocking" to if (build.blocking) "friction" else "none",
@@ -282,7 +277,7 @@ class ExpoScreenTimeModule : Module() {
     // MARK: - Monitoring
 
     // Same validation order, codes and semantics as the Swift
-    // `startMonitoring` (MonitoringValidation); review R7: inside the
+    // `startMonitoring` (MonitoringValidation): inside the
     // interval the block applies at once and one intervalDidStart is
     // recorded. The engine process is told to look again.
     // A build with the engine but no shield (`features: ["monitoring"]`)

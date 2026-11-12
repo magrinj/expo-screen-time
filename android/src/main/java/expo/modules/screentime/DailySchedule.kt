@@ -13,7 +13,7 @@ import java.util.TimeZone
  *
  * On iOS this type exists next to DeviceActivity: the extension uses it to
  * skip occurrences on unselected weekdays and the module to apply the block
- * synchronously inside an occurrence (fix 12). On Android it IS the
+ * synchronously inside an occurrence. On Android it IS the
  * schedule: the engine evaluates it at every wake and every foreground
  * change (`MonitoringState`).
  */

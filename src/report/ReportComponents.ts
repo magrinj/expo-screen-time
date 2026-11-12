@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
 // reads their type/props and ships a JSON tree to the native renderer (the
 // DeviceActivityReport extension through the App Group on iOS, the module's
 // own renderer on Android). Values are resolved natively — JS never sees
-// usage data (see docs/architecture.md).
+// usage data.
 //
 // Naming/prop conventions mirror SwiftUI/@expo/ui (same vocabulary as
 // expo-widgets layouts).

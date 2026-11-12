@@ -34,7 +34,7 @@ internal class MonitoringController(
 
   /**
    * `startMonitoring(config)`: validated in the iOS order with the iOS
-   * codes ([MonitoringValidation]), then registered (review R7: inside the
+   * codes ([MonitoringValidation]), then registered (inside the
    * interval, the block applies at once and one `intervalDidStart` is
    * recorded). Everything the engine needs — the activity, the marker, the
    * desire to run — is in the document before it is told to look.

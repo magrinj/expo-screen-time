@@ -163,7 +163,7 @@ internal data class ReportData(
  *
  * ### Sessions
  * Durations come from the resume/pause events, never from `queryUsageStats`
- * aggregates (measured: "may be expanded to the nearest whole interval
+ * aggregates ("may be expanded to the nearest whole interval
  * period"). A package is in the foreground while at least one of its
  * activities is resumed (moving between screens emits paused(A),
  * resumed(B), stopped(A), and the late stop must not end the app's
@@ -184,7 +184,7 @@ internal data class ReportData(
  *   ACTIVITY_STOPPED as a death only when it can only be one
  *   ([ActivityInstances]): nothing owed in its class, one instance resumed,
  *   no uncertainty there or in another class of the package. That is the
- *   process dying in the foreground (measured: Gmail's welcome
+ *   process dying in the foreground (on the Android 17 emulator: Gmail's welcome
  *   tour, resumed and stopped within a second with no pause, read as 142 s
  *   of use when stops closed nothing). Every other stop changes nothing.
  *   Below API 29 there is no stop, and the report is the pause rule's. The

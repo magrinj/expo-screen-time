@@ -8,8 +8,8 @@ import java.util.Locale
 
 /**
  * The report window against `ReportContainerView.createFilter`: the expected
- * instants were produced by Foundation (`.proofs/swift/format_probe.swift`,
- * `Calendar.current` with the same locale and zone).
+ * instants were produced by Foundation (`Calendar.current` with the same
+ * locale and zone).
  */
 class ReportWindowTest {
   private val enUS = Locale.US

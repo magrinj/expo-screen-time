@@ -122,9 +122,8 @@ async function eventually(predicate: () => Promise<boolean>, ms = 4000): Promise
 /**
  * The permission response, or null where the permission steps are not
  * implemented. Permissions have no capability field: a platform that can
- * list its steps answers, one that cannot rejects with `UNSUPPORTED` (the
- * Android skeleton before stage 3). The condition is the call itself, never
- * the platform.
+ * list its steps answers, one that cannot rejects with `UNSUPPORTED`. The
+ * condition is the call itself, never the platform.
  */
 async function permissionsIfImplemented(options?: ScreenTimePermissionOptions): Promise<ScreenTimePermissionResponse | null> {
   try {
@@ -351,7 +350,7 @@ const scenarios: Scenario[] = [
       }
       await requireFixture(APPS, "applicationCount");
       await reset(caps);
-      // An allowlist holds applications only (review R3). The category half
+      // An allowlist holds applications only. The category half
       // needs a category to pick: where the platform offers none
       // (selectableKinds.categories off), there is nothing to reject.
       let categoryPart = "no category kind";

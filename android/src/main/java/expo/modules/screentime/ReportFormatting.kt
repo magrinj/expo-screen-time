@@ -66,8 +66,8 @@ internal interface ReportText {
 }
 
 /**
- * en-US, byte for byte what Foundation produces (`.proofs/swift/format_probe.swift`
- * on macOS 27, same ICU data as iOS 26):
+ * en-US, byte for byte what Foundation produces (macOS 27, same ICU data as
+ * iOS 26):
  *
  * | seconds | abbreviated | short | full |
  * |---|---|---|---|

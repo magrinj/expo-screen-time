@@ -21,7 +21,7 @@ import {
   Row,
   SectionHeader,
   Separator,
-} from "../components/ui";
+} from "../../components/ui";
 
 export default function BlockingScreen() {
   const { tokens, metadata, refresh } = useNativeSelection(SELECTION_ID);

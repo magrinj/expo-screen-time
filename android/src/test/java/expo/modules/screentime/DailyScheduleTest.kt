@@ -12,7 +12,7 @@ import org.junit.Test
 
 /**
  * `scripts/swift-tests/main.swift`, sections "DailySchedule — occurrences",
- * "— weekdays", "— intervalDidStart dedupe (fix 12)", "DailySchedule.syncDecision",
+ * "— weekdays", "— intervalDidStart dedupe", "DailySchedule.syncDecision",
  * "— parsing the JS config" and "DailySchedule.intValue", case for case with
  * the same inputs and expectations.
  */
@@ -75,7 +75,7 @@ class DailyScheduleTest {
   }
 
   @Test
-  fun `DailySchedule - intervalDidStart dedupe, fix 12 (Swift section)`() {
+  fun `DailySchedule - intervalDidStart dedupe (Swift section)`() {
     val occurrenceStart = date(2026, 10, 28, 9, 0)
     assertTrue(
       "a marker written 1 s after the start is the same occurrence ⇒ duplicate",

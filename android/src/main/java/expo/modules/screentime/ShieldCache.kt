@@ -38,11 +38,11 @@ internal class ShieldConfigs private constructor(
 /**
  * What the shield needs in memory before it is asked for, in the engine
  * process (`:screentime`, where the shield runs): the configurations and the
- * blocked apps' labels and icons. The first shield after the engine started,
- * and the first after a long idle, paid for all of it on the main thread
- * inside `onCreate` (measured: 96 ms of onCreate on the idle launch of
- * the 28 h run, 5 ms warm): a store read under the file lock, a JSON parse,
- * the target's APK opened for its label and icon.
+ * blocked apps' labels and icons. Without it, the first shield after the
+ * engine started, and the first after a long idle, pay for all of it on the
+ * main thread inside `onCreate` (on a Galaxy A54: 96 ms of onCreate on an
+ * idle launch after 28 h, 5 ms warm): a store read under the file lock, a
+ * JSON parse, the target's APK opened for its label and icon.
  *
  * - **Configurations** ([appearance]): the document is the source of truth
  *   and the module process writes it (`setShieldConfig`) without telling the

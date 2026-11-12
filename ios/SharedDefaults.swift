@@ -143,7 +143,7 @@ extension ManagedSettingsStore {
     /// web domains; empty sets clear the setting. An allowlist store shields
     /// every app except the excepted applications (the allowed and the
     /// snoozed ones) and every web domain except the excepted ones: Safari
-    /// is not reached by the application policy (spike S2), so the web is
+    /// is not reached by the application policy, so the web is
     /// shielded whole. The one writer of shield settings for the app and the
     /// extensions. Call under `BlockStateLock`.
     func setShields(_ shields: StoreShields<ShieldToken>) {
@@ -938,7 +938,7 @@ extension Set where Element == ShieldToken {
     /// interval starts at the grant; a threshold iOS fires implausibly
     /// early is dropped by `UsageMeter.isPlausible`. NOT
     /// `includesPastActivity: false`: on iOS 26.6.1 a meter armed with it
-    /// never fired (device, 2026-11-01; the same ladder without it
+    /// never fired on a device (the same ladder without it
     /// re-shields after the budget).
     @available(iOS 15.0, *)
     func usageEvent(threshold: DateComponents) -> DeviceActivityEvent {

@@ -58,8 +58,7 @@ internal data class ShieldAppearance(
 
     /**
      * The SF Symbols the shield maps to a bundled Material Symbol. Any other
-     * name falls back to the app icon ("Shield":
-     * "for a documented set, else the app icon"). The website's
+     * name falls back to the app icon. The website's
      * shields page lists this table; keep them in step.
      */
     val SYMBOLS: Map<String, String> = mapOf(

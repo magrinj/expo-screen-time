@@ -12,8 +12,7 @@ import android.util.Log
  * `REASON_ACTIVE_DEVICE_ADMIN` hides it) and the app cannot be uninstalled
  * until the admin is deactivated (App info's "Uninstall" is disabled,
  * `pm uninstall` fails with `DELETE_FAILED_DEVICE_POLICY_MANAGER`).
- * Activated by the `deviceAdmin` permission step; measured on Android 17
- *.
+ * Activated by the `deviceAdmin` permission step; measured on Android 17.
  *
  * Deactivation is the user's two deliberate steps: the toggle in Settings ›
  * Security › Device admin apps, then the confirmation the system shows with

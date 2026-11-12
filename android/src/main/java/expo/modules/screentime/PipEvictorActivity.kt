@@ -11,8 +11,8 @@ import android.util.Log
 import android.util.Rational
 
 /**
- * The picture-in-picture counter-measure. Device tests measured the bypass
- *: the shield draws, and the
+ * The picture-in-picture counter-measure. The bypass is measured (10/10 on a
+ * Pixel 8a, with either detection engine): the shield draws, and the
  * blocked app's pinned window keeps floating over it, usable. There is no
  * public API to close another app's PiP window, and no way to list it, but
  * Android keeps **one** pinned task per display: an activity entering PiP

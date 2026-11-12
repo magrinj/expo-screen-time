@@ -338,7 +338,7 @@ describe('applyScreenTimeAndroidManifest — accessibilityEngine', () => {
   const service = (manifest: AndroidConfig.Manifest.AndroidManifest) => services(manifest).find((s) => s.$['android:name'] === ACCESSIBILITY_SERVICE);
   const permissionNames = (manifest: AndroidConfig.Manifest.AndroidManifest) => (manifest.manifest['uses-permission'] ?? []).map((p) => p.$['android:name']);
 
-  it('declares the service as the proposal writes it: exported, :screentime, BIND_ACCESSIBILITY_SERVICE, the intent filter and the XML pointer', () => {
+  it('declares the service: exported, :screentime, BIND_ACCESSIBILITY_SERVICE, the intent filter and the XML pointer', () => {
     const manifest = applyScreenTimeAndroidManifest(vanillaManifest(), options(ALL, false, true));
     const entry = service(manifest);
     expect(entry).toBeDefined();

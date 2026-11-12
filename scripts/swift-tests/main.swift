@@ -72,7 +72,7 @@ check(BlockStore.fnv1a("") == "cbf29ce484222325", "FNV-1a 64 offset basis for th
 check(BlockStore.fnv1a("a") == "af63dc4c8601ec8c", "FNV-1a 64 of \"a\" matches the reference vector")
 check(BlockStore.manual == "expo_st_manual" && BlockStore.web == "expo_st_web", "fixed names for manual and web stores")
 
-// MARK: - Union and per-store contents (fix 5)
+// MARK: - Union and per-store contents
 
 section("BlockComposition.storeContents — one store per source")
 let manual = Source(kind: .manual, startedAt: 1_000, tokens: ["app:insta", "cat:social"])
@@ -105,7 +105,7 @@ check(BlockComposition.union(of: [manual, scheduleA, scheduleB, thresholdA]) ==
 check(BlockComposition.union(of: [manual]) == manual.tokens, "manual only")
 check(BlockComposition.union(of: [Source]()).isEmpty, "nothing active ⇒ empty (NO_ACTIVE_BLOCK)")
 
-// MARK: - Precedence (fix 8)
+// MARK: - Precedence
 
 section("BlockComposition.owner — threshold > latest schedule > manual > default")
 let sources = [manual, scheduleA, scheduleB, thresholdA]
@@ -396,7 +396,7 @@ check(!mondayNight.isActive(at: date(2026, 10, 28, 1, 0), calendar: utc),
       "Wednesday 01:00 belongs to Tuesday's occurrence ⇒ ignored")
 check(!mondayNight.isActive(at: date(2026, 10, 26, 21, 0), calendar: utc), "Monday 21:00 is before the start")
 
-section("DailySchedule — intervalDidStart dedupe (fix 12)")
+section("DailySchedule — intervalDidStart dedupe")
 let occurrenceStart = date(2026, 10, 28, 9, 0)
 check(DailySchedule.isSameOccurrence(markedAt: ms(date(2026, 10, 28, 9, 0, 1)), occurrenceStart: occurrenceStart),
       "a marker written 1 s after the start is the same occurrence ⇒ duplicate")
@@ -734,7 +734,7 @@ let weeklyLegacy = ActivityRegistration.legacyActiveInterval(pointer: "M", confi
 check(weeklyLegacy?.logical == "M" && weeklyLegacy?.startedAt == ms(date(2026, 10, 31, 23, 0)),
       "a schedule that cannot be computed is reconstructed from now")
 
-// MARK: - Shield snooze (fix 1, spike S1)
+// MARK: - Shield snooze
 
 section("BlockComposition.storeShields — a snooze lifts the pressed target in every store, nothing else")
 // Instagram is in the manual selection and in schedule B; the Social category is shielded by A.
@@ -1158,7 +1158,7 @@ let gapTrackerRoundTrip = try? JSONDecoder().decode(AuthorizationGapTracker.self
 check(gapTrackerRoundTrip == tracker, "the tracker survives a JSON round trip (persisted in UserDefaults)")
 let openGapPayload = EnforcementGap(from: 1, to: nil, reason: "authorizationRevoked").dictionary
 check(openGapPayload["to"] is NSNull && (openGapPayload["from"] as? Double) == 1, "an open gap reaches JS with to: null")
-// MARK: - Shield interactions (review R16) — the per-target collapse and the legacy queue
+// MARK: - Shield interactions — the per-target collapse and the legacy queue
 
 section("ShieldInteractionQueue.State.record — presses on one target within 2 s are one attempt; other targets are not")
 typealias Target = ShieldInteractionQueue.Target

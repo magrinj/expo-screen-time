@@ -403,8 +403,8 @@ internal class TcpDnsResponderTest {
     assertTrue(output.requests.isEmpty())
   }
   @Test fun flowStateDoesNotDependOnTunnelDescriptorOrActiveDnsPair() {
-    // W-R5(7)'s pure half: packets addressed to the original pair reuse the same responder after
-    // the owner changes its active pair. Descriptor handover itself belongs to the service slice.
+    // Packets addressed to the original pair reuse the same responder after the owner changes its
+    // active pair. Descriptor handover itself is outside this class.
     val client = Client(); client.open()
     val request = client.request()
     val first = client.answer(request, 2000).segments.single()

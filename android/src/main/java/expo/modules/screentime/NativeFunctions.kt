@@ -95,10 +95,10 @@ internal val NATIVE_FUNCTIONS: List<NativeFunction> = listOf(
 
 /**
  * Functions with a real Android definition in [ExpoScreenTimeModule]: the
- * permission steps, the selection store, blocking and
- * the shield, monitoring, the temporary unlock and the
- * shield interactions, the enforcement gaps, the
- * report template slot and the app-control restrictions. The
+ * permission steps, the selection store, blocking and the shield,
+ * monitoring, the temporary unlock and the shield interactions, the
+ * enforcement gaps, the report template slot and the app-control
+ * restrictions. The
  * rest (web domains, `getAppGroup`, `openApplication`, the debug helper)
  * rejects `UNSUPPORTED` with `getCapabilities()` saying so.
  */

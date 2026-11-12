@@ -11,7 +11,7 @@ import kotlin.io.encoding.Base64
 /**
  * The handles and the export blobs on a plain JVM: what JS gets is stable
  * on one install, different on another, and never the package name in any
- * encoding (reviews R16 and R17).
+ * encoding.
  */
 class TokenHandlesTest {
   private val secret = ByteArray(32) { it.toByte() }

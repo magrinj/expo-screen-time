@@ -167,7 +167,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
    * "Restricted settings": Android 13 keeps sideloaded apps out of the
    * accessibility and notification-listener toggles until the user allows
    * them from App info, and Android 15 extends that to the overlay, usage
-   * access and device-admin toggles;
+   * access and device-admin toggles (`EnhancedConfirmationService`);
    * [since] is the release the asking step's toggle got it. The op is not in the public
    * constants, and checking it is not always permitted: Android 17 answers
    * with a SecurityException (`verifyIncomingOp`), an older build may not

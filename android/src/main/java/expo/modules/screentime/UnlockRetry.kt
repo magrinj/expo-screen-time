@@ -16,8 +16,7 @@ import android.util.Log
  * manifest component) retries the SYNC when one of them reaches this
  * process, then unregisters. It lives as long as the process that armed it.
  *
- * What it can and cannot do, measured on a Pixel 8a (Android 17, research
- * §10.2). `USER_PRESENT` is sent by SystemUI, not the system uid, so the
+ * What it can and cannot do, measured on a Pixel 8a (Android 17). `USER_PRESENT` is sent by SystemUI, not the system uid, so the
  * receiver must be **exported** or the system drops it at enqueue (both
  * are protected broadcasts: only the platform can send them, so exported
  * costs nothing). And from Android 14 both broadcasts are

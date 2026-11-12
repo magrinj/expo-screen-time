@@ -7,8 +7,8 @@ import org.json.JSONObject
  * A stored selection: the Android twin of `FamilyActivitySelection`, holding
  * package names where iOS holds application tokens. Categories and web
  * domains keep their slot so the document shape (and the set algebra) is the
- * same as on iOS, but they stay empty in v1: `selectableKinds.categories` and
- * `webDomains` are off on Android (review R10).
+ * same as on iOS, but they stay empty: `selectableKinds.categories` and
+ * `webDomains` are off on Android.
  *
  * Pure: no Android imports, so the algebra is unit-tested on a plain JVM.
  */

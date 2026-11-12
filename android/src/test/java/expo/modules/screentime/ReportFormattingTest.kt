@@ -8,7 +8,7 @@ import org.junit.Test
  * The formatting rules against Foundation's own output: every expected
  * string below was printed by `DateComponentsFormatter` / `DateFormatter`
  * configured as `CustomTemplateReport.formatDuration` and the `firstPickup`
- * branch configure them (`.proofs/swift/format_probe.swift`, macOS 27).
+ * branch configure them (macOS 27).
  */
 class ReportFormattingTest {
   private val en = ReportEnglishText(PARIS)
