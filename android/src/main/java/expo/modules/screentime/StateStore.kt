@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalEncodingApi::class) // stable from Kotlin 2.2; SDK 54 to 57 build with 2.1
+
 package expo.modules.screentime
 
 import android.content.Context
@@ -10,6 +12,7 @@ import java.security.SecureRandom
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * The Android counterpart of the iOS App Group: one JSON document the React

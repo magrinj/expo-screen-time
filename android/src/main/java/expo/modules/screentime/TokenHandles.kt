@@ -1,3 +1,5 @@
+@file:OptIn(ExperimentalEncodingApi::class) // stable from Kotlin 2.2; SDK 54 to 57 build with 2.1
+
 package expo.modules.screentime
 
 import java.security.SecureRandom
@@ -6,6 +8,7 @@ import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
 import kotlin.io.encoding.Base64
+import kotlin.io.encoding.ExperimentalEncodingApi
 
 /**
  * The opaque strings JS sees for a selection's members, derived from a

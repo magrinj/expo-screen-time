@@ -28,7 +28,7 @@ App blocking, schedules, shields and usage reports for Expo and React Native, on
 
 - iOS 16.0+, and an Apple Developer account with the Family Controls capability
 - Android 7.0+ (API 24)
-- Expo SDK 56+
+- Expo SDK 54+ (CI runs SDK 58; SDK 54 to 57 are checked to build)
 - A [development build](https://docs.expo.dev/develop/development-builds/introduction/) — the module cannot run in Expo Go
 
 ## Installation
