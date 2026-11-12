@@ -22,7 +22,6 @@ class ReportTemplateTest {
     hourlyMs = LongArray(24).also { it[9] = 3_600_000L; it[10] = 1_440_000L }.toList(),
     topApps = listOf(ReportAppUsage("com.a", 3_000_000L, 20), ReportAppUsage("com.b", 1_500_000L, 10), ReportAppUsage("com.c", 540_000L, 0)),
     categories = listOf(ReportCategoryUsage("Social", 4_500_000L), ReportCategoryUsage("Other", 540_000L)),
-    coverage = ReportCoverage(window.startMs, window.endMs, window.startMs, at(2026, 11, 4, 12, 0, zone = PARIS)),
   )
   private val labels = ReportLabels { if (it == "com.a") "Alpha" else if (it == "com.b") "Beta" else null }
   private val resolver = ReportResolver(data, ReportEnglishText(PARIS), labels)

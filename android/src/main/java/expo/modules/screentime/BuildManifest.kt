@@ -79,27 +79,19 @@ internal data class BuildManifest(
      * (small parcels, whatever the size of the app's manifest) and the
      * requested permissions. Each probe answers for itself: `NameNotFound`
      * is "not declared"; any other failure (never seen; the package is the
-     * app's own) is logged and reads as declared, the behaviour before the
-     * option, without hiding what the other probes did resolve.
+     * app's own) is logged and reads as declared (absent for the opt-in
+     * accessibility service), without hiding what the other probes resolved.
      */
     fun resolve(context: Context): BuildManifest {
       val pm = context.packageManager
       val pkg = context.packageName
-      fun declared(what: String, lookup: () -> Any?): Boolean = try {
+      fun declared(what: String, assumeDeclared: Boolean = true, lookup: () -> Any?): Boolean = try {
         lookup() != null
       } catch (e: PackageManager.NameNotFoundException) {
         false
       } catch (e: Exception) {
-        Log.w(EngineController.TAG, "build manifest: $what not resolved (${e.javaClass.simpleName}: ${e.message}); assuming declared")
-        true
-      }
-      fun declaredOrAbsent(what: String, lookup: () -> Any?): Boolean = try {
-        lookup() != null
-      } catch (e: PackageManager.NameNotFoundException) {
-        false
-      } catch (e: Exception) {
-        Log.w(EngineController.TAG, "build manifest: $what not resolved (${e.javaClass.simpleName}: ${e.message}); assuming absent")
-        false
+        Log.w(EngineController.TAG, "build manifest: $what not resolved (${e.javaClass.simpleName}: ${e.message}); assuming ${if (assumeDeclared) "declared" else "absent"}")
+        assumeDeclared
       }
       val permissions: Collection<String> = try {
         packageInfo(pm, pkg).requestedPermissions?.toList() ?: emptyList()
@@ -111,7 +103,7 @@ internal data class BuildManifest(
         services = listOfNotNull(
           ScreenTimeEngineService::class.java.name.takeIf { declared("engine service") { serviceInfo(pm, ComponentName(pkg, it)) } },
           // Added by the plugin on opt-in: "not declared" is the default build, so a failed probe reads as absent here.
-          ScreenTimeAccessibilityService::class.java.name.takeIf { declaredOrAbsent("accessibility service") { serviceInfo(pm, ComponentName(pkg, it)) } },
+          ScreenTimeAccessibilityService::class.java.name.takeIf { declared("accessibility service", assumeDeclared = false) { serviceInfo(pm, ComponentName(pkg, it)) } },
         ),
         activities = listOfNotNull(ShieldActivity::class.java.name.takeIf { declared("shield activity") { activityInfo(pm, ComponentName(pkg, it)) } }),
         receivers = listOfNotNull(ScreenTimeDeviceAdminReceiver::class.java.name.takeIf { declared("device admin receiver") { receiverInfo(pm, ComponentName(pkg, it)) } }),

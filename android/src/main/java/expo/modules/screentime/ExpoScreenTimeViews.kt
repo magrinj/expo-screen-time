@@ -178,7 +178,7 @@ class ExpoScreenTimeReportView(context: Context, appContext: AppContext) : ExpoV
     val apps = data.topApps.joinToString(" ") { "${it.packageName}=${it.durationMs}ms/${it.pickups}" }
     val categories = data.categories.joinToString(" ") { "${it.name}=${it.durationMs}ms" }
     return "report window=${window.startMs}..${window.endMs} total=${data.totalDurationMs}ms pickups=${data.pickups} withApp=${data.pickupsWithApplicationActivity} " +
-      "longest=${data.longestActivityMs}ms apps=${data.appCount} firstPickup=${data.firstPickupMs} hourly=${data.hourlyMs} covered=${data.coverage.coveredFromMs}..${data.coverage.coveredToMs} " +
+      "longest=${data.longestActivityMs}ms apps=${data.appCount} firstPickup=${data.firstPickupMs} hourly=${data.hourlyMs} " +
       "topApps=[$apps] categories=[$categories]"
   }
 

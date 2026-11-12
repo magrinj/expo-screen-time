@@ -34,9 +34,6 @@ import android.util.Log
  * - **Labels and icons** from PackageManager, cached per package for the
  *   life of this source (one per view). The label falls back to the
  *   package name in the resolver; the icon to a placeholder in the renderer.
- * - **History start**: the first timestamp of the oldest daily bucket
- *   `queryUsageStats` still has, the closest public answer to "how far back
- *   the OS kept events" (about ten days); null when unknown.
  *
  * Everything here runs on the view's background thread (binder calls, icon
  * decoding); the caches are not shared across threads.
@@ -80,7 +77,7 @@ internal class ReportUsageSource(private val context: Context) {
         Log.w(TAG, "usage report: the event stream could not be read (${e.javaClass.simpleName}: ${e.message})")
       }
     }
-    return aggregator.result(nowMs, historyStart(usage, nowMs))
+    return aggregator.result(nowMs)
   }
 
   /** The icon of an app with activity, decoded here so the renderer never touches PackageManager on the main thread. */
@@ -105,14 +102,6 @@ internal class ReportUsageSource(private val context: Context) {
     }
     @Suppress("DEPRECATION")
     return usage.queryEvents(begin, end)
-  }
-
-  private fun historyStart(usage: UsageStatsManager, nowMs: Long): Long? = try {
-    usage.queryUsageStats(UsageStatsManager.INTERVAL_DAILY, 0, nowMs)
-      ?.minOfOrNull { it.firstTimeStamp }
-      ?.takeIf { it > 0 }
-  } catch (e: Exception) {
-    null
   }
 
   private fun categoryTitle(packageName: String): String? {

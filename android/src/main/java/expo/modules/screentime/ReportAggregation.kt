@@ -69,28 +69,9 @@ internal data class ReportAppUsage(val packageName: String, val durationMs: Long
 internal data class ReportCategoryUsage(val name: String, val durationMs: Long)
 
 /**
- * How much of the window the event history can answer for. The OS keeps
- * about ten days of events, and the window may run past
- * now: `[coveredFromMs, coveredToMs)` is the stretch the numbers describe,
- * so the renderer can say "since Tuesday" or "so far today".
- */
-internal data class ReportCoverage(val windowStartMs: Long, val windowEndMs: Long, val coveredFromMs: Long, val coveredToMs: Long) {
-  val coveredMs: Long
-    get() = (coveredToMs - coveredFromMs).coerceAtLeast(0)
-
-  /** Share of the window the history covers, 0..1. */
-  val fraction: Double
-    get() = if (windowEndMs > windowStartMs) coveredMs.toDouble() / (windowEndMs - windowStartMs) else 0.0
-
-  /** Whether the history starts at or before the window (nothing pruned); the window may still be in progress. */
-  val historyComplete: Boolean
-    get() = coveredFromMs <= windowStartMs
-}
-
-/**
  * The values a report template binds to: `CustomTemplateData` of
  * `CustomTemplateReport.swift`, field for field, plus what Android can say
- * and iOS cannot ([pickupsWithApplicationActivity], [coverage]). Durations
+ * and iOS cannot ([pickupsWithApplicationActivity]). Durations
  * are milliseconds here; the resolver formats them as the iOS `TimeInterval`
  * seconds.
  *
@@ -122,7 +103,6 @@ internal data class ReportData(
   val topApps: List<ReportAppUsage>,
   /** Categories by duration, descending. */
   val categories: List<ReportCategoryUsage>,
-  val coverage: ReportCoverage,
 ) {
   /** Of [pickups], those that saw no app: the lock-screen glances and the launcher-only unlocks (Apple's `totalPickupsWithoutApplicationActivity`). */
   val pickupsWithoutApplicationActivity: Int
@@ -220,12 +200,6 @@ internal data class ReportData(
  * ### Reading
  * [result] is terminal: it settles the open spans up to `nowMs`, so [add]
  * refuses events after it.
- *
- * ### Coverage
- * [ReportCoverage] takes the wiring's `historyStartMs` (the earliest
- * instant the OS still has events for: the start of the oldest
- * `queryUsageStats(INTERVAL_DAILY, 0, now)` bucket, or null when unknown)
- * and `nowMs`.
  */
 internal class ReportAggregator(
   private val window: ReportWindow,
@@ -318,7 +292,7 @@ internal class ReportAggregator(
    * The data as of `nowMs`: open spans count until now (the person may be
    * using the device while the report renders), clipped to the window.
    */
-  fun result(nowMs: Long, historyStartMs: Long? = null): ReportData {
+  fun result(nowMs: Long): ReportData {
     // Terminal: the open spans are settled up to now, so no event may follow
     // ([add] throws). Reading again with a later `nowMs` is fine.
     finished = true
@@ -356,8 +330,6 @@ internal class ReportAggregator(
       .map { ReportCategoryUsage(it.key, it.value) }
       .sortedWith(compareByDescending<ReportCategoryUsage> { it.durationMs }.thenBy { it.name })
 
-    val coveredFrom = maxOf(window.startMs, historyStartMs ?: window.startMs).coerceAtMost(window.endMs)
-    val coveredTo = nowMs.coerceIn(coveredFrom, window.endMs)
     return ReportData(
       totalDurationMs = totalMs,
       pickups = pickups,
@@ -368,7 +340,6 @@ internal class ReportAggregator(
       hourlyMs = hourly.toList(),
       topApps = apps,
       categories = sortedCategories,
-      coverage = ReportCoverage(window.startMs, window.endMs, coveredFrom, coveredTo),
     )
   }
 

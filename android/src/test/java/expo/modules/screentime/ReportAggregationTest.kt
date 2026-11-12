@@ -33,8 +33,8 @@ class ReportAggregationTest {
   private fun paused(pkg: String, at: Long, cls: String? = "Main") = UsageEvent(at, pkg, ACTIVITY_PAUSED, cls)
   private fun stopped(pkg: String, at: Long, cls: String? = "Main") = UsageEvent(at, pkg, ACTIVITY_STOPPED, cls)
   private fun device(kind: UsageEventKind, at: Long) = UsageEvent(at, "android", kind)
-  private fun aggregate(vararg events: UsageEvent, nowMs: Long = t(23, 59, 59), filter: ReportAppFilter = this.filter, window: ReportWindow = this.window, categories: ReportCategoryResolver = ReportCategoryResolver.NONE, historyStartMs: Long? = null) =
-    ReportAggregator(window, filter, categories).addAll(events.toList()).result(nowMs, historyStartMs)
+  private fun aggregate(vararg events: UsageEvent, nowMs: Long = t(23, 59, 59), filter: ReportAppFilter = this.filter, window: ReportWindow = this.window, categories: ReportCategoryResolver = ReportCategoryResolver.NONE) =
+    ReportAggregator(window, filter, categories).addAll(events.toList()).result(nowMs)
   private fun ReportData.app(pkg: String) = topApps.firstOrNull { it.packageName == pkg }?.durationMs ?: 0L
   private fun hourly(vararg pairs: Pair<Int, Long>) = LongArray(24).also { for ((h, ms) in pairs) it[h] = ms }
 
@@ -62,8 +62,6 @@ class ReportAggregationTest {
     assertEquals(1, data.topApps.first { it.packageName == "com.google.android.deskclock" }.pickups)
     assertEquals(listOf(ReportCategoryUsage("Other", 56 * SECOND)), data.categories)
     assertEquals(91, FIXTURE.size)
-    assertEquals(window.startMs, data.coverage.coveredFromMs)
-    assertEquals(t(9, 11, 29), data.coverage.coveredToMs)
   }
 
   @Test
@@ -521,7 +519,6 @@ class ReportAggregationTest {
   fun `a window still in the future, and reading twice`() {
     val future = aggregate(resumed("com.a", t(9, 0, day = 3)), nowMs = t(10, 0, day = 3))
     assertEquals(0L, future.totalDurationMs)
-    assertEquals(0L, future.coverage.coveredMs)
     assertNull(future.firstPickupMs)
     val aggregator = ReportAggregator(window, filter).addAll(listOf(resumed("com.a", t(9, 0))))
     assertEquals(30 * MINUTE, aggregator.result(t(9, 30)).totalDurationMs)
@@ -591,31 +588,10 @@ class ReportAggregationTest {
     assertTrue(aggregate(categories = resolver).categories.isEmpty())
   }
 
-  // MARK: Coverage and scale
+  // MARK: Scale
 
   @Test
-  fun `coverage says how much of the window the history and the clock cover`() {
-    val full = aggregate(nowMs = t(9, 0))
-    assertEquals(window.startMs, full.coverage.coveredFromMs)
-    assertEquals(t(9, 0), full.coverage.coveredToMs)
-    assertEquals(9.0 / 24, full.coverage.fraction, 1e-9)
-    assertTrue(full.coverage.historyComplete)
-    val pruned = aggregate(nowMs = t(12, 0), historyStartMs = t(6, 0))
-    assertEquals("the OS only has events from 06:00", t(6, 0), pruned.coverage.coveredFromMs)
-    assertEquals(6 * HOUR, pruned.coverage.coveredMs)
-    assertTrue(!pruned.coverage.historyComplete)
-    val past = aggregate(nowMs = t(12, 0, day = 7), historyStartMs = t(0, 0, day = 1))
-    assertEquals("history older than the window: complete", window.startMs, past.coverage.coveredFromMs)
-    assertEquals(window.endMs, past.coverage.coveredToMs)
-    assertEquals(1.0, past.coverage.fraction, 1e-9)
-    val future = aggregate(nowMs = t(12, 0, day = 1))
-    assertEquals("a window in the future covers nothing", 0L, future.coverage.coveredMs)
-    val gone = aggregate(nowMs = t(12, 0, day = 7), historyStartMs = t(0, 0, day = 6))
-    assertEquals("history that starts after the window: nothing covered", 0L, gone.coverage.coveredMs)
-  }
-
-  @Test
-  fun `empty data has zeros, no first pickup and the window's coverage`() {
+  fun `empty data has zeros and no first pickup`() {
     val data = ReportData.empty(window, t(9, 0))
     assertEquals(0L, data.totalDurationMs)
     assertEquals(0, data.pickups)
@@ -623,7 +599,6 @@ class ReportAggregationTest {
     assertTrue(data.topApps.isEmpty())
     assertTrue(data.categories.isEmpty())
     assertEquals(24, data.hourlyMs.size)
-    assertEquals(t(9, 0), data.coverage.coveredToMs)
   }
 
   @Test
