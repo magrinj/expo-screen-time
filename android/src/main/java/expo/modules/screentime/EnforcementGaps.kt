@@ -181,8 +181,8 @@ internal object ExitReasons {
 
   /**
    * - `stoppedByUser`: `USER_REQUESTED`, the user acting on the app in the
-   *   system UI. Task Manager Stop and force stop both land here (the R2
-   *   case, `STOP APP` / `FORCE STOP` in the description). An OEM battery
+   *   system UI. Task Manager Stop and force stop both land here
+   *   (`STOP APP` / `FORCE STOP` in the description). An OEM battery
    *   manager that force-stops the app is recorded the same way; the
    *   description, kept in the detail, is what tells them apart.
    * - `killedBySystem`: the system took the process down for its own

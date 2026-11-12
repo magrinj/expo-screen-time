@@ -24,52 +24,52 @@ function forward<K extends MethodName>(name: K): Module[K] {
 // Selection utilities live in ./utils; report templates in ./index.
 
 // Capabilities
-export const getCapabilities = forward("getCapabilities");
-export const getEnforcementGaps = forward("getEnforcementGaps");
-export const openApplication = forward("openApplication");
+export const getCapabilities: Module["getCapabilities"] = forward("getCapabilities");
+export const getEnforcementGaps: Module["getEnforcementGaps"] = forward("getEnforcementGaps");
+export const openApplication: Module["openApplication"] = forward("openApplication");
 
 // Permissions
-export const requestScreenTimePermissionsAsync = forward("requestScreenTimePermissionsAsync");
-export const getScreenTimePermissionsAsync = forward("getScreenTimePermissionsAsync");
+export const requestScreenTimePermissionsAsync: Module["requestScreenTimePermissionsAsync"] = forward("requestScreenTimePermissionsAsync");
+export const getScreenTimePermissionsAsync: Module["getScreenTimePermissionsAsync"] = forward("getScreenTimePermissionsAsync");
 
 // App control
-export const denyAppRemoval = forward("denyAppRemoval");
-export const allowAppRemoval = forward("allowAppRemoval");
-export const denyAppInstallation = forward("denyAppInstallation");
-export const allowAppInstallation = forward("allowAppInstallation");
+export const denyAppRemoval: Module["denyAppRemoval"] = forward("denyAppRemoval");
+export const allowAppRemoval: Module["allowAppRemoval"] = forward("allowAppRemoval");
+export const denyAppInstallation: Module["denyAppInstallation"] = forward("denyAppInstallation");
+export const allowAppInstallation: Module["allowAppInstallation"] = forward("allowAppInstallation");
 
 // Blocking
-export const blockSelection = forward("blockSelection");
-export const unblockAll = forward("unblockAll");
-export const isBlocked = forward("isBlocked");
-export const blockWebDomains = forward("blockWebDomains");
-export const unblockWebDomains = forward("unblockWebDomains");
-export const unblockAllWebDomains = forward("unblockAllWebDomains");
-export const getBlockedWebDomains = forward("getBlockedWebDomains");
+export const blockSelection: Module["blockSelection"] = forward("blockSelection");
+export const unblockAll: Module["unblockAll"] = forward("unblockAll");
+export const isBlocked: Module["isBlocked"] = forward("isBlocked");
+export const blockWebDomains: Module["blockWebDomains"] = forward("blockWebDomains");
+export const unblockWebDomains: Module["unblockWebDomains"] = forward("unblockWebDomains");
+export const unblockAllWebDomains: Module["unblockAllWebDomains"] = forward("unblockAllWebDomains");
+export const getBlockedWebDomains: Module["getBlockedWebDomains"] = forward("getBlockedWebDomains");
 
 // Temporary unlock
-export const temporaryUnlock = forward("temporaryUnlock");
-export const isTemporarilyUnlocked = forward("isTemporarilyUnlocked");
-export const getRemainingUnlockSeconds = forward("getRemainingUnlockSeconds");
-export const relock = forward("relock");
+export const temporaryUnlock: Module["temporaryUnlock"] = forward("temporaryUnlock");
+export const isTemporarilyUnlocked: Module["isTemporarilyUnlocked"] = forward("isTemporarilyUnlocked");
+export const getRemainingUnlockSeconds: Module["getRemainingUnlockSeconds"] = forward("getRemainingUnlockSeconds");
+export const relock: Module["relock"] = forward("relock");
 
 // Shields
-export const setShieldConfig = forward("setShieldConfig");
-export const setShieldConfigForActivity = forward("setShieldConfigForActivity");
-export const clearShieldConfig = forward("clearShieldConfig");
-export const setShieldActions = forward("setShieldActions");
-export const setShieldActionsForActivity = forward("setShieldActionsForActivity");
-export const clearShieldActions = forward("clearShieldActions");
-export const drainShieldInteractions = forward("drainShieldInteractions");
+export const setShieldConfig: Module["setShieldConfig"] = forward("setShieldConfig");
+export const setShieldConfigForActivity: Module["setShieldConfigForActivity"] = forward("setShieldConfigForActivity");
+export const clearShieldConfig: Module["clearShieldConfig"] = forward("clearShieldConfig");
+export const setShieldActions: Module["setShieldActions"] = forward("setShieldActions");
+export const setShieldActionsForActivity: Module["setShieldActionsForActivity"] = forward("setShieldActionsForActivity");
+export const clearShieldActions: Module["clearShieldActions"] = forward("clearShieldActions");
+export const drainShieldInteractions: Module["drainShieldInteractions"] = forward("drainShieldInteractions");
 
 // Monitoring
-export const startMonitoring = forward("startMonitoring");
-export const stopMonitoring = forward("stopMonitoring");
-export const stopAllMonitoring = forward("stopAllMonitoring");
-export const getMonitoredActivities = forward("getMonitoredActivities");
-export const getMonitorEvents = forward("getMonitorEvents");
-export const clearMonitorEvents = forward("clearMonitorEvents");
+export const startMonitoring: Module["startMonitoring"] = forward("startMonitoring");
+export const stopMonitoring: Module["stopMonitoring"] = forward("stopMonitoring");
+export const stopAllMonitoring: Module["stopAllMonitoring"] = forward("stopAllMonitoring");
+export const getMonitoredActivities: Module["getMonitoredActivities"] = forward("getMonitoredActivities");
+export const getMonitorEvents: Module["getMonitorEvents"] = forward("getMonitorEvents");
+export const clearMonitorEvents: Module["clearMonitorEvents"] = forward("clearMonitorEvents");
 
 // Platform-specific
-export const getAppGroup = forward("getAppGroup");
-export const debugShieldConfig = forward("debugShieldConfig");
+export const getAppGroup: Module["getAppGroup"] = forward("getAppGroup");
+export const debugShieldConfig: Module["debugShieldConfig"] = forward("debugShieldConfig");

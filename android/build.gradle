@@ -18,8 +18,7 @@ android {
 }
 
 dependencies {
-  // JVM unit tests of the pure parts (android/src/test): the permission
-  // derivation, the state store, the block policy and the shield mapping.
+  // JVM unit tests of the pure parts (android/src/test).
   // `org.json` is a stub in android.jar.
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.json:json:20250517'

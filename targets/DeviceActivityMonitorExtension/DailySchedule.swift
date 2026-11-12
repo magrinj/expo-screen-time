@@ -152,8 +152,8 @@ struct DailySchedule: Equatable {
     /// What `startMonitoring` does with the block right now, given the stored
     /// schedule. "Cannot compute" is distinct from "outside": a weekly interval
     /// spanning weekdays (Fri 22:00 → Sun 06:00) is not a daily schedule, and
-    /// the module used to take its `nil` for "outside" and clear the marker and
-    /// store the system's own callback may already have applied.
+    /// taking its `nil` for "outside" would clear the marker and store the
+    /// system's own callback may already have applied.
     enum SyncDecision: Equatable {
         /// Inside an occurrence on a selected weekday: mark the interval (from
         /// `occurrenceStart`) and apply the store now.

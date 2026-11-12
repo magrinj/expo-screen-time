@@ -175,8 +175,8 @@ public class ScreenTimeManager: NSObject {
     /// in the unnamed store, and tracked the schedule in progress only through
     /// one `expo_st_active_activity` pointer. Move them, once, under the lock:
     ///
-    /// 1. the pointer becomes that schedule's interval marker (it used to be
-    ///    deleted, so an in-progress schedule went unblocked until its next
+    /// 1. the pointer becomes that schedule's interval marker (deleting it
+    ///    would leave an in-progress schedule unblocked until its next
     ///    start);
     /// 2. the named stores are written from the App Group state and the web
     ///    filter moved to its store, BEFORE the unnamed store is cleared — a

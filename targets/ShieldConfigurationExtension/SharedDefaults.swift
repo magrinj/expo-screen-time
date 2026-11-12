@@ -230,13 +230,13 @@ class SharedDefaults {
             // e.g., "com.example.app.DeviceActivityMonitorExtension"
             // We need to get the base app bundle identifier
             let baseBundleId = bundleId
-                // @bacons/apple-targets naming convention
+                // Target-name suffixes
                 .replacingOccurrences(of: ".DeviceActivityMonitorExtension", with: "")
                 .replacingOccurrences(of: ".ShieldConfigurationExtension", with: "")
                 .replacingOccurrences(of: ".ShieldActionExtension", with: "")
                 .replacingOccurrences(of: ".DeviceActivityReportExtension", with: "")
-                // Alternative naming conventions (kebab-case); `shield-config` is
-                // the slug the config plugin generates.
+                // Kebab-case suffixes; the config plugin generates `shield-config`,
+                // `shield-action`, `device-activity-monitor` and `device-activity-report`.
                 .replacingOccurrences(of: ".device-activity-monitor", with: "")
                 .replacingOccurrences(of: ".shield-configuration", with: "")
                 .replacingOccurrences(of: ".shield-config", with: "")
@@ -596,8 +596,8 @@ class SharedDefaults {
         return defaults?.string(forKey: SharedDefaultsKeys.legacyActiveActivity)
     }
 
-    /// Drop the pre-composition "active activity" pointer, which no longer
-    /// drives anything.
+    /// Drop the pre-composition "active activity" pointer, which nothing
+    /// reads but the migration.
     func removeLegacyActiveActivity() {
         defaults?.removeObject(forKey: SharedDefaultsKeys.legacyActiveActivity)
         defaults?.synchronize()

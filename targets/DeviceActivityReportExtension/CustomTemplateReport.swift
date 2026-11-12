@@ -663,7 +663,7 @@ struct TemplateNodeView: View {
     }
 }
 
-// MARK: - Color hex parsing (was in ReportConfiguration.swift)
+// MARK: - Color hex parsing
 
 extension Color {
     init?(hex: String) {

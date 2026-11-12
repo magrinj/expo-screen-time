@@ -82,8 +82,8 @@ export function subtractSelection(
 }
 
 /**
- * Export a selection as a base64 string for backup/sync.
- * WARNING: Tokens are device-specific and tied to the user's iCloud account.
+ * Export a selection as an opaque string for backup/sync.
+ * WARNING: The blob is bound to this device (on iOS, also to the user's iCloud account).
  */
 export function exportSelection(selectionId: string): Promise<string | null> {
   return ExpoScreenTimeModule.exportSelection(selectionId);
@@ -91,7 +91,7 @@ export function exportSelection(selectionId: string): Promise<string | null> {
 
 /**
  * Import a previously exported selection.
- * WARNING: Only works on the same device/iCloud account.
+ * WARNING: Only works on the same device/iCloud account; another platform's blob resolves `false`.
  */
 export function importSelection(
   selectionId: string,

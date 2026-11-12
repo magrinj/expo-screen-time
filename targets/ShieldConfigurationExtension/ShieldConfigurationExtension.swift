@@ -59,9 +59,8 @@ class ShieldConfigurationExtension: ShieldConfigurationDataSource {
         // Write to a shared log file that the main app can read
         let logMessage = "[\(Date())] \(message)\n"
         if let data = logMessage.data(using: .utf8),
-           let bundleId = Bundle.main.bundleIdentifier {
-            let baseBundleId = bundleId.replacingOccurrences(of: ".ShieldConfigurationExtension", with: "")
-            if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.\(baseBundleId)") {
+           let appGroup = SharedDefaults.shared.getAppGroup() {
+            if let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
                 let logURL = containerURL.appendingPathComponent("shield_config_debug.log")
                 if FileManager.default.fileExists(atPath: logURL.path) {
                     if let fileHandle = try? FileHandle(forWritingTo: logURL) {

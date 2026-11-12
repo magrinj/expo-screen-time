@@ -3,7 +3,7 @@ import Foundation
 /// The shield's default text colours when the `ShieldConfig` sets a background
 /// but leaves a text colour open: chosen for contrast against that background
 /// rather than the system-appearance colours (`.label`, `.secondaryLabel`),
-/// which know nothing about it (a dark `backgroundColor` in light mode used to
+/// which know nothing about it (a dark `backgroundColor` in light mode would
 /// get black text). The same rule, with the same arithmetic, is the Android
 /// `ShieldTextColors.kt`; `scripts/swift-tests/fixtures/shield-text-colors.tsv`
 /// holds the cases both must agree on. Foundation only, so it compiles in the
@@ -26,7 +26,7 @@ import Foundation
 ///   so the title's colour.
 /// - A colour the config sets is always kept, readable or not; a text colour
 ///   that does not parse counts as unset.
-/// - No background set: nil, and the extension keeps today's system defaults.
+/// - No background set: nil, and the extension keeps the system defaults.
 ///   Only labels the config gives a text to are drawn by the extension at all;
 ///   an element left out is the system's, text and colour.
 /// - A translucent background (`#RRGGBBAA`) is judged by its RGB alone: what

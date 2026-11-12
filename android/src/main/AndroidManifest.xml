@@ -4,7 +4,8 @@
   Gradle's manifest merger folds this file into the app's manifest, so these
   entries are present once whatever the number of prebuilds: that is what makes
   them inherently idempotent, and why they live here rather than in the config
-  plugin (plugin/src/android/, which only adds the optional, app-level bits).
+  plugin (plugin/src/android/, which adds the optional, app-level bits and
+  removes the entries of the features `android.features` leaves out).
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
   xmlns:tools="http://schemas.android.com/tools">

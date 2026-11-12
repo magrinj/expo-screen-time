@@ -56,9 +56,13 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   openApplication(handle: string): Promise<void>;
 
   // App Control
+  /** Prevent removing apps from the device. */
   denyAppRemoval(): void;
+  /** Allow removing apps again. */
   allowAppRemoval(): void;
+  /** Prevent installing apps from the App Store. */
   denyAppInstallation(): void;
+  /** Allow installing apps again. */
   allowAppInstallation(): void;
 
   // Blocking
@@ -71,12 +75,33 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
    * or nothing at all.
    */
   blockSelection(selectionId: string, options?: { mode?: BlockMode }): void;
+  /**
+   * Lift every active block now (the manual block, every schedule and
+   * threshold block in progress) and clear the web-domain filters; any
+   * temporary unlock and shield snooze end. Monitoring keeps running.
+   */
   unblockAll(): void;
   /** Whether anything is currently shielded (reflects the real ManagedSettings state). */
   isBlocked(): boolean;
+  /**
+   * Add domains to the persisted web-domain block.
+   * @platform ios
+   */
   blockWebDomains(domains: string[]): void;
+  /**
+   * Remove domains from the web-domain block.
+   * @platform ios
+   */
   unblockWebDomains(domains: string[]): void;
+  /**
+   * Clear the web-domain block.
+   * @platform ios
+   */
   unblockAllWebDomains(): void;
+  /**
+   * Domains blocked via `blockWebDomains`; persisted across relaunches.
+   * @platform ios
+   */
   getBlockedWebDomains(): string[];
 
   // Temporary Unlock (earned time)
@@ -147,16 +172,25 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   drainShieldInteractions(): ShieldInteraction[];
 
   // Selection Store
+  /** Every stored selection ID. */
   listSelections(): Promise<string[]>;
+  /** Whether a selection is stored under that ID. */
   hasSelection(selectionId: string): Promise<boolean>;
+  /** The selection's item counts (no token data), or `null` if absent. */
   getSelectionMetadata(selectionId: string): Promise<SelectionMetadata | null>;
+  /** Delete the stored selection. */
   deleteSelection(selectionId: string): Promise<void>;
+  /** Opaque handles for the selection's items, for token labels and `removeToken`. */
   getTokens(selectionId: string): Promise<TokenHandle[] | null>;
+  /** Remove one item from a selection by its handle. */
   removeToken(selectionId: string, handle: string): Promise<void>;
 
   // Selection Set Operations
+  /** Save the union of the sources under `targetId`. */
   mergeSelections(targetId: string, sourceIds: string[]): Promise<void>;
+  /** Save the intersection of the sources under `targetId`. */
   keepCommonSelections(targetId: string, sourceIds: string[]): Promise<void>;
+  /** Save `fromId` minus `subtractId` under `targetId`. */
   subtractSelection(
     targetId: string,
     fromId: string,
@@ -164,7 +198,16 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   ): Promise<void>;
 
   // Selection Export/Import
+  /**
+   * The selection as an opaque string for backup. It imports back only on
+   * the same device and account (the same install on Android).
+   */
   exportSelection(selectionId: string): Promise<string | null>;
+  /**
+   * Store an exported selection under `selectionId`. Resolves `false`, leaving
+   * the selection unchanged, when `data` is not a selection this install can
+   * decode.
+   */
   importSelection(selectionId: string, data: string): Promise<boolean>;
 
   // Reporting
@@ -178,38 +221,62 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   setReportTemplate(templateJson: string): void;
   /** Remove the custom template — the report falls back to its placeholder. */
   clearReportTemplate(): void;
+  /**
+   * The App Group the extensions share with the app (`group.<bundle id>`).
+   * @platform ios
+   */
   getAppGroup(): string | null;
 
   // Monitoring
+  /**
+   * Start, or update in place, a schedule that blocks `selectionId` during
+   * its interval. Each activity is its own block source.
+   */
   startMonitoring(config: MonitoringConfiguration): Promise<void>;
+  /** Stop the activity and lift its shields; other sources are untouched. */
   stopMonitoring(activityName: string): Promise<void>;
+  /**
+   * Stop every activity started with `startMonitoring` and lift their
+   * shields; the manual block, web-domain filters, a temporary unlock and
+   * shield snoozes are untouched.
+   */
   stopAllMonitoring(): Promise<void>;
+  /** The activities you started (the module's own meters are not listed). */
   getMonitoredActivities(): Promise<string[]>;
 
   // Shield Configuration
+  /** The default shield appearance. */
   setShieldConfig(config: ShieldConfig): void;
+  /** The shield appearance while this monitoring activity shields an app. */
   setShieldConfigForActivity(activityName: string, config: ShieldConfig): void;
+  /** Revert to the system default shield. */
   clearShieldConfig(): void;
 
   // Shield Actions
+  /** What the shield buttons do by default. */
   setShieldActions(config: ShieldActionConfig): void;
+  /** What the shield buttons do while this monitoring activity shields an app. */
   setShieldActionsForActivity(
     activityName: string,
     config: ShieldActionConfig,
   ): void;
+  /** Revert the shield buttons to their default actions. */
   clearShieldActions(): void;
 
   // Event History
+  /** Stored monitor events, all activities when `activityName` is omitted (default limit 100). */
   getMonitorEvents(
     activityName?: string,
     limit?: number,
   ): Promise<MonitorEvent[]>;
+  /** Delete stored monitor events, of one activity or all. */
   clearMonitorEvents(activityName?: string): Promise<void>;
 
   // Debug
   /**
    * Debug-only: dumps the App Group, active shield config, and the shield
    * extension's log tail. Not part of the stable API, may change or vanish.
+   * @platform ios
    */
   debugShieldConfig(): Promise<Record<string, unknown>>;
 }

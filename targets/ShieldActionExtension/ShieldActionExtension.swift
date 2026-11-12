@@ -121,8 +121,7 @@ class ShieldActionExtension: ShieldActionDelegate {
 
         // The actions of the source that shields this target — a threshold,
         // else the latest schedule covering it, else the manual block — then
-        // the default. Several sources can be active at once; a single
-        // "active activity" pointer used to pick whichever started last.
+        // the default. Several sources can be active at once.
         // The configuration extension resolved the owner with the app AND
         // its category and recorded it under the tokens it is valid for:
         // reuse it while that source is still active, so the buttons match
@@ -232,8 +231,7 @@ class ShieldActionExtension: ShieldActionDelegate {
     ///
     /// `setShieldActions` stores the JS shape — `primaryAction` /
     /// `secondaryAction`, each an action name or `{ type: "snooze", duration }`.
-    /// This extension used to read `primaryButtonAction`, a key nothing writes,
-    /// so every configured action silently fell back to `.close`. A snooze
+    /// A snooze
     /// without a positive `duration` is misconfigured and closes (nothing
     /// is lifted for an unknown budget).
     private static func configuredAction(in config: [String: Any]?, button: String) -> ConfiguredAction? {

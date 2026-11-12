@@ -422,6 +422,11 @@ export type ShieldConfig = {
   subtitle?: { text: string; color?: string };
   icon?: string;
   backgroundColor?: string;
+  /**
+   * The blur over the blocked app behind the shield. Android accepts and
+   * ignores it: its shield is opaque.
+   * @platform ios
+   */
   backgroundBlurStyle?: UIBlurEffectStyle;
   primaryButton?: { text: string; color?: string; backgroundColor?: string };
   secondaryButton?: { text: string; color?: string };

@@ -56,17 +56,14 @@ class ExpoScreenTimeActivityPickerView: ExpoView {
     private func handleSelectionChange(_ selection: FamilyActivitySelection) {
         guard let selectionId = self.selectionId else { return }
 
-        // Save to SelectionStore
         SelectionStore.shared.save(selectionId, selection)
 
-        // Build metadata
         let metadata: [String: Int] = [
             "applicationCount": selection.applicationTokens.count,
             "categoryCount": selection.categoryTokens.count,
             "webDomainCount": selection.webDomainTokens.count,
         ]
 
-        // Build token handles
         let tokens = SelectionStore.shared.getTokenHandles(selectionId) ?? []
 
         // Emit single event with metadata + handles

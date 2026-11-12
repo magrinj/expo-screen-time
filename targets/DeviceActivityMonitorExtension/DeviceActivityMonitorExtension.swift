@@ -9,22 +9,21 @@ import Foundation
 ///
 /// Every block source has its own named store (BlockComposition): an interval
 /// writes its activity's store when it starts and empties only that store
-/// when it ends. Before this, every `intervalDidEnd` cleared the single store
-/// the app and the extensions shared — the manual block included.
+/// when it ends, so one source's end never clears another's shields (the
+/// manual block's included).
 ///
 /// Callbacks arrive under the PHYSICAL name (`<activity><separator><generation>`,
 /// see ActivityRegistration) and keep arriving for a registration after it
 /// was stopped. A callback whose generation is not the one the activity's
 /// config records is stale and ignored: stopping A then restarting A, or
-/// re-registering A with a new schedule, used to let the old registration's
-/// `intervalDidEnd` clear the new interval and its store.
+/// re-registering A with a new schedule, would otherwise let the old
+/// registration's `intervalDidEnd` clear the new interval and its store.
 ///
 /// Every callback runs as ONE critical section of `BlockStateLock`, the mutex
 /// shared with the app and the shield extensions: the generation check, the
 /// state writes and the store projection happen together, so a stale
-/// callback that passed its check before the app re-registered can no longer
-/// clear what the new generation wrote — the check and the writes are not
-/// separable any more. The app puts the state in its final form under the
+/// callback that passed its check before the app re-registered cannot clear
+/// what the new generation wrote. The app puts the state in its final form under the
 /// lock BEFORE it registers or stops a physical name, so a callback the
 /// system then triggers takes the lock after the app released it and judges
 /// the final state.

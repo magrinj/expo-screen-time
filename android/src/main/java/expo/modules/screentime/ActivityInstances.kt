@@ -3,22 +3,22 @@ package expo.modules.screentime
 /**
  * One activity class, as far as the usage report can count it from a stream
  * that has no instance id (the public `UsageEvents.Event` has none; `dumpsys`
- * shows one). The report keeps main's rule, where a pause ends its class and
- * a closing event ends every class, and adds one thing: an ACTIVITY_STOPPED
+ * shows one). The report keeps the pause rule, where a pause ends its class
+ * and a closing event ends every class, and adds one thing: an ACTIVITY_STOPPED
  * ends the class when it can only be its one resumed instance dying in the
  * foreground. That is what a process killed in the foreground leaves, a stop
  * with no pause before it (Gmail's welcome tour, resumed and stopped within a
- * second, which the old rule read as 142 s of use; an app force-stopped).
+ * second, which the pause rule alone reads as 142 s of use; an app force-stopped).
  *
  * - [resumed]: resumes since the class came to the foreground, 0 when it is
- *   not. A pause ends the class, as before.
+ *   not. A pause ends the class.
  * - [owedStops]: the stops the stream still owes the class. A pause seen owes
  *   one, and so does each instance in the foreground at a closing. A stop pays
  *   one first. An owed stop never expires, since an older instance's stop can
  *   come late after a relaunch. Some are never paid: an instance back from
  *   under a dialog or out of picture-in-picture does not stop for that pause.
  *   Such a stale one pays the class's next stop, however late. A death then
- *   reads as main reads it, and the counts turn [uncertain] until a boot.
+ *   reads as the pause rule reads it, and the counts turn [uncertain] until a boot.
  * - [closingPauses]: instances in the foreground at the last closing whose
  *   pause has not come yet. Their stop is already owed, so the pause that
  *   follows the closing owes no second one. Cleared at the class's next resume.
@@ -31,23 +31,24 @@ package expo.modules.screentime
  * So a stop ends the class only with nothing owed, exactly one instance
  * resumed, and no uncertainty. The aggregator also leaves it unread while
  * another class of the package is uncertain. Two properties follow:
- * - the report never counts an app, or the total, as in use when main's rule
- *   does not. Its spans are main's, cut short only by a stop read as a death;
+ * - the report never counts an app, or the total, as in use when the pause
+ *   rule does not. Its spans are that rule's, cut short only by a stop read
+ *   as a death;
  * - such a stop is a real death, except in the lookback case below (an
  *   instance already alive when the stream begins).
  *
- * So the report is further from the truth than main's rule in two cases:
+ * So the report is further from the truth than the pause rule in two cases:
  * - the lookback case below;
- * - where main was right by luck: a dead app's phantom covered main's own
+ * - where the pause rule is right by luck: a dead app's phantom covers its own
  *   under-count of a second window of one class (the first pause closes the
  *   class while another window of it is still open), in the same app or in
  *   the total.
  *
  * Measured with a judge that rebuilds the finalized intervals of every app
- * and of the total, and compares them with the truth and with main at every
- * instant. It ran on 136,000 simulated traces with instance ids:
+ * and of the total, and compares them with the truth and with the pause rule
+ * at every instant. It ran on 136,000 simulated traces with instance ids:
  *
- * | | Worse than main | Better than main |
+ * | | Worse than the pause rule | Better than the pause rule |
  * |---|---|---|
  * | Per app | 311 s, in 6 traces | 3.8 million s |
  * | Total | 31,882 s, in 778 traces | 3.4 million s |
@@ -57,9 +58,9 @@ package expo.modules.screentime
  * of one class, two activity classes in separate processes, screen-offs,
  * locks and boots.
  *
- * On the r12 emulator day's raw stream, the example app counts 289.9 min
- * against an instance-id ground truth of 289.88, and Gmail 0.0; main counts
- * 293.3 and 2.4.
+ * On a day's raw stream from an emulator, the example app counts 289.9 min
+ * against an instance-id ground truth of 289.88, and Gmail 0.0; the pause
+ * rule counts 293.3 and 2.4.
  *
  * The one misreading left starts with an instance already alive when the
  * stream begins: resumed, or paused, before the lookback, so the stream
@@ -69,7 +70,7 @@ package expo.modules.screentime
  * That is an undercount, never a double count.
  *
  * Below API 29 the stream logs no ACTIVITY_STOPPED, so the added rule never
- * fires and the report is main's.
+ * fires and the report is the pause rule's.
  *
  * **The report only.** The engine ([ForegroundTracker], [UsageForegroundState])
  * keeps its own rule, where a stop ends the class. That rule is coarser but

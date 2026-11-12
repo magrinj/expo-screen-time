@@ -14,7 +14,7 @@ type ScreenTimeTargetsProps = {
 
 /**
  * Generates the Screen Time app-extension targets directly via Expo's Xcode
- * config-plugin mods — the first-party replacement for @bacons/apple-targets.
+ * config-plugin mods.
  *
  * For each enabled target it writes the source files (withDangerousMod), wires
  * the Xcode project (withXcodeProject), and registers EAS signing. Expo runs

@@ -14,8 +14,8 @@ import org.json.JSONObject
  *   package name. Written for every member of every saved selection, never
  *   pruned (bounded by the distinct apps ever selected), so a handle resolves
  *   after its selection changed or went away, as a self-describing iOS
- *   handle does. [TokenLabel][ExpoScreenTimeTokenLabelView] and, later, the
- *   shield interactions' `target` depend on it.
+ *   handle does. [TokenLabel][ExpoScreenTimeTokenLabelView] and the shield
+ *   interactions' `target` depend on it.
  *
  * Every read-decide-write (set operations, `removeToken`) runs in one
  * `update`, under the exclusive cross-process lock. Semantics follow the

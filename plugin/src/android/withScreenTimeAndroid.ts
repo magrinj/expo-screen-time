@@ -138,8 +138,8 @@ const ENGINE = ['blocking', 'monitoring'] as const;
  * THE feature → manifest mapping, the one place to extend when the library
  * manifest (`android/src/main/AndroidManifest.xml`) gains a component or a
  * permission; the jest test fails until every element of that manifest has
- * a row here. Everything not listed (the `<queries>` launcher intent) stays
- * in every build.
+ * a row here. Everything not listed (the `<queries>` intents, the ungated
+ * permissions below) stays in every build.
  *
  * What each feature really uses at runtime:
  * - `blocking` (`blockSelection`, schedules that shield, thresholds that
@@ -274,7 +274,7 @@ const isRemoveNode = (element: ManifestElement, gate: ManifestGate) =>
  * options changes nothing and a flipped option does not leave a stale entry.
  *
  * Everything the implementation always needs (permissions, the `<queries>`
- * launcher intent, the engine service, the receivers) is declared in the
+ * intents, the engine service, the receivers) is declared in the
  * library's own `android/src/main/AndroidManifest.xml` and merged by Gradle,
  * which is idempotent by construction. The app manifest gets only optional
  * entries: the `isMonitoringTool` flag, the accessibility service of

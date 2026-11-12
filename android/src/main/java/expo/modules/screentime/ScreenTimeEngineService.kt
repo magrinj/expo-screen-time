@@ -130,8 +130,6 @@ class ScreenTimeEngineService : Service() {
       Log.w(EngineController.TAG, "run not recorded at start: ${e.javaClass.simpleName}: ${e.message}")
       store.engineDesired
     }
-    // stopSelf(startId): a start queued behind this one (released, then
-    // wanted again at once) keeps the service alive instead of being dropped.
     if (!desired) {
       Log.i(EngineController.TAG, "engine not wanted; stopping (intent=$reason)")
       EngineWatchdog.cancel(this)

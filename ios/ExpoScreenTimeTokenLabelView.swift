@@ -165,18 +165,17 @@ class ExpoScreenTimeTokenLabelView: ExpoView {
     /// directly — no store read, no search, pure and O(1) per label — which
     /// is what lets a handle be labelled wherever it came from (a handle the
     /// app persisted, a token removed from its selection since). With a
-    /// `selectionId`, the handle is looked up inside that selection as
-    /// before, so a handle that is not in it still renders the placeholder.
+    /// `selectionId`, the handle is looked up inside that selection, so a
+    /// handle that is not in it renders the placeholder.
     /// A handle this build cannot decode renders the placeholder, never
     /// crashes.
     ///
     /// The decoder cannot check the kind: every token kind is the same
     /// `Token<T>` struct with one Codable shape, so an application handle
     /// decodes as a (bogus) category token too. `tokenType` must be the
-    /// handle's own `TokenHandle.type` — the selection lookup used to
-    /// enforce that for free; the direct decode cannot.
+    /// handle's own `TokenHandle.type` — the selection lookup enforces
+    /// that; the direct decode cannot.
     private func resolveAndUpdate() {
-        // Reset all tokens
         applicationToken = nil
         categoryToken = nil
         webDomainToken = nil
@@ -187,7 +186,6 @@ class ExpoScreenTimeTokenLabelView: ExpoView {
         }
 
         if let selectionId = selectionId {
-            // Lookup via SelectionStore
             switch tokenType {
             case "application":
                 applicationToken = SelectionStore.shared.resolveApplicationToken(selectionId, handle: handle)

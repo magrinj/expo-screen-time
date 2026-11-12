@@ -7,8 +7,11 @@ import java.io.ByteArrayOutputStream
 
 /**
  * DNS wire format. An accepted query has exactly one question and at most one well-formed OPT.
- * Duplicate OPT is dropped by the preview spec's malformed-query policy, rather than the FORMERR
- * response required by RFC 6891 section 6.1.1.
+ * Duplicate OPT is dropped as a malformed query, rather than given the FORMERR response
+ * required by RFC 6891 section 6.1.1.
+ *
+ * The `web` package (the DNS filter's codecs) is not wired into the engine yet:
+ * `webDomainBlocking` is off on Android.
  */
 internal object DnsMessage {
   enum class Answer(val code: Int) { NODATA(0), SERVFAIL(2), NXDOMAIN(3), BADVERS(16) }

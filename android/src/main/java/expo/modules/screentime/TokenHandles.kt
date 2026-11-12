@@ -56,8 +56,8 @@ internal object TokenHandles {
  *
  * The contract makes a blob platform-tagged and bound to the device: an iOS
  * blob is the selection's encoded tokens (meaningless elsewhere), and
- * `importSelection` answers `false` for a blob of the other platform (review
- * R17). The Android blob is the selection JSON encrypted (AES-256-GCM) under a
+ * `importSelection` answers `false` for a blob of the other platform. The
+ * Android blob is the selection JSON encrypted (AES-256-GCM) under a
  * key derived from the install secret, behind a textual tag:
  *
  *     expo-screen-time/android/1:<base64(iv ‖ ciphertext ‖ tag)>

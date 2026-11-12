@@ -17,7 +17,7 @@ const TARGETS_ROOT = path.resolve(__dirname, '..', '..', 'targets');
  * Sets up the main app for the Screen Time APIs (App Groups + Family Controls
  * entitlements) and generates the iOS app-extension targets — ShieldConfiguration,
  * ShieldAction, DeviceActivityMonitor and DeviceActivityReport — directly via
- * Expo's Xcode config-plugin mods (no @bacons/apple-targets needed).
+ * Expo's Xcode config-plugin mods.
  *
  * Filter which targets to include via `expo.extra.expoScreenTime.targets`
  * (omit for all, empty array for none):
@@ -42,10 +42,10 @@ const TARGETS_ROOT = path.resolve(__dirname, '..', '..', 'targets');
  * - DeviceActivityMonitorExtension - Schedule monitoring (time-based blocking)
  * - DeviceActivityReportExtension - Usage analytics view
  *
- * Android: the permissions, the launcher `<queries>` intent, the engine
+ * Android: the permissions, the `<queries>` intents, the engine
  * service and its receivers come from the library's own manifest (merged
- * by Gradle). The plugin only writes the optional, app-level entries, from
- * `expo.extra.expoScreenTime.android`: `parentalControl`, and `features`
+ * by Gradle). The plugin writes the optional, app-level entries, from
+ * `expo.extra.expoScreenTime.android`: `parentalControl`, `accessibilityEngine`, and `features`
  * (the `ScreenTimeFeature` names the app uses; what no listed feature needs
  * is removed from the merged manifest, see `android/withScreenTimeAndroid.ts`).
  */

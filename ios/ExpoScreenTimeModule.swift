@@ -399,7 +399,6 @@ public class ExpoScreenTimeModule: Module {
                let containerURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup) {
                 let logURL = containerURL.appendingPathComponent("shield_config_debug.log")
                 if let logContent = try? String(contentsOf: logURL, encoding: .utf8) {
-                    // Get last 500 chars
                     let suffix = String(logContent.suffix(500))
                     result["extensionLog"] = suffix
                 } else {

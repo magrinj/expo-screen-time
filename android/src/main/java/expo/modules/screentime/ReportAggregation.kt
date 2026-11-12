@@ -104,8 +104,8 @@ internal data class ReportData(
   /**
    * Device pickups: every time the screen woke up in the window, a glance at
    * the lock screen included (what Apple's Screen Time shows as pickups, and
-   * what iOS binds since it moved to the total: pickups without application
-   * activity plus every app's `numberOfPickups`).
+   * what iOS binds as the total: pickups without application activity plus
+   * every app's `numberOfPickups`).
    */
   val pickups: Int,
   /** Of [pickups], those during which an app came to the foreground (Apple's per-app `numberOfPickups`, summed). */

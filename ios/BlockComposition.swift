@@ -313,8 +313,8 @@ enum BlockComposition {
     /// highest-precedence source covering the category, the same for every
     /// app in it, so the shared entry is consistent whoever writes it. An
     /// owner that covers the app directly is never written under the
-    /// category: with X and Y in category C, X's own owner used to land
-    /// under C and be served to Y's shield (last writer won). A `nil` owner
+    /// category: with X and Y in category C, X's own owner would land
+    /// under C and be served to Y's shield (last writer wins). A `nil` owner
     /// means no source covers either token, so both entries are cleared.
     /// While an allowlist is active the category entry does depend on the
     /// app (an allowed app in C resolves past the allowlist): the action

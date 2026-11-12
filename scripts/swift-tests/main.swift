@@ -53,8 +53,8 @@ check(BlockStore.activity("bed.time_v2-x") == hashed("bed.time_v2-x"), "dots, un
 let spaced = BlockStore.activity("work hours")
 check(spaced == "expo_st_activity_work_hours-" + BlockStore.fnv1a("work hours"),
       "unsafe characters are replaced in the readable part: \(spaced)")
-// Reproduced collision: the sanitized form of "work hours" plus its hash IS a
-// valid activity name, and both used to map to the same store.
+// The sanitized form of "work hours" plus its hash IS a valid activity name:
+// the two must not map to the same store.
 let collider = "work_hours-" + BlockStore.fnv1a("work hours")
 check(spaced != BlockStore.activity(collider), "\"work hours\" and \"\(collider)\" get different stores")
 check(spaced != BlockStore.activity("work/hours"), "different unsafe names get different stores")
@@ -131,7 +131,7 @@ check(BlockComposition.owner(ofAnyOf: ["app:tiktok"], in: [sameStart, scheduleB]
       "equal start times break ties by name, deterministically")
 check(BlockComposition.owner(ofAnyOf: [], in: sources) == nil, "no target tokens ⇒ nil")
 
-// MARK: - Records → sources, and the unlock suspension (fixes 5, 7 of the contract; review findings 5 and 11)
+// MARK: - Records → sources, and the unlock suspension
 
 section("BlockComposition.sources — records to sources")
 let selections: [String: Set<String>] = [
@@ -205,7 +205,7 @@ check(!grant.suspends(scheduleOf: "A", startedAt: 90_000) && grant.suspends(sche
 check(!grant.suspends(thresholdOf: "A", startedAt: 1_000, selectionId: "S2") && grant.suspends(thresholdOf: "A", startedAt: 1_000, selectionId: "S3"),
       "threshold suspension is per selection")
 
-// Renewal (finding 11): everything active — suspended or not — is restorable and captured again.
+// Renewal: everything active — suspended or not — is restorable and captured again.
 let renewalTokens = BlockComposition.union(of: BlockComposition.sources(from: during, suspended: nil, resolve: resolve))
 check(renewalTokens == ["app:insta", "cat:social", "app:youtube", "app:games"],
       "renewal meters the union of suspended and live sources (never NO_ACTIVE_BLOCK while something is restorable)")
@@ -225,8 +225,8 @@ check(SuspendedSources(dictionary: fromDefaults) == grant, "NSNumber start times
 check(SuspendedSources(dictionary: [:]) == nil, "a dictionary without `manual` is not a suspension")
 
 section("SuspendedSources — threshold suspension is per occurrence (pass 3, finding 3)")
-// Reproduced: suspend A's threshold on S3, stop and restart A during the grant
-// (a new occurrence), S3 fires again — by name alone it stayed suppressed.
+// Suspend A's threshold on S3, stop and restart A during the grant (a new
+// occurrence), S3 fires again — by name alone it would stay suppressed.
 var restarted = records
 restarted.intervals["A"] = ActiveInterval(startedAt: 5_000, lifted: false)
 restarted.thresholdSelectionIds["A"] = ["S3"]
@@ -276,10 +276,10 @@ check(BlockSource<String>.Kind(dictionary: ["kind": "schedule"]) == nil && Block
       "malformed owner records are ignored")
 
 section("BlockComposition.handoffTargets — no app's own owner under a shared category key (pass 3, finding 5)")
-// Reproduced: X and Y are in category C. A threshold T shields X directly; a
-// schedule A shields C. The configuration for X-in-C resolves T, for Y-in-C
-// resolves A — and both used to write the category key: last writer won, so
-// Y's shield could serve T's actions (or X's serve A's), by order.
+// X and Y are in category C. A threshold T shields X directly; a schedule A
+// shields C. The configuration for X-in-C resolves T, for Y-in-C resolves A —
+// if both wrote the category key, the last writer would win, so Y's shield
+// could serve T's actions (or X's serve A's), by order.
 let thresholdX = Source(kind: .threshold(activityName: "T"), startedAt: 10, tokens: ["app:X"])
 let scheduleC = Source(kind: .schedule(activityName: "A"), startedAt: 20, tokens: ["cat:C"])
 let handoffSources = [thresholdX, scheduleC]
@@ -343,7 +343,7 @@ check(ShieldOwnerMap(dictionary: ["bad": ["owner": ["kind": "schedule"], "contex
       && ShieldOwnerMap(dictionary: ["bad": ["owner": ["kind": "manual"], "context": "window"]]).entries.isEmpty,
       "malformed entries are dropped")
 
-// MARK: - Daily schedule (fixes 2 and 12)
+// MARK: - Daily schedule
 
 section("DailySchedule — occurrences")
 let office = DailySchedule(start: .init(hour: 9, minute: 0, second: 0), end: .init(hour: 17, minute: 0, second: 0))
@@ -472,12 +472,12 @@ check(DailySchedule(scheduleDict: multiDay, weekdays: nil) == nil, "a multi-day 
 check(DailySchedule(scheduleDict: ["intervalStart": ["hour": 9]], weekdays: nil) == nil, "missing intervalEnd ⇒ nil")
 
 section("DailySchedule — a one-off restricted to weekdays covers the next selected occurrence")
-// Today a one-off (`repeats: false`) is registered with the system as given,
-// so its single occurrence is the next 09:00 — Saturday's, when registered
-// on Friday evening with weekdays Mon–Fri. The monitor extension ignores an
-// occurrence on an unselected weekday, and a one-off never calls back
-// again: the activity never blocks. The fix covers the next SELECTED
-// occurrence (the one in progress when it is selected), as Android does.
+// A one-off (`repeats: false`) registered with the system as given has one
+// occurrence, the next 09:00 — Saturday's, when registered on Friday evening
+// with weekdays Mon–Fri. The monitor extension ignores an occurrence on an
+// unselected weekday, and a one-off never calls back again: the activity
+// would never block. So it covers the next SELECTED occurrence (the one in
+// progress when it is selected), as Android does.
 let friday18 = date(2026, 10, 30, 18, 0)   // Friday 2026-10-30
 let monday9 = date(2026, 11, 2, 9, 0)      // Monday 2026-11-02
 check(weekdaysOffice.coveredOccurrenceStart(at: friday18, calendar: utc) == monday9,
@@ -554,7 +554,7 @@ check(DailySchedule.intValue(NSNumber(value: 3)) == 3, "NSNumber → Int")
 check(DailySchedule.intValue("3") == nil, "String → nil")
 check(DailySchedule.intValue(nil) == nil, "nil → nil")
 
-// MARK: - Registrations (findings 4 and 8)
+// MARK: - Registrations
 
 section("ActivityRegistration — physical names")
 let sep = ActivityRegistration.generationSeparator
@@ -623,8 +623,8 @@ check(ActivityRegistration.currentRegistration(forPhysical: "A_weekday_9", confi
 
 section("ActivityRegistration — the 19-activity limit (limits.maxMonitoredActivities)")
 // The system refuses the 21st DeviceActivity (`excessiveActivities`), so a
-// 20th logical activity used to go through whenever no meter held its slot
-// — and took the slot the unlock meter or a snooze then needed. The
+// 20th logical activity would go through whenever no meter held its slot
+// — and take the slot the unlock meter or a snooze then needs. The
 // contract enforces 19 logical activities on both platforms.
 check(ActivityRegistration.maxLogicalActivities == 19, "19: iOS caps DeviceActivity at 20 and the temporary-unlock meter holds one")
 let nineteen = Set((1...19).map { "a\($0)" })
@@ -682,7 +682,7 @@ check(ActivityRegistration.intervalPlan(for: applyNow, previous: nil, now: tenAM
 check(ActivityRegistration.intervalPlan(for: .clear, previous: inProgress, now: tenAM, restoring: false)
       == .init(marker: .clear, keepsThresholds: false, recordsStart: false, recordsEnd: true),
       "outside: the previous interval ends")
-// Rollback restores (finding 7): keep what the previous registration had.
+// Rollback restores: keep what the previous registration had.
 check(ActivityRegistration.intervalPlan(for: applyNow, previous: inProgress, now: tenAM, restoring: true)
       == .init(marker: .keep, keepsThresholds: true, recordsStart: false, recordsEnd: false),
       "a restore inside the same occurrence keeps the marker and the fired thresholds")
@@ -841,8 +841,8 @@ check(allowManual.covers(anyOf: ["app:music", "cat:music"]) && allowManual.cover
       "the configuration's (app, category) pair and the action's bare category are covered")
 check(!allowManual.covers(anyOf: ["app:calendar", "cat:social"]),
       "an ALLOWED app shielded through a category is not covered — the app decides, not the category (review finding 1)")
-// Reproduced: an allowlist schedule allowing Calendar, a manual blocklist on Social (Calendar ∈ Social).
-// The configuration for (Calendar, Social) used to resolve the schedule, which does not shield Calendar.
+// An allowlist schedule allowing Calendar, a manual blocklist on Social (Calendar ∈ Social).
+// The configuration for (Calendar, Social) must not resolve the schedule, which does not shield Calendar.
 let allowSchedule = Source(kind: .schedule(activityName: "focus"), startedAt: 5_000, tokens: ["app:calendar"], mode: .allowlist)
 let manualSocial = Source(kind: .manual, startedAt: 0, tokens: ["cat:social"])
 let calendarInSocial = BlockComposition.owner(ofAnyOf: ["app:calendar", "cat:social"], in: [allowSchedule, manualSocial])
@@ -1069,7 +1069,7 @@ check(dayEnd.ended && dayEnd.snoozes == [tiktok], "the meter's interval end forg
 let alreadyGone = ShieldSnoozes.ending(activityName: insta.activityName, in: [tiktok])
 check(!alreadyGone.ended && alreadyGone.snoozes == [tiktok], "the end of a meter the app already stopped (snooze taken first) does nothing")
 
-// MARK: - Cross-process mutex (pass 3)
+// MARK: - Cross-process mutex
 
 section("BlockStateLock — holders of the same file serialize; nesting; release on throw")
 let lockDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("expo-st-lock-\(ProcessInfo.processInfo.processIdentifier)")

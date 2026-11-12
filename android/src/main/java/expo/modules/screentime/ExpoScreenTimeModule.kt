@@ -433,7 +433,7 @@ class ExpoScreenTimeModule : Module() {
 
     // MARK: - View Registration
 
-    // The iOS names, props and events (the parity test holds them equal).
+    // The iOS view names, props and events (the parity test holds the names and events equal).
     View(ExpoScreenTimeActivityPickerView::class) {
       Prop("selectionId") { view: ExpoScreenTimeActivityPickerView, selectionId: String? -> view.setSelectionId(selectionId) }
       Prop("headerText") { view: ExpoScreenTimeActivityPickerView, headerText: String? -> view.setHeaderText(headerText) }

@@ -100,7 +100,8 @@ internal val NATIVE_FUNCTIONS: List<NativeFunction> = listOf(
  * enforcement gaps, the report template slot and the app-control
  * restrictions. The
  * rest (web domains, `getAppGroup`, `openApplication`, the debug helper)
- * rejects `UNSUPPORTED` with `getCapabilities()` saying so.
+ * rejects `UNSUPPORTED`; `getCapabilities()` reports web domains and
+ * `openApplication` as off.
  */
 internal val IMPLEMENTED: Set<String> = setOf(
   "getCapabilities",

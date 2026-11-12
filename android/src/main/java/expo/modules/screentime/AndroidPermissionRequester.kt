@@ -411,8 +411,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
  * dontkillmyapp ranks worst. The step exists on these makers
  * only; the request tries each known screen, then falls back to App info
  * (package visibility keeps the library from resolving them up front). The
- * step is omitted elsewhere (stock Android; Samsung's sleeping-apps list is
- * a later addition).
+ * step is omitted elsewhere (stock Android, Samsung).
  */
 internal object VendorAutostart {
   private val candidates: Map<String, List<ComponentName>> = mapOf(

@@ -7,9 +7,9 @@ import Foundation
 /// `<logical><separator><generation>`. The system keeps delivering callbacks
 /// for a registration after it was stopped — `stopMonitoring` triggers its
 /// `intervalDidEnd` almost immediately — so stopping A and restarting A, or
-/// re-registering A to change its schedule, used to let the OLD
+/// re-registering A to change its schedule, would let the OLD
 /// registration's end callback clear the NEW interval and its store. The
-/// monitor extension now honours a callback only when its generation is the
+/// monitor extension honours a callback only when its generation is the
 /// one recorded in the logical activity's monitoring config; everything else
 /// is stale and ignored. Events, configs, store names, `getMonitoredActivities`
 /// and `stopMonitoring` keep using the logical name.
@@ -187,9 +187,9 @@ enum ActivityRegistration {
     /// platforms: iOS caps DeviceActivity at 20 per app and the
     /// temporary-unlock meter holds one. Checked by the module before the
     /// system is asked: the system only refuses the 21st registration, so
-    /// a 20th logical activity used to go through whenever no meter or
-    /// snooze held its slot — and took the slot the next unlock or snooze
-    /// needed.
+    /// a 20th logical activity would go through whenever no meter or
+    /// snooze held its slot — and take the slot the next unlock or snooze
+    /// needs.
     static let maxLogicalActivities = 19
 
     /// The logical activities the system's registrations amount to: every

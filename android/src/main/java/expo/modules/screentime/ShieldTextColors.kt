@@ -8,7 +8,7 @@ import kotlin.math.pow
  * The shield's default text colours when the `ShieldConfig` sets a background
  * but leaves a text colour open: chosen for contrast against that background
  * rather than taken from the system light/dark palette, which knows nothing
- * about it (a dark `backgroundColor` in light mode used to get black text).
+ * about it (a dark `backgroundColor` in light mode would get black text).
  * The same rule, with the same arithmetic, is `ios/ShieldTextColors.swift`;
  * `scripts/swift-tests/fixtures/shield-text-colors.tsv` holds the cases both
  * must agree on.
@@ -29,15 +29,15 @@ import kotlin.math.pow
  *   button), with or without a shield background. On Android the button
  *   the config leaves unpainted is still painted by the library, in the
  *   palette's accent, so the same rule runs against that colour
- *   ([resolve] with `defaultPrimaryButtonBackground`: white used to be
- *   drawn on the dark-mode light blue, about 2.1:1). The iOS extension
+ *   ([resolve] with `defaultPrimaryButtonBackground`: white on the
+ *   dark-mode light blue is about 2.1:1). The iOS extension
  *   cannot read the colour the system paints its button in, and the
  *   system's own default label is white, so it keeps `.white` there.
  * - **Secondary button label**: a text-only button over the shield background,
  *   so the title's colour.
  * - A colour the config sets is always kept, readable or not; a text colour
  *   that does not parse counts as unset ([ShieldAppearance] drops it).
- * - No background set: null, and the view keeps today's system-adaptive
+ * - No background set: null, and the view keeps the system-adaptive
  *   default ([ViewPalette]).
  * - A translucent background (`#RRGGBBAA`) is judged by its RGB alone. What
  *   shows through it differs by platform (on iOS the blur over the blocked

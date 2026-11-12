@@ -19,8 +19,8 @@ type TargetXcodeProjectProps = {
 };
 
 /**
- * Adds one app-extension target to the host app's Xcode project, with no
- * dependency on @bacons/apple-targets. Drives the legacy `xcode` pbxProject
+ * Adds one app-extension target to the host app's Xcode project. Drives the
+ * legacy `xcode` pbxProject
  * (already bundled by @expo/config-plugins) through Expo's `withXcodeProject`
  * mod — the exact recipe Expo's first-party `expo-widgets` uses.
  *

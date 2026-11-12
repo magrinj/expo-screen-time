@@ -10,9 +10,9 @@ const FIXTURE = path.join(__dirname, 'fixtures', 'project.pbxproj');
 const PROJECT_ROOT = '/app/ios';
 const TARGET = 'ShieldConfigurationExtension';
 
-// SharedDefaults.swift is the colliding basename that previously orphaned a
+// SharedDefaults.swift is a basename every target shares, which can orphan a
 // build file — keep it in the list so the "every source has a parent group" check
-// actually guards that regression. The .entitlements is deliberately included:
+// actually guards that case. The .entitlements is deliberately included:
 // the implementation must filter it out (wiring it would mint an orphan
 // PBXBuildFile) — the no-orphan test below asserts that defense.
 const FILE_URIS = [

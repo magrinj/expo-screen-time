@@ -128,7 +128,6 @@ export default function SchedulingScreen() {
       const eventHistory = await ExpoScreenTime.getMonitorEvents(undefined, 50);
       setEvents(eventHistory);
 
-      // Check selection metadata from native store
       const metadata = await getSelectionMetadata(SELECTION_ID);
       if (metadata) {
         setTotalSelected(
