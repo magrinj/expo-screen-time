@@ -19,8 +19,11 @@ that must terminate (like `prepack`) set `EXPO_NONINTERACTIVE=1`. If a build
 
 ## The verification loop
 
-Run the tier that matches what you touched; when in doubt, run everything. CI runs
-all of it on every PR.
+Run the tier that matches what you touched; when in doubt, run everything. CI
+(`.github/workflows/ci.yml`) runs Tiers 1, 1b and 2, the tarball check of Tier 3
+and the example app's type-check, each only when the PR touches files it covers;
+`CI OK` is the one check to require. It does not build the apps
+(`:app:assembleRelease`, Xcode) or run anything on a device.
 
 ### Tier 1 — always
 
