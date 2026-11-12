@@ -514,3 +514,28 @@ describe('the library manifest (merged into every consumer)', () => {
     expect(names(admin['intent-filter'][0].action)).toEqual(['android.app.action.DEVICE_ADMIN_ENABLED']);
   });
 });
+
+describe('android/src/test/resources/build-manifests.json', () => {
+  const FIXTURE = path.resolve(LIBRARY_MANIFEST, '..', '..', 'test', 'resources', 'build-manifests.json');
+
+  it("is what the library manifest keeps for each feature set (BuildManifestTest's input)", async () => {
+    const manifest = await AndroidConfig.Manifest.readAndroidManifestAsync(LIBRARY_MANIFEST);
+    const application = manifest.manifest.application![0] as any;
+    const fixture = JSON.parse(fs.readFileSync(FIXTURE, 'utf8'));
+    expect(Object.keys(fixture).length).toBeGreaterThan(0);
+    for (const [key, expected] of Object.entries(fixture)) {
+      const removed = new Set(
+        removedGates(key ? (key.split(',') as AndroidFeature[]) : []).map((g) => `${g.kind}#${g.name}`)
+      );
+      const kept = (kind: ManifestGate['kind'], items: { $: Record<string, string | undefined> }[] = []) =>
+        items.map((i) => i.$['android:name']).filter((name) => !removed.has(`${kind}#${name}`));
+      expect({
+        key,
+        services: kept('service', application.service),
+        activities: kept('activity', application.activity),
+        receivers: kept('receiver', application.receiver),
+        permissions: kept('uses-permission', manifest.manifest['uses-permission']),
+      }).toEqual({ key, ...(expected as object) });
+    }
+  });
+});

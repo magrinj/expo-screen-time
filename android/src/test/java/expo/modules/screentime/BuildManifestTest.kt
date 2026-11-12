@@ -1,6 +1,7 @@
 package expo.modules.screentime
 
 import expo.modules.screentime.PermissionSteps.Feature
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -21,19 +22,17 @@ class BuildManifestTest {
   private val notifications = "android.permission.POST_NOTIFICATIONS"
   private val everything = listOf(usage, overlay, notifications, "android.permission.FOREGROUND_SERVICE", "android.permission.RECEIVE_BOOT_COMPLETED")
 
-  /** The merged manifest of a build with the given plugin features, as the gate table removes elements. */
+  /**
+   * The merged manifest of a build with the given plugin features: what the
+   * config plugin keeps of the library manifest, from a fixture the plugin's
+   * jest test holds equal to its gate table.
+   */
+  private val fixture = JSONObject(javaClass.getResource("/build-manifests.json")!!.readText())
+
   private fun build(vararg features: Feature): BuildManifest {
-    val engine = Feature.blocking in features || Feature.monitoring in features
-    val blocking = Feature.blocking in features
-    return BuildManifest.from(
-      services = if (engine) listOf(service) else emptyList(),
-      activities = listOf("expo.modules.screentime.example.MainActivity") + if (blocking) listOf(shield, "expo.modules.screentime.PipEvictorActivity") else emptyList(),
-      receivers = if (blocking || Feature.appRemovalProtection in features) listOf(admin) else emptyList(),
-      permissions = listOf("android.permission.INTERNET") +
-        (if (engine || Feature.usageReports in features) listOf(usage) else emptyList()) +
-        (if (blocking) listOf(overlay) else emptyList()) +
-        (if (engine) listOf(notifications, "android.permission.FOREGROUND_SERVICE", "android.permission.RECEIVE_BOOT_COMPLETED") else emptyList()),
-    )
+    val kept = fixture.getJSONObject(features.joinToString(",") { it.name })
+    fun list(key: String) = kept.getJSONArray(key).let { a -> List(a.length()) { a.getString(it) } }
+    return BuildManifest.from(list("services"), list("activities"), list("receivers"), list("permissions"))
   }
 
   @Test
@@ -68,9 +67,9 @@ class BuildManifestTest {
   }
 
   @Test
-  fun `a usage-reports build has usage access and nothing else`() {
+  fun `a usage-reports build has usage access without the engine, the shield or the device admin`() {
     val manifest = build(Feature.usageReports)
-    assertEquals(BuildManifest(engine = false, shield = false, deviceAdmin = false, usageAccess = true, notifications = false), manifest)
+    assertEquals(BuildManifest(engine = false, shield = false, deviceAdmin = false, usageAccess = true, notifications = true), manifest)
     assertFalse(manifest.blocking)
     assertTrue(manifest.has(Feature.usageReports))
     assertEquals(listOf(Feature.blocking, Feature.monitoring), manifest.missing(PermissionSteps.defaultFeatures))
@@ -122,7 +121,7 @@ class BuildManifestTest {
   @Test
   fun `an empty feature list leaves nothing but the selection store`() {
     val manifest = build()
-    assertEquals(BuildManifest(engine = false, shield = false, deviceAdmin = false, usageAccess = false, notifications = false), manifest)
+    assertEquals(BuildManifest(engine = false, shield = false, deviceAdmin = false, usageAccess = false, notifications = true), manifest)
     assertEquals(Feature.values().toList() - Feature.webDomainBlocking, manifest.missing(Feature.values().toList()))
   }
 }

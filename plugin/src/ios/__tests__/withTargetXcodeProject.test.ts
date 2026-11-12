@@ -1,8 +1,9 @@
 import * as path from 'path';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const xcode = require('xcode');
 
 import { applyTargetToXcodeProject } from '../withTargetXcodeProject';
+
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const xcode = require('xcode');
 
 // Vanilla Expo app pbxproj (1 app target, no extensions) captured from git history.
 const FIXTURE = path.join(__dirname, 'fixtures', 'project.pbxproj');
@@ -44,22 +45,7 @@ const realKeys = (section: Record<string, any> | undefined) =>
 const realValues = (section: Record<string, any> | undefined) =>
   realKeys(section).map((k) => section![k]);
 
-const SECTIONS = [
-  'PBXNativeTarget',
-  'PBXGroup',
-  'PBXBuildFile',
-  'PBXFileReference',
-  'PBXSourcesBuildPhase',
-  'PBXCopyFilesBuildPhase',
-  'PBXFrameworksBuildPhase',
-  'XCBuildConfiguration',
-  'XCConfigurationList',
-  'PBXTargetDependency',
-  'PBXContainerItemProxy',
-];
-
-const counts = (project: any) =>
-  Object.fromEntries(SECTIONS.map((s) => [s, realKeys(objects(project)[s]).length]));
+const serialize = (project: any): string => project.writeSync();
 
 describe('applyTargetToXcodeProject', () => {
   it('adds exactly one app-extension target named after the target', () => {
@@ -73,12 +59,12 @@ describe('applyTargetToXcodeProject', () => {
     expect(extTargets[0].name).toBe(TARGET);
   });
 
-  it('is idempotent — re-applying changes no object counts', () => {
+  it('is idempotent — re-applying leaves the pbxproj byte-identical', () => {
     const project = load();
     apply(project);
-    const before = counts(project);
+    const before = serialize(project);
     apply(project);
-    expect(counts(project)).toEqual(before);
+    expect(serialize(project)).toBe(before);
   });
 
   it('gives every source build file a parent group (no orphans from basename dedup)', () => {
@@ -167,9 +153,9 @@ describe('applyTargetToXcodeProject — all four targets', () => {
   it('is idempotent across all four targets and embeds all four .appex once', () => {
     const project = load();
     applyAll(project);
-    const before = counts(project);
+    const before = serialize(project);
     applyAll(project);
-    expect(counts(project)).toEqual(before);
+    expect(serialize(project)).toBe(before);
 
     const objs = objects(project);
     // Exactly 4 app-extension targets…

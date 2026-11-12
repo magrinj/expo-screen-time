@@ -1,0 +1,93 @@
+{
+  "blocking,monitoring,usageReports,shieldOpenApp,appRemovalProtection,webDomainBlocking": {
+    "services": [
+      "expo.modules.screentime.ScreenTimeEngineService"
+    ],
+    "activities": [
+      "expo.modules.screentime.ShieldActivity",
+      "expo.modules.screentime.PipEvictorActivity"
+    ],
+    "receivers": [
+      "expo.modules.screentime.ScreenTimeRestartReceiver",
+      "expo.modules.screentime.ScreenTimeDeviceAdminReceiver"
+    ],
+    "permissions": [
+      "android.permission.PACKAGE_USAGE_STATS",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED"
+    ]
+  },
+  "": {
+    "services": [],
+    "activities": [],
+    "receivers": [],
+    "permissions": [
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED"
+    ]
+  },
+  "blocking": {
+    "services": [
+      "expo.modules.screentime.ScreenTimeEngineService"
+    ],
+    "activities": [
+      "expo.modules.screentime.ShieldActivity",
+      "expo.modules.screentime.PipEvictorActivity"
+    ],
+    "receivers": [
+      "expo.modules.screentime.ScreenTimeRestartReceiver",
+      "expo.modules.screentime.ScreenTimeDeviceAdminReceiver"
+    ],
+    "permissions": [
+      "android.permission.PACKAGE_USAGE_STATS",
+      "android.permission.SYSTEM_ALERT_WINDOW",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED"
+    ]
+  },
+  "monitoring": {
+    "services": [
+      "expo.modules.screentime.ScreenTimeEngineService"
+    ],
+    "activities": [],
+    "receivers": [
+      "expo.modules.screentime.ScreenTimeRestartReceiver"
+    ],
+    "permissions": [
+      "android.permission.PACKAGE_USAGE_STATS",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.FOREGROUND_SERVICE_SPECIAL_USE",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED"
+    ]
+  },
+  "usageReports": {
+    "services": [],
+    "activities": [],
+    "receivers": [],
+    "permissions": [
+      "android.permission.PACKAGE_USAGE_STATS",
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED"
+    ]
+  },
+  "appRemovalProtection": {
+    "services": [],
+    "activities": [],
+    "receivers": [
+      "expo.modules.screentime.ScreenTimeDeviceAdminReceiver"
+    ],
+    "permissions": [
+      "android.permission.FOREGROUND_SERVICE",
+      "android.permission.POST_NOTIFICATIONS",
+      "android.permission.RECEIVE_BOOT_COMPLETED"
+    ]
+  }
+}

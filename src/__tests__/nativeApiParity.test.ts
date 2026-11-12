@@ -39,7 +39,13 @@ function parseSwift(): { functions: Fn[]; views: string[]; events: string[] } {
   return { functions, views, events };
 }
 
-function parseKotlin(): { functions: Fn[]; views: string[]; events: string[] } {
+function parseKotlin(): {
+  functions: Fn[];
+  defined: Fn[];
+  implemented: string[];
+  views: string[];
+  events: string[];
+} {
   const registry = read(
     "android/src/main/java/expo/modules/screentime/NativeFunctions.kt",
   );
@@ -59,7 +65,24 @@ function parseKotlin(): { functions: Fn[]; views: string[]; events: string[] } {
   const events = [...module.matchAll(/^\s*Events\(([^)]*)\)/gm)].flatMap((m) =>
     [...m[1].matchAll(/"(\w+)"/g)].map((e) => e[1]),
   );
-  return { functions, views, events };
+  const defined = [
+    ...module.matchAll(/^\s*(AsyncFunction|Function)\("(\w+)"\)\s*\{([^\n]*)/gm),
+  ].map((m) => {
+    const head = /^([^{}]*?)->/.exec(m[3])?.[1] ?? "";
+    const params = [...head.matchAll(/(\w+)\s*:\s*(\w+)/g)].filter(
+      (p) => p[2] !== "Promise",
+    );
+    return {
+      name: m[2],
+      arity: params.length,
+      kind: (m[1] === "AsyncFunction" ? "async" : "sync") as Fn["kind"],
+    };
+  });
+  const implemented = [
+    ...(/IMPLEMENTED: Set<String> = setOf\(([^)]*)\)/.exec(registry)?.[1] ?? "")
+      .matchAll(/"(\w+)"/g),
+  ].map((m) => m[1]);
+  return { functions, defined, implemented, views, events };
 }
 
 function parseTypeScript(): string[] {
@@ -95,6 +118,20 @@ describe("native API parity (TS ↔ Swift ↔ Kotlin)", () => {
     expect(Object.keys(k).sort()).toEqual(Object.keys(s).sort());
     for (const name of Object.keys(s)) {
       expect({ name, ...k[name] }).toEqual({ name, ...s[name] });
+    }
+  });
+
+  it("Kotlin defines a real function for exactly the IMPLEMENTED names", () => {
+    expect(kotlin.implemented.length).toBeGreaterThan(30);
+    expect(kotlin.defined.map((f) => f.name).sort()).toEqual(
+      [...kotlin.implemented].sort(),
+    );
+  });
+
+  it("each real Kotlin definition matches Swift's arity and kind", () => {
+    const s = byName(swift.functions);
+    for (const f of kotlin.defined) {
+      expect(f).toEqual(s[f.name]);
     }
   });
 

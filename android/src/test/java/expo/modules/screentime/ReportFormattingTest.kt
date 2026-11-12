@@ -75,46 +75,6 @@ class ReportFormattingTest {
     assertEquals("—", ReportText.NO_PICKUP)
   }
 
-  /**
-   * fr-FR, as Foundation renders the same durations (the probe): the Android
-   * implementation (ICU) must produce these from the same parts. Pinned here
-   * through a stub so the expected strings are on record.
-   */
-  @Test
-  fun `fr-FR expectations - the strings an ICU implementation must produce`() {
-    val fr = object : ReportText {
-      override fun duration(parts: ReportDurationParts, style: ReportDurationStyle): String {
-        val h = parts.hours
-        val m = parts.minutes
-        return when (style) {
-          ReportDurationStyle.ABBREVIATED -> if (h == null) "${m}min" else "${h}h ${m}min"
-          ReportDurationStyle.SHORT -> if (h == null) "$m min" else "$h h et $m min"
-          ReportDurationStyle.FULL -> {
-            val minutes = "$m ${if (m <= 1L) "minute" else "minutes"}"
-            if (h == null) minutes else "$h ${if (h <= 1L) "heure" else "heures"} et $minutes"
-          }
-        }
-      }
-
-      override fun time(epochMs: Long): String = "09:41"
-    }
-    val expected = mapOf(
-      0L to Triple("0min", "0 min", "0 minute"),
-      60L to Triple("1min", "1 min", "1 minute"),
-      120L to Triple("2min", "2 min", "2 minutes"),
-      3600L to Triple("1h 0min", "1 h et 0 min", "1 heure et 0 minute"),
-      5040L to Triple("1h 24min", "1 h et 24 min", "1 heure et 24 minutes"),
-      7200L to Triple("2h 0min", "2 h et 0 min", "2 heures et 0 minute"),
-    )
-    for ((seconds, strings) in expected) {
-      val parts = ReportDurationParts.of(seconds)
-      assertEquals(strings.first, fr.duration(parts, ReportDurationStyle.ABBREVIATED))
-      assertEquals(strings.second, fr.duration(parts, ReportDurationStyle.SHORT))
-      assertEquals(strings.third, fr.duration(parts, ReportDurationStyle.FULL))
-    }
-    assertEquals("fr-FR `.short` time is 24-hour, zero-padded", "09:41", fr.time(0))
-  }
-
   @Test
   fun `hex colors parse like Color(hex)`() {
     assertEquals(0xFFFF6B00.toInt(), ReportProps.color("#FF6B00"))

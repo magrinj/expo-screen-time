@@ -1,3 +1,10 @@
+import {
+  acquireTemplate,
+  clearTemplateChannel,
+  hashTemplate,
+  releaseTemplate,
+} from "../templateChannel";
+
 const mockSetReportTemplate = jest.fn();
 const mockClearReportTemplate = jest.fn();
 
@@ -8,13 +15,6 @@ jest.mock("../../ExpoScreenTimeModule", () => ({
     clearReportTemplate: () => mockClearReportTemplate(),
   },
 }));
-
-import {
-  acquireTemplate,
-  clearTemplateChannel,
-  hashTemplate,
-  releaseTemplate,
-} from "../templateChannel";
 
 describe("templateChannel ownership", () => {
   beforeEach(() => {

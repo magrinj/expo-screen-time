@@ -23,19 +23,19 @@ describe("forward", () => {
   let accessed = 0;
 
   beforeAll(() => {
-    const target: Record<string, unknown> = {};
-    for (const name of ["blockSelection", "temporaryUnlock", "isBlocked"]) {
-      target[name] = function (this: unknown, ...args: unknown[]) {
-        calls.push({ name, self: this, args });
-        return `${name}-result`;
-      };
-    }
-    const module = new Proxy(target, {
-      get(object, key) {
-        accessed += 1;
-        return object[key as string];
+    const module: Record<string, unknown> = new Proxy(
+      {},
+      {
+        get(_, key) {
+          accessed += 1;
+          const name = String(key);
+          return function (this: unknown, ...args: unknown[]) {
+            calls.push({ name, self: this, args });
+            return `${name}-result`;
+          };
+        },
       },
-    });
+    );
     jest.doMock("../ExpoScreenTimeModule", () => ({ __esModule: true, default: module }));
   });
 
@@ -46,21 +46,22 @@ describe("forward", () => {
     expect(accessed).toBe(0);
   });
 
-  it("calls the method on the module with the arguments, and returns its result", () => {
+  const names = [...read("functions.ts").matchAll(/export const (\w+)/g)].map((m) => m[1]);
+
+  it("finds every export", () => {
+    expect(names.length).toBeGreaterThan(30);
+  });
+
+  it.each(names)("%s calls the same-named method on the module and returns its result", (name) => {
     jest.isolateModules(() => {
       const functions = require("../functions");
       const module = require("../ExpoScreenTimeModule").default;
-      expect(functions.blockSelection("work")).toBe("blockSelection-result");
-      expect(functions.temporaryUnlock(60)).toBe("temporaryUnlock-result");
-      const target = { handle: "QUJD", type: "application" as const };
-      expect(functions.temporaryUnlock(60, { target })).toBe("temporaryUnlock-result");
-      expect(functions.isBlocked()).toBe("isBlocked-result");
-      expect(calls).toEqual([
-        { name: "blockSelection", self: module, args: ["work"] },
-        { name: "temporaryUnlock", self: module, args: [60] },
-        { name: "temporaryUnlock", self: module, args: [60, { target }] },
-        { name: "isBlocked", self: module, args: [] },
-      ]);
+      const args = ["a", { b: 1 }];
+      const result = functions[name](...args);
+      const recorded = calls.splice(0);
+      expect(result).toBe(`${name}-result`);
+      expect(recorded.map((c) => [c.name, c.args])).toEqual([[name, args]]);
+      expect(recorded[0].self === module).toBe(true);
     });
   });
 });
