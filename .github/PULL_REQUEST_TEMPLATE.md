@@ -16,4 +16,4 @@ and drives the version bump + changelog (release-please). Examples:
 
 - [ ] PR title is a Conventional Commit
 - [ ] `bun run lint`, `bun run test`, and `bun run build` pass
-- [ ] Updated docs in `website/docs/` if the public API changed
+- [ ] Updated docs in `website/content/docs/` if the public API changed

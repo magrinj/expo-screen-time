@@ -3,47 +3,38 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "docusaurus": "docusaurus",
-    "start": "docusaurus start",
-    "build": "docusaurus build",
-    "swizzle": "docusaurus swizzle",
-    "deploy": "docusaurus deploy",
-    "clear": "docusaurus clear",
-    "serve": "docusaurus serve",
-    "write-translations": "docusaurus write-translations",
-    "write-heading-ids": "docusaurus write-heading-ids",
-    "typecheck": "tsc"
+    "dev": "next dev",
+    "build": "node scripts/check-links.mjs && next build",
+    "check-links": "node scripts/check-links.mjs",
+    "start": "serve out",
+    "types:check": "next typegen && tsc --noEmit",
+    "lint": "oxlint"
   },
   "dependencies": {
-    "@docusaurus/core": "3.10.2",
-    "@docusaurus/faster": "3.10.2",
-    "@docusaurus/preset-classic": "3.10.2",
-    "@mdx-js/react": "^3.0.0",
-    "clsx": "^2.0.0",
-    "prism-react-renderer": "^2.3.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "fumadocs-core": "16.18.4",
+    "fumadocs-mdx": "15.5.3",
+    "fumadocs-ui": "npm:@fumadocs/base-ui@16.18.4",
+    "next": "16.4.5",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@docusaurus/module-type-aliases": "3.10.2",
-    "@docusaurus/tsconfig": "3.10.2",
-    "@docusaurus/types": "3.10.2",
-    "@types/react": "^19.0.0",
-    "typescript": "~6.0.2"
-  },
-  "browserslist": {
-    "production": [
-      ">0.5%",
-      "not dead",
-      "not op_mini all"
-    ],
-    "development": [
-      "last 3 chrome version",
-      "last 3 firefox version",
-      "last 5 safari version"
-    ]
-  },
-  "engines": {
-    "node": ">=20.0"
+    "@tailwindcss/postcss": "^4.3.5",
+    "@types/mdx": "^2.0.14",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "github-slugger": "^2.0.0",
+    "mdast-util-from-markdown": "^2.1.0",
+    "mdast-util-gfm": "^3.1.0",
+    "mdast-util-mdx": "^3.0.0",
+    "mdast-util-to-string": "^4.0.0",
+    "micromark-extension-gfm": "^3.0.0",
+    "micromark-extension-mdxjs": "^3.0.0",
+    "oxlint": "^1.92.0",
+    "postcss": "^8.5.32",
+    "serve": "^14.2.7",
+    "tailwindcss": "^4.3.5",
+    "typescript": "^7.0.2"
   }
 }

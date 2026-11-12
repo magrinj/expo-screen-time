@@ -16,7 +16,7 @@ the module ships its own enforcement engine (Kotlin, `android/`).
   `getEnforcementGaps()` reports such periods. Categories and web domains are
   iOS-only, and `openApplication` is off on Android too (the capability is
   off; the functions fail with `UNSUPPORTED`).
-  `website/docs/platform-support.md` is the user-facing status; the per-API
+  `website/content/docs/platform-support.mdx` is the user-facing status; the per-API
   plan and its decisions live in
   the platform support page. Read it before
   Android work.
@@ -37,7 +37,7 @@ cd example && bun install && bun run ios   # example app (postinstall builds + l
 cd example && bun run android              # the same app on Android
 cd example && bun expo prebuild --platform android   # example/android is a gitignored prebuild artifact
 cd example/android && ./gradlew :expo-screen-time:testDebugUnitTest   # Kotlin unit tests (CI job "Android unit tests")
-cd website && bun install && bun start     # Docusaurus docs site
+cd website && bun install && bun run dev   # docs site (Fumadocs, Next.js)
 ```
 
 ## Repo map
@@ -49,7 +49,7 @@ cd website && bun install && bun start     # Docusaurus docs site
 | `targets/<Name>/` | Swift sources + Info.plist for the 4 app extensions, copied by the plugin at prebuild |
 | `plugin/src/` | Expo config plugin (entitlements + Xcode target generation + EAS config) |
 | `example/` | expo-router example app exercising every feature |
-| `website/` | Docusaurus **user docs** (deployed to GitHub Pages) |
+| `website/` | Landing page + **user docs** (Fumadocs on Next.js, static export to GitHub Pages; MDX in `content/docs/`) |
 | `docs/` | **Agent/contributor rules** (this repo's conventions — see below) |
 | `android/` | Android module (Kotlin, `src/main/java/expo/modules/screentime/`): module definition + `NativeFunctions.kt` registry, selection store, permission steps, the enforcement engine (`ScreenTimeEngineService` in the `:screentime` process, restart chain, watchdog), shield Activity, monitoring, unlock, enforcement gaps, report renderer; `src/main/res/` its drawables/strings; `src/test/` the JUnit tests; `src/main/AndroidManifest.xml` the merged permissions and components |
 
@@ -82,7 +82,7 @@ Non-negotiables (the short list):
    add APIs that require JS to understand token contents.
 4. **Conventional commits are load-bearing** — release-please derives versions and
    the changelog from them. PR titles must be conventional (CI enforces it).
-5. **Public API changed? Update `website/docs/`** in the same PR. README stays a
+5. **Public API changed? Update `website/content/docs/`** in the same PR. README stays a
    slim quickstart; the site is the source of truth.
 6. **iOS-only APIs get `@platform ios`** in TSDoc; check
    the platform support page before naming anything new (names should survive

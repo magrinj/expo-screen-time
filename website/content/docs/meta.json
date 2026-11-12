@@ -1,0 +1,12 @@
+{
+  "pages": [
+    "index",
+    "platform-support",
+    "installation",
+    "configuration",
+    "api",
+    "components",
+    "types",
+    "troubleshooting"
+  ]
+}

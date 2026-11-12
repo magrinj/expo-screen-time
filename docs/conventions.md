@@ -76,13 +76,14 @@ scope — apply the bump directly on main and close the PR as superseded.
 
 ## Documentation duty
 
-- **Public API changed ⇒ update `website/docs/` in the same PR.** The Docusaurus
+- **Public API changed ⇒ update `website/content/docs/` in the same PR.** The docs
   site is the source of truth; the README is a slim quickstart + links and must
   stay that way (no API reference creep).
-- Docs build has `onBrokenLinks: 'throw'` — cross-links use relative `.md` paths;
-  headings containing `<>/` get explicit `{#anchor}` ids.
+- The docs build fails on a broken link or anchor (`website/scripts/check-links.mjs`).
+  Cross-links use relative `.mdx` paths; a function's heading carries an explicit
+  id, `[#blockselection]`, which the landing page and other pages link to.
 - Repo-internal knowledge (this kind of file) goes in `docs/` at the root —
-  **not** in `website/docs/` (user-facing) and not shipped to npm.
+  **not** in `website/content/docs/` (user-facing) and not shipped to npm.
 
 ## Repo hygiene
 

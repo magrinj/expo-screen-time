@@ -1,6 +1,6 @@
 name: Docs
 
-# Builds the Docusaurus site in website/ and deploys it to GitHub Pages.
+# Builds the Fumadocs (Next.js static export) site in website/ and deploys it to GitHub Pages.
 # `configure-pages` with enablement:true turns Pages on automatically on the
 # first push to main (no manual Settings → Pages step). PRs only build to catch
 # breakage; the Pages steps run on push/dispatch only.
@@ -37,6 +37,11 @@ jobs:
           node-version-file: .nvmrc
       - name: Install & build
         working-directory: website
+        env:
+          # The project site lives under /expo-screen-time on github.io.
+          PAGES_BASE_PATH: /expo-screen-time
+          # Read once at build time for the star count in the header.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           bun install --frozen-lockfile
           bun run build
@@ -49,7 +54,7 @@ jobs:
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         if: github.event_name != 'pull_request'
         with:
-          path: website/build
+          path: website/out
 
   deploy:
     needs: build

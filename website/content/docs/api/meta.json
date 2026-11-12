@@ -1,0 +1,15 @@
+{
+  "title": "API Reference",
+  "defaultOpen": true,
+  "pages": [
+    "importing",
+    "permissions",
+    "selections",
+    "blocking",
+    "restrictions",
+    "monitoring",
+    "shields",
+    "templates",
+    "capabilities"
+  ]
+}

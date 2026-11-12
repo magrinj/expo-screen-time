@@ -1,0 +1,116 @@
+@import 'tailwindcss';
+@import 'fumadocs-ui/css/black.css';
+@import 'fumadocs-ui/css/preset.css';
+
+/* Brand palette, shared by the landing page and the docs. */
+@theme {
+  --font-sans: var(--font-geist), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-ink: #f4f4fa;
+  --color-mist: #9d9cb8;
+  --color-dim: #6f6e9e;
+  --color-faint: #45447a;
+  --color-night: #000000;
+  --color-panel: #0e0e1c;
+  --color-line: #23224a;
+  --color-stage: #1e1d4a;
+  --color-stage-line: #34338a;
+  --color-raised: #2a2950;
+  --color-indigo: #5e5ce6;
+  --color-lilac: #a5a3ff;
+  --color-sun: #ffd27a;
+
+  /* Light docs: indigo primary on a neutral page. */
+  --color-fd-primary: #4b49c9;
+  --color-fd-primary-foreground: #ffffff;
+}
+
+.dark {
+  --color-fd-background: #000000;
+  --color-fd-foreground: #f4f4fa;
+  --color-fd-muted: #0e0e1c;
+  --color-fd-muted-foreground: #9d9cb8;
+  --color-fd-popover: #0e0e1c;
+  --color-fd-popover-foreground: #f4f4fa;
+  --color-fd-card: #0e0e1c;
+  --color-fd-card-foreground: #f4f4fa;
+  --color-fd-border: #23224a;
+  --color-fd-primary: #a5a3ff;
+  --color-fd-primary-foreground: #0e0e1c;
+  --color-fd-secondary: #1c1b36;
+  --color-fd-secondary-foreground: #f4f4fa;
+  --color-fd-accent: #1e1d4a;
+  --color-fd-accent-foreground: #ffffff;
+  --color-fd-ring: #5e5ce6;
+}
+
+@utility wrap {
+  @apply mx-auto w-full max-w-[1440px] px-4 md:px-8 lg:px-16;
+}
+
+html {
+  scrollbar-gutter: stable;
+}
+
+.phone-fit {
+  --s: 0.9;
+  position: relative;
+  width: calc(330px * var(--s));
+  height: calc(700px * var(--s));
+}
+.phone-fit > * {
+  position: absolute;
+  transform: scale(var(--s));
+  transform-origin: top left;
+}
+@media (max-width: 359px) {
+  .phone-fit { --s: 0.75; }
+}
+
+html > body[data-scroll-locked] {
+  margin-right: 0px !important;
+  --removed-body-scroll-bar-size: 0px !important;
+}
+
+/* Landing motion. One orchestrated demo; everything else is user-triggered. */
+.press {
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.press:active {
+  transform: scale(0.97);
+}
+.tap-ring {
+  animation: tap-ring 0.8s ease-out infinite;
+}
+@keyframes tap-ring {
+  0% { transform: scale(0.6); opacity: 0.95; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+.enter-shield {
+  animation: enter-shield 0.32s cubic-bezier(0.23, 1, 0.32, 1);
+}
+@keyframes enter-shield {
+  from { transform: scale(1.04); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.enter-alert {
+  animation: enter-shield 0.22s cubic-bezier(0.23, 1, 0.32, 1);
+}
+.enter-sheet {
+  animation: enter-sheet 0.42s cubic-bezier(0.32, 0.72, 0, 1);
+}
+@keyframes enter-sheet {
+  from { transform: translateY(100%); }
+  to { transform: none; }
+}
+.caret {
+  animation: caret 1s steps(1) infinite;
+}
+@keyframes caret {
+  50% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tap-ring, .enter-shield, .enter-alert, .enter-sheet, .caret { animation: none; }
+  .press { transition: none; }
+}

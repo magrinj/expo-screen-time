@@ -95,7 +95,7 @@ The full guide and API reference live at **[magrinj.github.io/expo-screen-time](
 - [Types](https://magrinj.github.io/expo-screen-time/types)
 - [Troubleshooting](https://magrinj.github.io/expo-screen-time/troubleshooting)
 
-The docs site is generated from `website/` (Docusaurus). To work on it: `cd website && bun install && bun start`.
+The docs site is generated from `website/` (Fumadocs). To work on it: `cd website && bun install && bun run dev`.
 
 ## Example App
 
