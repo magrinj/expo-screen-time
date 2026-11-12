@@ -4,6 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.security.SecureRandom
 import java.util.concurrent.locks.ReentrantLock
@@ -370,15 +371,23 @@ internal class StateStore(private val directory: File) {
     return try {
       JSONObject(file.readText())
     } catch (e: Exception) {
-      // A corrupt document (interrupted write before the rename landed, a
-      // future format) must not take the engine or the module down.
+      // A corrupt document (a future format, a torn write on a filesystem
+      // that lost the fsync) must not take the engine or the module down.
+      // Kept aside rather than overwritten by the next save: it holds the
+      // install secret every persisted handle derives from.
+      runCatching { file.copyTo(File(directory, "state.json.corrupt"), overwrite = true) }
       JSONObject()
     }
   }
 
   private fun save(document: JSONObject) {
     val tmp = File(directory, "state.json.tmp")
-    tmp.writeText(document.toString())
+    // Flushed to disk before the rename: without it a power loss right after
+    // a save can leave the renamed document empty (ext4/f2fs delayed alloc).
+    FileOutputStream(tmp).use { out ->
+      out.write(document.toString().toByteArray())
+      out.fd.sync()
+    }
     // The modification time is made strictly increasing across every writer
     // (they are serialized by the exclusive lock): the kernel stamps with a
     // coarse clock and reuses inodes, so two saves within a few ms could

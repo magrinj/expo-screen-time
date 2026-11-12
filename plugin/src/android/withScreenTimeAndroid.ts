@@ -177,10 +177,19 @@ export const ANDROID_MANIFEST_GATES: readonly ManifestGate[] = [
     features: ['blocking', 'monitoring', 'usageReports'],
   },
   { kind: 'uses-permission', name: 'android.permission.SYSTEM_ALERT_WINDOW', features: ['blocking'] },
-  { kind: 'uses-permission', name: 'android.permission.FOREGROUND_SERVICE', features: ENGINE },
   { kind: 'uses-permission', name: 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE', features: ENGINE },
-  { kind: 'uses-permission', name: 'android.permission.POST_NOTIFICATIONS', features: ENGINE },
-  { kind: 'uses-permission', name: 'android.permission.RECEIVE_BOOT_COMPLETED', features: ENGINE },
+];
+
+/**
+ * Library permissions `features` never removes: a removal hits the merged
+ * manifest, so it would take them from every other library too
+ * (notifications, background tasks), and none is a Play declaration worth
+ * saving.
+ */
+export const ANDROID_UNGATED_PERMISSIONS: readonly string[] = [
+  'android.permission.FOREGROUND_SERVICE',
+  'android.permission.POST_NOTIFICATIONS',
+  'android.permission.RECEIVE_BOOT_COMPLETED',
 ];
 
 /** The gates `features` leave out: what the plugin removes from the merged manifest. */
@@ -308,7 +317,10 @@ export function applyScreenTimeAndroidManifest(
   applyAccessibilityService(manifest, application, options.accessibilityEngine, declaredPermissions);
 
   const removed = removedGates(options.features);
-  for (const gate of ANDROID_MANIFEST_GATES) {
+  // The ungated permissions are visited too, never as removed: a prebuild
+  // from before they were ungated may have left our removal behind.
+  const ungated: ManifestGate[] = ANDROID_UNGATED_PERMISSIONS.map((name) => ({ kind: 'uses-permission', name, features: [] }));
+  for (const gate of [...ANDROID_MANIFEST_GATES, ...ungated]) {
     const parent = parentOf(manifest, gate);
     const elements: ManifestElement[] | undefined = Array.isArray(parent[gate.kind]) ? parent[gate.kind] : undefined;
     if (gate.kind === 'uses-permission' && blockedPermissions.includes(gate.name)) continue; // the consumer's own block

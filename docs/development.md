@@ -51,7 +51,7 @@ and fails if a per-target copy under `targets/*/` drifted from `ios/`.
 
 ### Tier 1b — after any `android/` or `plugin/src/android/` change
 
-CI runs no Gradle, so these run locally. `example/android` is a gitignored
+CI runs the unit tests (job "Android unit tests"); run them locally first. `example/android` is a gitignored
 prebuild artifact; a JDK 17 and the Android SDK (`compileSdkVersion` 36) are
 needed.
 

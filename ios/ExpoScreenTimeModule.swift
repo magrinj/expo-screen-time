@@ -46,6 +46,9 @@ public class ExpoScreenTimeModule: Module {
             // while the app stays alive). The module lives as long as the
             // app context, so the observer is never removed.
             self.reconcileSnoozes()
+            // An unlock from a past day whose meter's day-end callback never
+            // reached the monitor: put its suspended shields back.
+            self.relockIfExpired()
             // A revoked authorization is only observable here, at launch and
             // on every return to the foreground (getEnforcementGaps).
             self.observeAuthorization()
@@ -56,6 +59,7 @@ public class ExpoScreenTimeModule: Module {
             ) { _ in
                 DispatchQueue.global(qos: .utility).async {
                     self.reconcileSnoozes()
+                    self.relockIfExpired()
                     self.observeAuthorization()
                 }
             }
@@ -1350,11 +1354,18 @@ public class ExpoScreenTimeModule: Module {
         // morning's usage and could be crossed before metering even begins
         // (the system never re-fires a threshold already exceeded). Ending at
         // 23:59:59 gives the monitor a day-boundary callback to expire any
-        // unspent budget — earned time doesn't carry across midnight.
-        let startComponents = Calendar.current.dateComponents([.hour, .minute, .second], from: Date())
+        // unspent budget — earned time doesn't carry across midnight. Within
+        // the system's minimum interval of midnight the meter runs a little
+        // into tomorrow instead of being refused (`UsageMeter.meterEnd`, as
+        // the snoozes do); the grant is void at midnight either way.
+        let now = Date()
+        let startComponents = Calendar.current.dateComponents([.hour, .minute, .second], from: now)
         let schedule = DeviceActivitySchedule(
             intervalStart: startComponents,
-            intervalEnd: DateComponents(hour: 23, minute: 59, second: 59),
+            intervalEnd: Calendar.current.dateComponents(
+                [.hour, .minute, .second],
+                from: UsageMeter.meterEnd(now: now, calendar: .current)
+            ),
             repeats: false
         )
 

@@ -538,7 +538,6 @@ export type TemporaryUnlockGrant = {
  * both buttons of one shield is one blocked attempt); presses on different
  * targets are separate interactions. Two apps shielded through the same
  * category are one target (iOS reports the category).
- * @platform ios
  */
 export type ShieldInteraction = {
   /** Which shield button was pressed. */

@@ -34,8 +34,8 @@ bun run build
 ```
 
 CI runs all three on every PR, plus a prebuild that asserts the config plugin
-generates the four iOS extension targets, and the Swift logic tests. CI runs
-no Gradle: the Kotlin unit tests below are run locally.
+generates the four iOS extension targets, the Swift logic tests and the
+Kotlin unit tests below.
 
 ## Commits & pull requests
 

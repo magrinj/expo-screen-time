@@ -60,3 +60,28 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - run: swiftc --version
       - run: bash scripts/swift-tests/run.sh
+
+  android:
+    # The Kotlin module (engine, selections, reports, ...): it compiles against
+    # the example's prebuild and its JUnit tests pass. The runner image ships
+    # the Android SDK and JDK 17.
+    name: Android unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+      - run: bun install --frozen-lockfile
+      - name: Install example app
+        working-directory: example
+        run: bun install --frozen-lockfile
+      - name: Prebuild Android
+        working-directory: example
+        run: bun expo prebuild --platform android --no-install --clean
+      - name: Kotlin unit tests
+        working-directory: example/android
+        run: |
+          export JAVA_HOME="$JAVA_HOME_17_X64"
+          ./gradlew :expo-screen-time:testDebugUnitTest --console=plain

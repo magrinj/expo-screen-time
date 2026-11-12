@@ -262,9 +262,16 @@ internal class EngineLoop(private val context: Context) {
     }
   }
 
-  /** An enforcement AppOp changed (usage access, the overlay): observed at once, on the engine thread. */
+  /**
+   * An enforcement AppOp changed (usage access, the overlay): observed at once, on the engine thread.
+   * Also re-runs a step: polling stops when the overlay is revoked under a block, and a re-grant
+   * must restart it now, not at the next SCREEN_ON or alarm.
+   */
   private val appOpsListener = AppOpsManager.OnOpChangedListener { op, packageName ->
-    if (packageName == null || packageName == context.packageName) handler.post { guarded("appops") { beat("appops:$op") } }
+    if (packageName == null || packageName == context.packageName) {
+      handler.post { guarded("appops") { beat("appops:$op") } }
+      refresh("appops:$op")
+    }
   }
 
   /**

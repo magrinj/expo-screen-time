@@ -250,11 +250,19 @@ class DeviceActivityMonitorExtension: DeviceActivityMonitor {
     /// The metering interval ended. When that genuinely happens (23:59:59)
     /// it's the daily reset: unspent budget expires at midnight. But
     /// `stopMonitoring` also fires this callback — on every re-grant or
-    /// cancel, at any time of day — so only honor it near the boundary.
+    /// cancel, at any time of day — so only honor it near the boundary, or
+    /// once the grant belongs to a past day: the 23:59:59 callback can be
+    /// delivered after midnight (device asleep), and a grant armed late in
+    /// the evening runs its meter into the next day (`UsageMeter.meterEnd`).
     private func handleUnlockIntervalEnd() {
-        let components = calendar.dateComponents([.hour, .minute], from: Date())
-        guard components.hour == 23, (components.minute ?? 0) >= 58 else { return }
+        let now = Date()
+        let components = calendar.dateComponents([.hour, .minute], from: now)
+        let nearMidnight = components.hour == 23 && (components.minute ?? 0) >= 58
         lock.withLock {
+            // Read under the lock: a grant written between a read outside it
+            // and the clear would be cleared at once.
+            let grantExpired = defaults.getUnlockGrantedAt().map { !calendar.isDate($0, inSameDayAs: now) } ?? false
+            guard nearMidnight || grantExpired else { return }
             defaults.clearUnlockState()
             restoreActiveSources()
         }

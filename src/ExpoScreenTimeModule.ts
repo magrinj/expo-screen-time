@@ -113,7 +113,6 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
    * handle from another device or of another type is misuse the module
    * cannot detect); `EXCESSIVE_ACTIVITIES` when no DeviceActivity slot is
    * free for the meter.
-   * @platform ios
    */
   temporaryUnlock(
     budgetSeconds: number,
@@ -121,7 +120,7 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   ): Promise<TemporaryUnlockGrant>;
   /**
    * Whether a whole-block earned-time budget is currently active (targeted
-   * grants and snoozes are not reported). @platform ios
+   * grants and snoozes are not reported).
    */
   isTemporarilyUnlocked(): boolean;
   /**
@@ -131,12 +130,11 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
    * the monitor extension reports consumption — don't render it as a smooth
    * countdown. Reading 0 after a grant also re-applies the shield as a
    * backstop.
-   * @platform ios
    */
   getRemainingUnlockSeconds(): number;
   /**
    * End any active unlock — the whole-block one, every targeted grant and
-   * every shield snooze — now and restore the shield. @platform ios
+   * every shield snooze — now and restore the shield.
    */
   relock(): void;
 
@@ -145,7 +143,6 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
    * entry each time the user reacted to the shield over a blocked app
    * (interactions within 2s collapse into one attempt). Call on app
    * foreground and persist app-side to power "blocked N times" stats.
-   * @platform ios
    */
   drainShieldInteractions(): ShieldInteraction[];
 

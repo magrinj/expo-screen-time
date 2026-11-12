@@ -36,7 +36,7 @@ bun run test           # jest (src + plugin), then the reference apps type-check
 cd example && bun install && bun run ios   # example app (postinstall builds + links)
 cd example && bun run android              # the same app on Android
 cd example && bun expo prebuild --platform android   # example/android is a gitignored prebuild artifact
-cd example/android && ./gradlew :expo-screen-time:testDebugUnitTest   # Kotlin unit tests — CI runs no Gradle, run them locally
+cd example/android && ./gradlew :expo-screen-time:testDebugUnitTest   # Kotlin unit tests (CI job "Android unit tests")
 cd website && bun install && bun start     # Docusaurus docs site
 ```
 

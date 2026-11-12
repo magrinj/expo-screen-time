@@ -6,8 +6,8 @@
  * is off, the scenario asserts the coded `UNSUPPORTED` error instead of the
  * behaviour (C12, the selection store, branches on `selectableKinds`).
  * Permissions have no capability: C02 and C11 branch on whether
- * `getScreenTimePermissionsAsync` answers (see `permissionsIfImplemented`). Driven by `example/conformance/suite.ad` (agent-device), which
- * taps "Run" and waits for the verdict line.
+ * `getScreenTimePermissionsAsync` answers (see `permissionsIfImplemented`). Driven by `example/.maestro/conformance.yaml`, which taps "Run" and
+ * waits for the verdict line.
  *
  * Shields are drawn by the OS outside the accessibility tree, so what they
  * cover is not asserted here: the API-observable half (state, events, errors)

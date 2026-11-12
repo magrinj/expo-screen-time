@@ -117,8 +117,8 @@ rest of what this library declares leaves the merged manifest:
 
 | Feature | Keeps |
 |---|---|
-| `blocking` | Everything: the engine service and its restart receiver, the shield activity and its picture-in-picture evictor, the device-admin receiver, and the permissions `PACKAGE_USAGE_STATS`, `SYSTEM_ALERT_WINDOW`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`. Schedules and thresholds that shield are part of it. |
-| `monitoring` | The engine service, its restart receiver and their permissions (`PACKAGE_USAGE_STATS`, the foreground-service pair, `POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`). No shield, no overlay permission, no device admin: schedules and thresholds record events only. |
+| `blocking` | Everything: the engine service and its restart receiver, the shield activity and its picture-in-picture evictor, the device-admin receiver, and the permissions `PACKAGE_USAGE_STATS`, `SYSTEM_ALERT_WINDOW`, `FOREGROUND_SERVICE_SPECIAL_USE`. Schedules and thresholds that shield are part of it. |
+| `monitoring` | The engine service, its restart receiver and their permissions (`PACKAGE_USAGE_STATS`, `FOREGROUND_SERVICE_SPECIAL_USE`). No shield, no overlay permission, no device admin: schedules and thresholds record events only. |
 | `usageReports` | `PACKAGE_USAGE_STATS`. |
 | `appRemovalProtection` | The device-admin receiver. |
 | `shieldOpenApp`, `webDomainBlocking` | Nothing of their own (the first is a property of the shield, the second is not implemented on Android). |
@@ -131,10 +131,11 @@ needed.
 A removed permission is removed the way Expo's `android.blockedPermissions`
 removes one: from the merged manifest, **whichever library declared it**
 (the Android manifest merger offers nothing finer that survives the merge).
-So if another library in your app needs `POST_NOTIFICATIONS`,
-`RECEIVE_BOOT_COMPLETED` or `FOREGROUND_SERVICE` (a notifications or a
-background-task library), list it in `android.permissions`: what your own
-manifest requests is never removed, and `android.permissions` always wins.
+That is why the generic permissions the engine also uses (`FOREGROUND_SERVICE`,
+`POST_NOTIFICATIONS`, `RECEIVE_BOOT_COMPLETED`) are never removed: other
+libraries need them too. If another foreground service of your app needs
+`FOREGROUND_SERVICE_SPECIAL_USE`, list it in `android.permissions`: what your
+own manifest requests is never removed, and `android.permissions` always wins.
 Check the result in the merged manifest
 (`android/app/build/intermediates/merged_manifests/<variant>/processReleaseManifest/AndroidManifest.xml`)
 or with `aapt2 dump permissions` on the APK. Two more notes:

@@ -8,6 +8,7 @@ import {
   ACCESSIBILITY_SERVICE_RESOURCE,
   ANDROID_FEATURES,
   ANDROID_MANIFEST_GATES,
+  ANDROID_UNGATED_PERMISSIONS,
   AndroidFeature,
   BIND_ACCESSIBILITY_SERVICE,
   IS_MONITORING_TOOL,
@@ -136,10 +137,7 @@ describe('ANDROID_MANIFEST_GATES', () => {
       'PipEvictorActivity',
       'ScreenTimeDeviceAdminReceiver',
       'SYSTEM_ALERT_WINDOW',
-      'FOREGROUND_SERVICE',
       'FOREGROUND_SERVICE_SPECIAL_USE',
-      'POST_NOTIFICATIONS',
-      'RECEIVE_BOOT_COMPLETED',
     ]);
     // App removal protection alone: the device admin.
     expect(removedNames(['appRemovalProtection'])).not.toContain('ScreenTimeDeviceAdminReceiver');
@@ -251,20 +249,35 @@ describe('applyScreenTimeAndroidManifest — features', () => {
 
   it('never removes an element the app manifest declares itself', () => {
     const manifest = vanillaManifest();
-    // expo-notifications (or `android.permissions`) requests these for its own reasons.
-    manifest.manifest['uses-permission']!.push({ $: { 'android:name': 'android.permission.POST_NOTIFICATIONS' } }, { $: { 'android:name': 'android.permission.RECEIVE_BOOT_COMPLETED' } });
+    // Another foreground service of the app (or `android.permissions`) requests it for its own reasons.
+    manifest.manifest['uses-permission']!.push({ $: { 'android:name': 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' } });
     const before = JSON.parse(JSON.stringify(manifest));
     applyScreenTimeAndroidManifest(manifest, options(['usageReports']));
     const names = (m: any) => m.manifest['uses-permission'].map((p: any) => `${p.$['android:name']}${p.$['tools:node'] ? '!' : ''}`);
     expect(names(manifest)).toEqual([
       ...names(before),
       'android.permission.SYSTEM_ALERT_WINDOW!',
-      'android.permission.FOREGROUND_SERVICE!',
-      'android.permission.FOREGROUND_SERVICE_SPECIAL_USE!',
     ]);
     // ...and does not take it away when the features change back.
     applyScreenTimeAndroidManifest(manifest, options(ALL));
     expect(JSON.stringify(manifest)).toBe(JSON.stringify(before));
+  });
+
+  it('drops the removals an older prebuild wrote for a permission since ungated (--no-clean upgrade)', () => {
+    const manifest = vanillaManifest();
+    const before = JSON.stringify(manifest);
+    AndroidConfig.Manifest.ensureToolsAvailable(manifest);
+    for (const name of ANDROID_UNGATED_PERMISSIONS) manifest.manifest['uses-permission']!.push({ $: { 'android:name': name, 'tools:node': 'remove' } } as any);
+    applyScreenTimeAndroidManifest(manifest, options(ALL));
+    expect(JSON.stringify(manifest)).toBe(before);
+    // A consumer's own android.blockedPermissions node of the same shape is theirs: kept.
+    const own = vanillaManifest();
+    AndroidConfig.Manifest.ensureToolsAvailable(own);
+    own.manifest['uses-permission']!.push({ $: { 'android:name': 'android.permission.POST_NOTIFICATIONS', 'tools:node': 'remove' } } as any);
+    applyScreenTimeAndroidManifest(own, options(ALL), [], ['android.permission.POST_NOTIFICATIONS']);
+    expect(own.manifest['uses-permission']!.filter((p) => p.$['android:name'] === 'android.permission.POST_NOTIFICATIONS')).toEqual([
+      { $: { 'android:name': 'android.permission.POST_NOTIFICATIONS', 'tools:node': 'remove' } },
+    ]);
   });
 
   it('writes plain removals: the merger drops the node with the element (a tools:selector would leave a bare marker behind)', () => {
@@ -293,12 +306,12 @@ describe('applyScreenTimeAndroidManifest — features', () => {
 
   it('gives way to a permission later added to android.permissions (the base mod skips a name our node holds)', () => {
     const manifest = applyScreenTimeAndroidManifest(vanillaManifest(), options(['usageReports']));
-    // Next --no-clean run: the consumer added POST_NOTIFICATIONS to android.permissions; the base mod ran first and skipped it.
-    applyScreenTimeAndroidManifest(manifest, options(['usageReports']), normalizePermissionNames(['POST_NOTIFICATIONS']));
-    const notifications = manifest.manifest['uses-permission']!.filter((p) => p.$['android:name'] === 'android.permission.POST_NOTIFICATIONS');
-    expect(notifications).toEqual([{ $: { 'android:name': 'android.permission.POST_NOTIFICATIONS' } }]);
+    // Next --no-clean run: the consumer added FOREGROUND_SERVICE_SPECIAL_USE to android.permissions; the base mod ran first and skipped it.
+    applyScreenTimeAndroidManifest(manifest, options(['usageReports']), normalizePermissionNames(['FOREGROUND_SERVICE_SPECIAL_USE']));
+    const specialUse = manifest.manifest['uses-permission']!.filter((p) => p.$['android:name'] === 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE');
+    expect(specialUse).toEqual([{ $: { 'android:name': 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' } }]);
     const once = JSON.stringify(manifest);
-    applyScreenTimeAndroidManifest(manifest, options(['usageReports']), ['android.permission.POST_NOTIFICATIONS']);
+    applyScreenTimeAndroidManifest(manifest, options(['usageReports']), ['android.permission.FOREGROUND_SERVICE_SPECIAL_USE']);
     expect(JSON.stringify(manifest)).toBe(once);
     expect(normalizePermissionNames(['POST_NOTIFICATIONS', 'com.example.CUSTOM', ''])).toEqual(['android.permission.POST_NOTIFICATIONS', 'com.example.CUSTOM']);
   });
@@ -475,12 +488,16 @@ describe('the library manifest (merged into every consumer)', () => {
     expect(service.property[0].$['android:value']).toMatch(/\S/);
   });
 
-  it('has a row in ANDROID_MANIFEST_GATES for every permission and component (extend the table when adding one)', () => {
+  it('has a row in ANDROID_MANIFEST_GATES (or ANDROID_UNGATED_PERMISSIONS) for every permission and component (extend the table when adding one)', () => {
     const declared = [
       ...names(manifest.manifest['uses-permission']).map((n) => `uses-permission#${n}`),
       ...(['activity', 'service', 'receiver'] as const).flatMap((kind) => names(application()[kind]).map((n) => `${kind}#${n}`)),
     ].sort();
-    expect(ANDROID_MANIFEST_GATES.map((g) => `${g.kind}#${g.name}`).sort()).toEqual(declared);
+    const covered = [
+      ...ANDROID_MANIFEST_GATES.map((g) => `${g.kind}#${g.name}`),
+      ...ANDROID_UNGATED_PERMISSIONS.map((n) => `uses-permission#${n}`),
+    ].sort();
+    expect(covered).toEqual(declared);
   });
 
   it('declares the restart and device-admin receivers', () => {

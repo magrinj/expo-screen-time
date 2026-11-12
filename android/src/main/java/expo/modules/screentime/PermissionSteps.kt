@@ -6,7 +6,7 @@ package expo.modules.screentime
  * steps the requested features need, in onboarding order, and how their
  * statuses fold into Expo's `PermissionResponse`. The Kotlin twin of
  * `ios/PermissionSteps.swift`; the derivation rules are the contract's
- * (`src/ExpoScreenTime.types.ts`, PERMISSIONS).
+ * (`PermissionStep` in `src/ExpoScreenTime.types.ts`).
  *
  * Steps, for the usageStats engine ("Permissions"):
  * - `overlay` (required; requested first: once held, the app may start

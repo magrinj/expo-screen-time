@@ -41,7 +41,16 @@ class ScreenTimeRestartReceiver : BroadcastReceiver() {
       return
     }
     val pending = goAsync()
-    EngineController.sync(context, reason) { pending.finish() }
+    val finished = java.util.concurrent.atomic.AtomicBoolean(false)
+    val finish = { if (finished.compareAndSet(false, true)) pending.finish() }
+    try {
+      EngineController.sync(context, reason) { finish() }
+    } catch (e: Exception) {
+      // A failed state write (disk full) must not crash the process from a
+      // broadcast: the watchdog or the next boundary retries.
+      android.util.Log.e("ExpoScreenTime", "restart sync failed ($reason)", e)
+      finish()
+    }
   }
 
   /** Whether the recorded run is live in this process (the receiver shares `:screentime` with the service). */

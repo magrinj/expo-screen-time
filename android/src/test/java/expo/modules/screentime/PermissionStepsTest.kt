@@ -12,8 +12,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The derivation rules of the contract (`src/ExpoScreenTime.types.ts`,
- * PERMISSIONS), the Kotlin twin of the `PermissionSteps` cases in
+ * The derivation rules of the contract (`PermissionStep` in
+ * `src/ExpoScreenTime.types.ts`), the Kotlin twin of the `PermissionSteps` cases in
  * `scripts/swift-tests/main.swift`. Run with
  * `cd example/android && ./gradlew :expo-screen-time:testDebugUnitTest`.
  */

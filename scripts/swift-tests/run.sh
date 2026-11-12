@@ -34,7 +34,6 @@ for target in DeviceActivityMonitorExtension ShieldActionExtension ShieldConfigu
 done
 check_copy ios/DailySchedule.swift targets/DeviceActivityMonitorExtension/DailySchedule.swift
 check_copy ios/ActivityRegistration.swift targets/DeviceActivityMonitorExtension/ActivityRegistration.swift
-check_copy ios/MonitorEventCursor.swift ios/MonitorEventCursor.swift
 check_copy ios/ShieldTextColors.swift targets/ShieldConfigurationExtension/ShieldTextColors.swift
 # The extension copies of SelectionStore are the CRUD subset of ios/SelectionStore.swift.
 check_copy targets/DeviceActivityMonitorExtension/SelectionStore.swift targets/ShieldActionExtension/SelectionStore.swift
