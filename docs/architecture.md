@@ -389,7 +389,7 @@ The Android counterpart of layers 2 and 3, in Kotlin (`java/expo/modules/screent
   engine is a gap first and a closed one next), on every foreground and in
   `getEnforcementGaps`, which answers `gaps(since, now, intent)`. The
   document key is `gaps`.
-- **The accessibility detector.**
+- **The accessibility detector (opt-in).**
   `ScreenTimeAccessibilityService.kt` is declared in the *app* manifest by
   the plugin's `android.accessibilityEngine` option (never in the library
   manifest: it changes a consumer's Play review), in `:screentime`, with
