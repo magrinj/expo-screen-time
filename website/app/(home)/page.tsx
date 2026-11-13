@@ -4,20 +4,8 @@ import { Install } from '@/components/landing/install';
 import { Stage } from '@/components/landing/stage';
 import { Schedule } from '@/components/landing/schedule';
 import { Snippets } from '@/components/landing/snippets';
-import { basePath, gitConfig, githubUrl } from '@/lib/shared';
-
-async function getStars(): Promise<string | null> {
-  try {
-    const res = await fetch(`https://api.github.com/repos/${gitConfig.user}/${gitConfig.repo}`, {
-      headers: process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {},
-    });
-    if (!res.ok) return null;
-    const { stargazers_count: n } = (await res.json()) as { stargazers_count: number };
-    return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
-  } catch {
-    return null;
-  }
-}
+import { Stars } from '@/components/landing/stars';
+import { basePath, githubUrl } from '@/lib/shared';
 
 const API: [string, [string, string][]][] = [
   ['Permissions', [['requestScreenTimePermissionsAsync()', 'api/permissions#requestscreentimepermissionsasync'], ['getScreenTimePermissionsAsync()', 'api/permissions#getscreentimepermissionsasync'], ['getCapabilities()', 'api/capabilities#getcapabilities']]],
@@ -37,8 +25,7 @@ const PILLARS = [
 const h2 = 'm-0 font-mono text-[30px] font-medium leading-[1.08] tracking-[-0.05em] sm:text-[40px]';
 const lead = 'm-0 text-[16.5px] leading-[1.6] text-mist';
 
-export default async function HomePage() {
-  const stars = await getStars();
+export default function HomePage() {
   return (
     <>
       <header className="wrap flex items-center justify-between gap-4 py-[22px]">
@@ -54,12 +41,7 @@ export default async function HomePage() {
           <a href={githubUrl} aria-label="GitHub" className="flex h-[34px] items-center gap-2 rounded-[9px] px-2.5 shadow-[inset_0_0_0_1px_var(--color-raised)] sm:px-3">
             <svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0.5a7.5 7.5 0 0 0-2.4 14.6c.4.1.5-.2.5-.4v-1.4c-2.1.5-2.5-.9-2.5-.9-.3-.9-.8-1.1-.8-1.1-.7-.5 0-.5 0-.5.8.1 1.2.8 1.2.8.7 1.2 1.8.8 2.2.6.1-.5.3-.8.5-1-1.7-.2-3.4-.8-3.4-3.7 0-.8.3-1.5.8-2-.1-.2-.4-1 .1-2 0 0 .6-.2 2.1.8a7 7 0 0 1 3.8 0c1.4-1 2.1-.8 2.1-.8.4 1 .2 1.8.1 2 .5.5.8 1.2.8 2 0 2.9-1.8 3.5-3.4 3.7.3.2.5.7.5 1.4v2.1c0 .2.1.5.5.4A7.5 7.5 0 0 0 8 .5z" fill="currentColor" /></svg>
             <span className="hidden sm:inline">GitHub</span>
-            {stars ? (
-              <span className="flex h-5 items-center gap-1 rounded-md bg-stage px-[7px] font-mono text-[12px] text-[#C9C8FF]">
-                <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true"><path d="M6 0.8 L7.6 4.1 L11.2 4.6 L8.6 7.1 L9.2 10.7 L6 9 L2.8 10.7 L3.4 7.1 L0.8 4.6 L4.4 4.1 Z" fill="#FFD27A" /></svg>
-                <span className="sr-only">Stars:</span>{stars}
-              </span>
-            ) : null}
+            <Stars />
           </a>
         </nav>
       </header>
