@@ -114,7 +114,8 @@ bun run ios       # or bun run android
     <td align="center" width="50%">
       <a href="https://github.com/VirtuozTM"><img src="https://images.weserv.nl/?url=avatars.githubusercontent.com/u/105630116&w=160&h=160&fit=cover&mask=circle&output=png" width="80" alt="Armand Petit" /></a><br />
       <b><a href="https://github.com/VirtuozTM">Armand Petit</a></b><br />
-      <sub>Designed and built the Android port, tested on real devices: the enforcement engine, the picker, schedules, the shield and usage reports. Also hardened iOS with a round of fixes, the allowlist mode and typed errors.</sub>
+      <sub>Designed and built the Android port, tested on real devices: the enforcement engine, the picker, schedules, the shield and usage reports. Also hardened iOS with a round of fixes, the allowlist mode and typed errors.</sub><br /><br />
+      <a href="https://buymeacoffee.com/armandpetiw"><img src="https://img.shields.io/badge/Buy%20me%20a%20coffee-FFDD00?logo=buymeacoffee&logoColor=000" alt="Buy me a coffee" /></a>
     </td>
   </tr>
 </table>
