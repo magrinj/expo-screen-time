@@ -1,0 +1,5 @@
+# Optional host-only signed W-R5 fixture. Install in an ignored virtualenv.
+dnspython[dnssec]==2.9.2
+cryptography==50.0.2
+cffi==2.1.1
+pycparser==3.12

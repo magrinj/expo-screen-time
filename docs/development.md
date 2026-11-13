@@ -138,12 +138,17 @@ Accepted values are `never`, `whenNoVpn` and `always`. Changing the policy only
 persists it. At boot, `whenNoVpn` observes VPN callbacks for three seconds and
 prepares the filter only if none was seen and consent is still granted. A
 required dialog is never shown from boot. After displacement, a user-initiated
-permission request selecting `vpn` is required to reclaim the slot.
+permission request selecting `vpn` is required to reclaim the slot. Cancellation
+returns `denied` with `detail: "cancelled"` until a later consent event.
 
 Both transports use the underlay's first advertised DNS server without resolver
-fallback. Unknown boot identity prevents startup and opens a web gap while
-domains are wanted. Preview gaps retain at most 256 entries;
+fallback. Relayed TTLs are capped at 60 seconds; existing cache entries and open
+connections are not evicted. Unknown boot identity prevents startup and opens a
+web gap while domains are wanted. Preview gaps retain at most 256 entries;
 `unblockAll` also clears web domains. Logs use the `ExpoScreenTimeWeb` tag.
+
+For emulator fixtures, capture commands and their limits, see the
+[device-test harness](../scripts/android-web-tests/README.md).
 
 ## Example app as test bench
 
