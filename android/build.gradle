@@ -4,13 +4,13 @@ plugins {
 }
 
 group = 'expo.modules.screentime'
-version = '0.3.0' // x-release-please-version
+version = '0.3.1' // x-release-please-version
 
 android {
   namespace "expo.modules.screentime"
   defaultConfig {
     versionCode 1
-    versionName "0.3.0" // x-release-please-version
+    versionName "0.3.1" // x-release-please-version
   }
   lintOptions {
     abortOnError false
