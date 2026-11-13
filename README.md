@@ -120,6 +120,11 @@ bun run ios       # or bun run android
   </tr>
 </table>
 
+<p align="center">
+  <a href="https://useffect.sh/seal/magrinj/expo-screen-time"><img width="120" src="https://useffect.sh/seal/magrinj/expo-screen-time.svg" alt="Maintained by useffect.sh"></a><br />
+  <sub>Jérémy and Armand are part of <a href="https://useffect.sh">useffect.sh</a>, a collective of senior React Native engineers.</sub>
+</p>
+
 ### Contributors
 
 <a href="https://github.com/magrinj/expo-screen-time/graphs/contributors">
