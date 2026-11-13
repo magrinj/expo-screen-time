@@ -73,7 +73,7 @@ export default async function HomePage() {
             Block apps, run schedules and draw the shield on iOS and Android from one TypeScript API. Built for Expo. If you ship a focus, wellbeing or parental‑control app, this is the native layer.
           </p>
           <Install />
-          <span className="text-[13px] text-dim">Requires Expo SDK 56+, iOS 16+ and Android 7+. MIT licensed.</span>
+          <span className="text-[13px] text-dim">Requires Expo SDK 54+, iOS 16+ and Android 7+. MIT licensed.</span>
         </div>
       </section>
 
