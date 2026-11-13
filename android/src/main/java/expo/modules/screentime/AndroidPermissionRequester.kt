@@ -12,6 +12,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.database.ContentObserver
 import android.net.Uri
+import android.net.VpnService
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -28,6 +29,7 @@ import expo.modules.screentime.PermissionSteps.Kind
 import expo.modules.screentime.PermissionSteps.Status
 import expo.modules.screentime.PermissionSteps.Step
 import expo.modules.screentime.PermissionSteps.StepId
+import expo.modules.screentime.web.WebState
 
 /**
  * Reads and requests the Android permission steps. The model (which steps,
@@ -72,6 +74,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
   /** The `accessibility` step's return-after-permission watch; same lifetime rules as [appOpsWatch]. */
   @Volatile
   private var accessibilityWatch: ContentObserver? = null
+  private var vpnDone: (() -> Unit)? = null
 
   // MARK: - Entry points
 
@@ -88,7 +91,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
     val current = steps(features, child)
     val id = step ?: PermissionSteps.nextStep(current)
     val target = current.firstOrNull { it.id == id }
-    if (target == null || target.status == Status.granted || !target.canPrompt) {
+    if (target == null || (target.status == Status.granted && !(step == StepId.vpn && build().vpn)) || !target.canPrompt) {
       promise.resolve(PermissionSteps.response(current))
       return
     }
@@ -96,6 +99,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
     store.markPermissionRequested(target.id.name)
     when (target.id) {
       StepId.notifications -> requestNotifications(resolveFresh)
+      StepId.vpn -> requestVpn(resolveFresh)
       else -> openScreen(target.id, resolveFresh)
     }
   }
@@ -116,6 +120,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
     stopWatchingAppOps()
     stopWatchingAccessibility()
     synchronized(waiters) { waiters.clear() }
+    vpnDone = null
   }
 
   // MARK: - Statuses
@@ -130,6 +135,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
   }
 
   private fun read(id: StepId): Pair<Status, Boolean> = when (id) {
+    StepId.vpn -> store.read { Status.valueOf(WebState.consent(it).status) to true }
     // A low-RAM (Go) device never grants the overlay: nothing to open.
     StepId.overlay -> if (!Settings.canDrawOverlays(context) && isLowRamDevice()) Status.restricted to false
       else toggle(id, Settings.canDrawOverlays(context), restricted = isRestrictedSettings())
@@ -214,6 +220,51 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
 
   // MARK: - Requests
 
+  private fun requestVpn(done: () -> Unit) {
+    Handler(Looper.getMainLooper()).post {
+      if (!build().vpn) { done(); return@post }
+      if (vpnDone != null) { done(); return@post }
+      val activity = appContext.currentActivity
+      if (activity == null) {
+        store.setPermissionError("vpn", "noActivity", "No foreground activity for VPN consent; request again when the app is visible")
+        done()
+        return@post
+      }
+      val intent = try { VpnService.prepare(context) } catch (failure: Exception) {
+        vpnUnavailable(failure, done)
+        return@post
+      }
+      store.setPermissionError("vpn", null, null)
+      if (intent == null) {
+        WebPreviewController.event(context, WebState.Event.prepared)
+        WebPreviewController.sync(context, "permission")
+        done()
+      } else {
+        vpnDone = done
+        try { activity.startActivityForResult(intent, VPN_REQUEST) } catch (failure: Exception) {
+          vpnDone = null
+          vpnUnavailable(failure, done)
+        }
+      }
+    }
+  }
+
+  private fun vpnUnavailable(failure: Exception, done: () -> Unit) {
+    WebPreviewController.event(context, WebState.Event.restricted)
+    store.setPermissionError("vpn", "restricted", failure.message ?: "VPN consent activity unavailable")
+    WebPreviewController.sync(context, "permission")
+    done()
+  }
+
+  fun onVpnResult(requestCode: Int, resultCode: Int) {
+    if (requestCode != VPN_REQUEST || !build().vpn) return
+    val done = vpnDone ?: return
+    vpnDone = null
+    WebPreviewController.event(context, if (resultCode == Activity.RESULT_OK) WebState.Event.dialogGranted else WebState.Event.dialogCancelled)
+    WebPreviewController.sync(context, "permission")
+    done()
+  }
+
   private fun requestNotifications(done: () -> Unit) {
     val permissions = appContext.permissions
     if (permissions == null) {
@@ -297,7 +348,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
         },
         Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS),
       )
-      StepId.notifications, StepId.screenTime -> emptyList()
+      StepId.notifications, StepId.screenTime, StepId.vpn -> emptyList()
     }
   }
 
@@ -400,6 +451,7 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
   }
 
   companion object {
+    private const val VPN_REQUEST = 0x5356
     private const val OPSTR_ACCESS_RESTRICTED_SETTINGS = "android:access_restricted_settings"
     /** `Settings.ACTION_ACCESSIBILITY_DETAILS_SETTINGS` (Android 10+), not in the public SDK: the one service's page, by `EXTRA_COMPONENT_NAME`. */
     private const val ACTION_ACCESSIBILITY_DETAILS_SETTINGS = "android.settings.ACCESSIBILITY_DETAILS_SETTINGS"

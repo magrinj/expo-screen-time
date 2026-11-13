@@ -6,11 +6,34 @@ plugins {
 group = 'expo.modules.screentime'
 version = '0.3.0' // x-release-please-version
 
+def webPreview = providers.gradleProperty('expoScreenTime.webPreview').orNull == 'true'
+def webPreviewFgsType = providers.gradleProperty('expoScreenTime.webPreviewFgsType').getOrElse('systemExempted')
+if (webPreview && !(webPreviewFgsType in ['none', 'systemExempted', 'specialUse'])) {
+  throw new GradleException('expoScreenTime.webPreviewFgsType must be none, systemExempted, or specialUse')
+}
+
 android {
   namespace "expo.modules.screentime"
+  buildFeatures { buildConfig true }
   defaultConfig {
     versionCode 1
     versionName "0.3.0" // x-release-please-version
+    buildConfigField 'boolean', 'WEB_PREVIEW', 'false'
+    buildConfigField 'String', 'WEB_PREVIEW_FGS_TYPE', '"none"'
+  }
+  buildTypes {
+    debug {
+      if (webPreview) {
+        buildConfigField 'boolean', 'WEB_PREVIEW', 'true'
+        buildConfigField 'String', 'WEB_PREVIEW_FGS_TYPE', '"' + webPreviewFgsType + '"'
+      }
+    }
+  }
+  if (webPreview) {
+    sourceSets.debug {
+      java.srcDir 'src/webPreview/java'
+      manifest.srcFile "src/webPreview/${webPreviewFgsType}/AndroidManifest.xml"
+    }
   }
   lintOptions {
     abortOnError false

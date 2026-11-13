@@ -3,6 +3,7 @@
 package expo.modules.screentime
 
 import android.content.Context
+import expo.modules.screentime.web.WebState
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -212,11 +213,12 @@ internal class StateStore(private val directory: File) {
    * reads a block, a schedule or a restriction without the desire to run,
    * or the reverse.
    */
-  fun syncEngineDesired(document: JSONObject) {
+  fun syncEngineDesired(document: JSONObject, webBuilt: Boolean = false) {
     val desired = ManualBlock.fromJson(document.optJSONObject(BLOCKS)?.optJSONObject(MANUAL)) != null ||
       MonitoringDocument.read(document).activities.isNotEmpty() ||
       Restrictions.fromJson(document.optJSONObject(RESTRICTIONS)).any
     engine(document).put(DESIRED, desired)
+    if (webBuilt) WebState.record(document).put("desired", WebState.desired(document))
   }
 
   // MARK: - Shield configuration

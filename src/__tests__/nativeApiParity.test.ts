@@ -43,6 +43,9 @@ function parseKotlin(): {
   functions: Fn[];
   defined: Fn[];
   implemented: string[];
+  previewDefined: Fn[];
+  previewImplemented: string[];
+  previewGated: boolean;
   views: string[];
   events: string[];
 } {
@@ -65,8 +68,8 @@ function parseKotlin(): {
   const events = [...module.matchAll(/^\s*Events\(([^)]*)\)/gm)].flatMap((m) =>
     [...m[1].matchAll(/"(\w+)"/g)].map((e) => e[1]),
   );
-  const defined = [
-    ...module.matchAll(/^\s*(AsyncFunction|Function)\("(\w+)"\)\s*\{([^\n]*)/gm),
+  const parseDefinitions = (source: string): Fn[] => [
+    ...source.matchAll(/^\s*(AsyncFunction|Function)\("(\w+)"\)\s*\{([^\n]*)/gm),
   ].map((m) => {
     const head = /^([^{}]*?)->/.exec(m[3])?.[1] ?? "";
     const params = [...head.matchAll(/(\w+)\s*:\s*(\w+)/g)].filter(
@@ -82,7 +85,23 @@ function parseKotlin(): {
     ...(/IMPLEMENTED: Set<String> = setOf\(([^)]*)\)/.exec(registry)?.[1] ?? "")
       .matchAll(/"(\w+)"/g),
   ].map((m) => m[1]);
-  return { functions, defined, implemented, views, events };
+  // Match the whole conditional block, including handlers with nested bodies.
+  const previewBlock =
+    /^    if \(webBuilt\) \{\n[\s\S]*?^    \}/m.exec(module)?.[0] ?? "";
+  const defined = parseDefinitions(module.replace(previewBlock, ""));
+  const previewDefined = parseDefinitions(previewBlock);
+  const preview = read(
+    "android/src/main/java/expo/modules/screentime/WebPreviewController.kt",
+  );
+  const previewImplemented = [
+    ...(/val functions = setOf\(([^)]*)\)/.exec(preview)?.[1] ?? "")
+      .matchAll(/"(\w+)"/g),
+  ].map((m) => m[1]);
+  const previewGated = /^\s*val webBuilt = BuildConfig\.WEB_PREVIEW && build\.vpn\s*$/m.test(module);
+  return {
+    functions, defined, implemented, previewDefined, previewImplemented,
+    previewGated, views, events,
+  };
 }
 
 function parseTypeScript(): string[] {
@@ -128,9 +147,20 @@ describe("native API parity (TS ↔ Swift ↔ Kotlin)", () => {
     );
   });
 
+  it("preview definitions match their registry and stay behind the build and manifest gates", () => {
+    expect(kotlin.previewGated).toBe(true);
+    expect(kotlin.previewDefined).toHaveLength(4);
+    expect(kotlin.previewDefined.map((f) => f.name).sort()).toEqual(
+      [...kotlin.previewImplemented].sort(),
+    );
+    expect(
+      kotlin.previewImplemented.filter((name) => kotlin.implemented.includes(name)),
+    ).toEqual([]);
+  });
+
   it("each real Kotlin definition matches Swift's arity and kind", () => {
     const s = byName(swift.functions);
-    for (const f of kotlin.defined) {
+    for (const f of [...kotlin.defined, ...kotlin.previewDefined]) {
       expect(f).toEqual(s[f.name]);
     }
   });
