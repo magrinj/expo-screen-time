@@ -40,12 +40,12 @@ internal object PermissionSteps {
   /** `ScreenTimePermissionOptions.features` when absent. */
   val defaultFeatures = listOf(Feature.blocking, Feature.monitoring)
 
-  /** Every id of the contract's `PermissionStepId`. */
-  enum class StepId { screenTime, usageAccess, overlay, accessibility, notifications, batteryOptimization, backgroundAutostart, deviceAdmin }
+  /** Public `PermissionStepId` values plus `vpn`, reserved for the internal web preview. */
+  enum class StepId { screenTime, usageAccess, overlay, accessibility, notifications, batteryOptimization, backgroundAutostart, deviceAdmin, vpn }
 
   /** The ids Android has a step for (the usageStats engine, and the accessibility detector in a build that declares it). */
   val androidStepIds: Set<StepId> = setOf(
-    StepId.overlay, StepId.usageAccess, StepId.accessibility, StepId.notifications, StepId.deviceAdmin, StepId.batteryOptimization, StepId.backgroundAutostart
+    StepId.overlay, StepId.usageAccess, StepId.accessibility, StepId.notifications, StepId.deviceAdmin, StepId.batteryOptimization, StepId.backgroundAutostart, StepId.vpn
   )
 
   enum class Status { granted, denied, undetermined, restricted, unknown }
@@ -125,6 +125,7 @@ internal object PermissionSteps {
     if (from == null) return RequestedStep.Next
     val name = from as? String ?: return RequestedStep.Unknown(from.toString())
     val id = StepId.values().firstOrNull { it.name == name } ?: return RequestedStep.Unknown(name)
+    if (id == StepId.vpn && !build.vpn) return RequestedStep.Unknown(name)
     return when {
       id !in androidStepIds -> RequestedStep.NotOnThisPlatform(name)
       id == StepId.accessibility && !build.accessibility -> RequestedStep.NotInBuild(name)
@@ -145,6 +146,7 @@ internal object PermissionSteps {
     val plans = mutableListOf<Plan>()
     if (engine && build.shield) plans.add(Plan(StepId.overlay, required = true, kind = Kind.settings))
     if (build.usageAccess && (engine || Feature.usageReports in features)) plans.add(Plan(StepId.usageAccess, required = true, kind = Kind.settings))
+    if (build.vpn && Feature.webDomainBlocking in features) plans.add(Plan(StepId.vpn, required = true, kind = Kind.prompt))
     // The coverage step, after the required ones and before the reliability
     // ones: the detector only serves the shield (never for monitoring,
     // usage reports or removal protection alone), and is recommended
