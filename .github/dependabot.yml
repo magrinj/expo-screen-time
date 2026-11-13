@@ -21,8 +21,9 @@ updates:
       # longer satisfies @expo/config-plugins@58's ^0.10.1).
       - dependency-name: "react-native"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # Expo pins react to an exact version (React Native bundles a renderer
+      # for it): even a patch breaks the pair, so react only moves with the SDK.
       - dependency-name: "react"
-        update-types: ["version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "@types/react"
         update-types: ["version-update:semver-minor", "version-update:semver-major"]
       - dependency-name: "expo"

@@ -44,7 +44,8 @@ API design, commits/releases, dependencies, packaging, docs. The load-bearing on
 
 `react`, `react-native`, `@types/react`, `expo`, `expo-module-scripts`,
 `@expo/plist` are **pinned to the Expo SDK** (currently SDK 58 / RN 0.88 / React
-19.3). Patches are fine; minor/major jumps happen only as part of a deliberate
+19.3). Patches are fine, except for `react`: Expo pins its exact version, so it
+moves only with the SDK. Minor/major jumps happen only as part of a deliberate
 SDK upgrade. `dependabot.yml` encodes this with `ignore` rules — keep it in sync
 when the dep set changes. Sanity check for `@expo/*` bumps: the new version must
 still satisfy what `@expo/config-plugins@<SDK>` requires (e.g. `@expo/plist@0.11`
