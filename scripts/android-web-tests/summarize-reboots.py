@@ -33,7 +33,7 @@ def summarize(path):
         "oneActualReboot": current_boot == trial["beforeBoot"] + 1 == trial.get("afterBoot"),
         "bothReceiversObserved": bool(boots and boot_rows),
         "alwaysOnOff": (checkpoint / "always-on.txt").read_text().strip() == "null",
-        "lockdownOff": (checkpoint / "lockdown.txt").read_text().strip() == "0",
+        "lockdownOff": (checkpoint / "lockdown.txt").read_text().strip() in ("0", "null"),
         "noNewConsentResult": web["consent"]["dialogAt"] == before["consent"]["dialogAt"],
         "companionBootSetting": bool(boots and boots[-1]["detail"] == "delay=" + str(trial["companionDelayMs"])),
     }

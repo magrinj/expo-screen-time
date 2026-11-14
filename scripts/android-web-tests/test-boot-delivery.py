@@ -141,6 +141,18 @@ class BootDeliveryTest(unittest.TestCase):
             self.assertFalse(diagnostic['bootBroadcastDelivery']['schedulingDelayExceeds30Seconds'])
             self.assertEqual(absent['checks'], diagnostic['checks'])
 
+            # Fresh Android installs leave the disabled lockdown setting unset.
+            # Neither that default nor a failed setting read can waive the boot deadline.
+            for value, disabled in [('null\n', True), ('0\n', True), ('1\n', False),
+                                    ('', False), ('SecurityException: permission denied', False)]:
+                with self.subTest(lockdown=value):
+                    (root / 'after/lockdown.txt').write_text(value)
+                    result = summarizer.summarize(root)
+                    self.assertEqual(disabled, result['checks']['lockdownOff'])
+                    self.assertFalse(result['checks']['restoredWithin30SecondsOfBoot'])
+                    self.assertIn('restoredWithin30SecondsOfBoot', result['unmetChecks'])
+                    self.assertEqual(not disabled, 'lockdownOff' in result['unmetChecks'])
+
 
 if __name__ == '__main__':
     unittest.main()
