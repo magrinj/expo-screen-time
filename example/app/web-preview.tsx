@@ -3,7 +3,7 @@ import { Button, ScrollView, Text, TextInput } from "react-native";
 import ScreenTime from "expo-screen-time";
 
 type PreviewOptions = { features: ["webDomainBlocking"]; step?: "vpn" };
-type PreviewStep = { id: string; status: string };
+type PreviewStep = { id: string; status: string; detail?: "cancelled" };
 type PreviewGap = { from: number; to: number | null; reason: string; scope?: "webDomains" };
 
 const preview = ScreenTime as unknown as {

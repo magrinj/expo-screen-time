@@ -72,6 +72,8 @@ internal object PermissionSteps {
      * user blocked it (Android then only offers Settings).
      */
     val canPrompt: Boolean = true,
+    /** Internal VPN preview outcome; absent from ordinary permission steps. */
+    val detail: String? = null,
   ) {
     fun toMap(): Map<String, Any> {
       val map = mutableMapOf<String, Any>(
@@ -81,6 +83,7 @@ internal object PermissionSteps {
         "kind" to kind.name,
       )
       error?.let { map["error"] = mapOf("code" to it.code, "message" to it.message) }
+      detail?.let { map["detail"] = it }
       return map
     }
   }

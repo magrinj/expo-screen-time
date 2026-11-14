@@ -128,29 +128,34 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
   private fun steps(features: List<PermissionSteps.Feature>, child: Boolean): List<Step> {
     val device = PermissionSteps.Device(Build.VERSION.SDK_INT, VendorAutostart.screens().isNotEmpty())
     return PermissionSteps.plan(features, child, device, build()).map { plan ->
-      val (status, canPrompt) = read(plan.id)
-      val error = if (status == Status.granted) null else store.permissionError(plan.id.name)?.let { PermissionSteps.StepError(it.first, it.second) }
-      Step(plan.id, status, plan.required, plan.kind, error, canPrompt)
+      val step = read(plan)
+      val error = if (step.status == Status.granted) null else store.permissionError(plan.id.name)?.let { PermissionSteps.StepError(it.first, it.second) }
+      step.copy(error = error)
     }
   }
 
-  private fun read(id: StepId): Pair<Status, Boolean> = when (id) {
-    StepId.vpn -> store.read { Status.valueOf(WebState.consent(it).status) to true }
-    // A low-RAM (Go) device never grants the overlay: nothing to open.
-    StepId.overlay -> if (!Settings.canDrawOverlays(context) && isLowRamDevice()) Status.restricted to false
-      else toggle(id, Settings.canDrawOverlays(context), restricted = isRestrictedSettings())
-    StepId.usageAccess -> toggle(id, hasUsageAccess(), restricted = isRestrictedSettings())
-    StepId.deviceAdmin -> toggle(id, isDeviceAdminActive(), restricted = isRestrictedSettings())
-    StepId.batteryOptimization -> toggle(id, isIgnoringBatteryOptimizations(), restricted = false)
-    StepId.notifications -> notificationsStatus()
-    StepId.backgroundAutostart -> Status.unknown to true
-    // Advanced Protection first: it blocks the service whatever the toggle says. Restricted
-    // settings lock the accessibility toggle from Android 13 (two releases before the others).
-    StepId.accessibility -> when {
-      AccessibilityHealth.isBlockedByAdvancedProtection(context) -> Status.restricted to true
-      else -> toggle(id, AccessibilityHealth.isEnabled(context), restricted = isRestrictedSettings(since = Build.VERSION_CODES.TIRAMISU))
+  private fun read(plan: PermissionSteps.Plan): Step {
+    val id = plan.id
+    val (status, canPrompt) = when (id) {
+      StepId.vpn -> return store.read { WebPermissionStep.read(plan, it) }
+      // A low-RAM (Go) device never grants the overlay: nothing to open.
+      StepId.overlay -> if (!Settings.canDrawOverlays(context) && isLowRamDevice()) Status.restricted to false
+        else toggle(id, Settings.canDrawOverlays(context), restricted = isRestrictedSettings())
+      StepId.usageAccess -> toggle(id, hasUsageAccess(), restricted = isRestrictedSettings())
+      StepId.deviceAdmin -> toggle(id, isDeviceAdminActive(), restricted = isRestrictedSettings())
+      StepId.batteryOptimization -> toggle(id, isIgnoringBatteryOptimizations(), restricted = false)
+      StepId.notifications -> notificationsStatus()
+      StepId.backgroundAutostart -> Status.unknown to true
+      // Advanced Protection first: it blocks the service whatever the toggle says. Restricted
+      // settings lock the accessibility toggle from Android 13 (two releases before the others).
+      StepId.accessibility -> when {
+        AccessibilityHealth.isBlockedByAdvancedProtection(context) -> Status.restricted to true
+        else -> toggle(id, AccessibilityHealth.isEnabled(context), restricted = isRestrictedSettings(since = Build.VERSION_CODES.TIRAMISU))
+      }
+      StepId.screenTime -> Status.unknown to false
     }
-    StepId.screenTime -> Status.unknown to false
+
+    return Step(id, status, plan.required, plan.kind, canPrompt = canPrompt)
   }
 
   /**

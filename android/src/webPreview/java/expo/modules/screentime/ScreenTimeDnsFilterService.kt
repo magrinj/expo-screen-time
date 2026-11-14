@@ -60,7 +60,7 @@ import java.util.concurrent.TimeUnit
  * conservatively <4 MiB payload/name storage including handoff, plus a shared 64 KiB
  * read buffer. Socket/object overhead and transient worker teardown are additional;
  * this bounds application buffers, not process RSS. UDP uses no per-query thread.
- * The notice uses the engine channel with its own id 0x5357.
+ * The notice uses the engine channel with a separate id to avoid replacing its notice.
  * Upstream selection uses the first server advertised by the underlay for both
  * transports; there is no resolver fallback. Bind/protect retries use the
  * next physical-network update, not a hard-coded resolver.
@@ -433,7 +433,7 @@ class ScreenTimeDnsFilterService : VpnService() {
             val bytes = buffer.array().copyOf(size)
             if (!deliver {
               if (pending[request.key] === request && tunnel === request.owner) {
-                when (val response = DnsMessage.relay(request.query, bytes, request.packet.family)) {
+                when (val response = DnsMessage.relay(request.query, bytes, request.packet.family, ttlCapSeconds = TTL_CAP_SECONDS)) {
                   DnsMessage.RelayResult.Discard -> count("udp-mismatch")
                   is DnsMessage.RelayResult.Answered -> { count("udp-answered", dropped = false); udpAnswer(request.packet, response.bytes); removeUdp(request) }
                   is DnsMessage.RelayResult.Servfail -> { udpAnswer(request.packet, response.bytes); removeUdp(request) }
@@ -532,11 +532,15 @@ class ScreenTimeDnsFilterService : VpnService() {
                 if (read < 0) throw java.io.EOFException()
                 offset += read
               }
-              if (DnsMessage.relay(request.query, answer, flow.family, tcp = true) == DnsMessage.RelayResult.Discard) {
-                deliver { count("tcp-mismatch") }
-                continue
+              val relayed = when (val response = DnsMessage.relay(request.query, answer, flow.family, tcp = true, ttlCapSeconds = TTL_CAP_SECONDS)) {
+                DnsMessage.RelayResult.Discard -> {
+                  deliver { count("tcp-mismatch") }
+                  continue
+                }
+                is DnsMessage.RelayResult.Answered -> response.bytes
+                is DnsMessage.RelayResult.Servfail -> response.bytes
               }
-              deliver { if (connections[flow] === this) output(this, responder.complete(request.key, answer, now())) }
+              deliver { if (connections[flow] === this) output(this, responder.complete(request.key, relayed, now())) }
               break
             }
           } catch (_: Exception) {
@@ -684,5 +688,10 @@ class ScreenTimeDnsFilterService : VpnService() {
     if (count and (count - 1) == 0L) Log.i(TAG, "web ${if (dropped) "drop" else "traffic"} reason=$reason count=$count")
   }
   private fun now(): Long = SystemClock.elapsedRealtime()
-  companion object { private const val TAG = WebPreviewController.TAG }
+  companion object {
+    private const val TAG = WebPreviewController.TAG
+    // In-place DNS-pair swaps preserve the native answer cache. Bound newly learned
+    // answers without replacing the network; older caches and existing connections survive.
+    private const val TTL_CAP_SECONDS = 60
+  }
 }
