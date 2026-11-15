@@ -2,8 +2,8 @@
 
 The two durations printed by BroadcastRecord are scheduledTime - enqueueTime
 and terminalTime - scheduledTime. They are neither time since boot nor the
-receiver's onReceive execution time. Keep this evidence separate from W-R6's
-existing end-to-end deadline check.
+receiver's onReceive execution time. boot_recovery combines them with independent
+clock anchors to bound establishment latency; the total boot delay stays visible.
 """
 import hashlib
 from pathlib import Path
@@ -76,7 +76,7 @@ def read_delivery(path):
     result = {'available': False, 'source': str(path),
               'clock': 'Android uptime durations printed by BroadcastRecord',
               'queueCauseEstablished': False,
-              'note': 'Diagnostic only; does not replace the end-to-end boot deadline.'}
+              'note': 'Delivery durations alone do not prove recovery; retain total boot downtime.'}
     try:
         with path.open('rb') as stream:
             raw = stream.read(MAX_BYTES + 1)

@@ -105,17 +105,18 @@ class BootDeliveryTest(unittest.TestCase):
             self.assertTrue(result['available'])
             self.assertEqual(64, len(result['sha256']))
             self.assertFalse(result['queueCauseEstablished'])
-            self.assertIn('does not replace', result['note'])
+            self.assertIn('alone do not prove recovery', result['note'])
 
 
-    def test_diagnostic_never_replaces_the_boot_deadline(self):
+    def test_delivery_only_cannot_validate_recovery_or_hide_total_delay(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'before').mkdir()
             (root / 'after').mkdir()
             before = {'consent': {'at': 999000, 'dialogAt': 999000}}
             after = {'consent': {'status': 'granted', 'preparedBootCount': 2, 'dialogAt': 999000},
-                     'running': True, 'run': {'bootCount': 2}, 'gaps': []}
+                     'running': True, 'run': {'bootCount': 2, 'start': 1105000},
+                     'gaps': [{'kind': 'reboot', 'reason': 'unknown', 'from': 1000000, 'to': 1105000}]}
             (root / 'before/state.json').write_text(json.dumps({'web': before}))
             (root / 'after/state.json').write_text(json.dumps({'web': after}))
             (root / 'trial.json').write_text(json.dumps({'policy': 'whenNoVpn', 'companionDelayMs': -1,
@@ -132,7 +133,8 @@ class BootDeliveryTest(unittest.TestCase):
             absent = summarizer.summarize(root)
             self.assertFalse(absent['bootBroadcastDelivery']['available'])
             self.assertEqual(105, absent['firstEstablishmentSecondsFromBoot'])
-            self.assertEqual(['restoredWithin30SecondsOfBoot'], absent['unmetChecks'])
+            self.assertFalse(absent['historicalChecks']['restoredWithin30SecondsOfBoot'])
+            self.assertEqual(['restoredWithin30SecondsOfBootSignal'], absent['unmetChecks'])
             (root / 'diagnostics').mkdir()
             (root / 'diagnostics/broadcasts.txt').write_text(
                 record(timing='DELIVERED scheduled +1s terminal +2ms (-1)'))
@@ -142,15 +144,16 @@ class BootDeliveryTest(unittest.TestCase):
             self.assertEqual(absent['checks'], diagnostic['checks'])
 
             # Fresh Android installs leave the disabled lockdown setting unset.
-            # Neither that default nor a failed setting read can waive the boot deadline.
+            # Neither that default nor a failed read can waive the recovery evidence.
             for value, disabled in [('null\n', True), ('0\n', True), ('1\n', False),
                                     ('', False), ('SecurityException: permission denied', False)]:
                 with self.subTest(lockdown=value):
                     (root / 'after/lockdown.txt').write_text(value)
                     result = summarizer.summarize(root)
                     self.assertEqual(disabled, result['checks']['lockdownOff'])
-                    self.assertFalse(result['checks']['restoredWithin30SecondsOfBoot'])
-                    self.assertIn('restoredWithin30SecondsOfBoot', result['unmetChecks'])
+                    self.assertFalse(result['historicalChecks']['restoredWithin30SecondsOfBoot'])
+                    self.assertFalse(result['checks']['restoredWithin30SecondsOfBootSignal'])
+                    self.assertIn('restoredWithin30SecondsOfBootSignal', result['unmetChecks'])
                     self.assertEqual(not disabled, 'lockdownOff' in result['unmetChecks'])
 
 

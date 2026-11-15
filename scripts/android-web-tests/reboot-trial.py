@@ -70,6 +70,22 @@ def main():
         subprocess.run([sys.executable, str(Path(__file__).with_name("capture.py")), "--serial", args.serial,
                         "--adb", args.adb, "--output", str(args.output / name)], check=True)
 
+    def capture_boot_diagnostics():
+        directory = args.output / 'diagnostics'
+        directory.mkdir()
+        metadata = {'bootBefore': int(adb('shell', 'settings', 'get', 'global', 'boot_count')), 'commands': {}}
+        commands = {
+            'broadcasts': ['shell', 'dumpsys', 'activity', 'broadcasts'],
+            'web-log-monotonic': ['logcat', '-d', '-v', 'monotonic', 'ExpoScreenTimeWeb:I', 'WebFilterTest:I', '*:S'],
+        }
+        for name, command in commands.items():
+            result = subprocess.run([args.adb, '-s', args.serial, *command], text=True,
+                                    capture_output=True, timeout=30)
+            (directory / (name + '.txt')).write_text(result.stdout)
+            metadata['commands'][name] = {'args': command, 'returncode': result.returncode, 'stderr': result.stderr}
+        metadata['bootAfter'] = int(adb('shell', 'settings', 'get', 'global', 'boot_count'))
+        (directory / 'capture.json').write_text(json.dumps(metadata, indent=2) + '\n')
+
     capture("before")
     save()
     print("Rebooting explicitly selected emulator " + args.serial, flush=True)
@@ -107,6 +123,7 @@ def main():
                 break
             time.sleep(1)
         capture("after")
+        capture_boot_diagnostics()
         trial["finishedAt"] = datetime.now(timezone.utc).isoformat()
         print(json.dumps({"output": str(args.output), "boot": trial["afterBoot"],
                           "vpnOwners": sample["vpnOwners"], "consent": sample["web"]["consent"],

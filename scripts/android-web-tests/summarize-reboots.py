@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 
 from boot_delivery import read_delivery
+from boot_recovery import read_recovery
 
 
 FILTER = "expo.modules.screentime.example"
@@ -61,15 +62,27 @@ def summarize(path):
     rows = re.findall(r"^\s*([\d.]+).*ExpoScreenTimeWeb: web established", logs, flags=re.MULTILINE)
     boot_epoch = (boots[-1]["at"] - boots[-1]["elapsed"]) / 1000 if boots else None
     establishment_seconds = round(float(rows[0]) - boot_epoch, 3) if rows and boot_epoch else None
+    recovery = read_recovery(path, logs, boots, web.get('run', {}), current_boot)
     if policy == "whenNoVpn" and not companion_on:
-        checks["restoredWithin30SecondsOfBoot"] = establishment_seconds is not None and establishment_seconds <= 30
+        checks["restoredWithin30SecondsOfBootSignal"] = recovery['available'] and recovery['within30Seconds']
+        checks["captureComplete"] = not trial.get('error') and not trial.get('receiverObservationIncomplete', False)
+        checks["rebootGapRecorded"] = boot_epoch is not None and any(
+            gap.get('reason') == 'unknown' and gap.get('kind') == 'reboot'
+            and isinstance(gap.get('from'), (int, float))
+            and abs(gap['from'] - boot_epoch * 1000) <= 1000
+            and gap.get('to') is not None and gap['to'] == web.get('run', {}).get('start')
+            for gap in web.get('gaps', []))
     return {"trial": path.name, "boot": current_boot, "policy": policy,
             "companionDelayMs": trial["companionDelayMs"], "vpnOwners": owners,
             "consent": web["consent"]["status"], "openGaps": gaps,
+            "rebootGaps": [gap for gap in web.get('gaps', []) if gap.get('kind') == 'reboot'],
             "storedRunning": web.get("running"), "storedRunBoot": web.get("run", {}).get("bootCount"),
             "companionBootCallbackSeconds": round(boots[-1]["elapsed"] / 1000, 3) if boots else None,
             "checkpointSecondsAfterCompanionBootCallback": round(uptime - boots[-1]["elapsed"] / 1000, 3) if boots else None,
             "firstEstablishmentSecondsFromBoot": establishment_seconds,
+            "historicalChecks": {"restoredWithin30SecondsOfBoot":
+                establishment_seconds is not None and 0 <= establishment_seconds <= 30},
+            "recoveryFromBootSignal": recovery,
             "filterBootLog": boot_rows, "checks": checks,
             "bootBroadcastDelivery": read_delivery(path / "diagnostics/broadcasts.txt"),
             "unmetChecks": [name for name, passed in checks.items() if not passed],

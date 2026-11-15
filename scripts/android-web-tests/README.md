@@ -60,14 +60,23 @@ Use fresh output directories. `capture.py` reads system state, filtered logs
 and web state without dumping the install secret or selections. The reboot
 runner checks policy/consent/ownership before rebooting and requires the boot
 count to increase. It observes receiver delivery plus 30 seconds, bounded at
-240 seconds after `sys.boot_completed=1`. Keep receiver delays separate from
-time since boot; missing receivers and unmet deadlines stay explicit. Opening
+240 seconds after `sys.boot_completed=1`. The `whenNoVpn` recovery deadline with
+the companion disabled is 30 seconds from Android scheduling the filter's boot
+receiver. Total time since boot remains a separate measurement, alongside the
+historical boot-relative check. There is no guarantee before the user's first
+unlock. The summary retains closed reboot gaps and checks that the interruption
+starts at the estimated boot time (within one second) and closes at the recorded
+tunnel start. Missing receivers and unmet deadlines stay explicit. Opening
 the example during this interval contaminates automatic-start evidence.
 
-When retained, `diagnostics/broadcasts.txt` supplies enqueue/schedule/terminal
-durations via `boot_delivery.py`. These are system-delivery observations, not
-receiver CPU time or proof of an internal queue cause. Persisted `running=true`
-alone does not prove current-boot liveness.
+The runner retains `diagnostics/broadcasts.txt` and `web-log-monotonic.txt`.
+`boot_recovery.py` correlates both receivers in the same broadcast with the
+companion's synchronous event, epoch logs and the current service PID. It bounds
+scheduling-to-establishment latency using the companion's whole callback window;
+the upper bound must meet the deadline. Missing or conflicting clocks, detected
+suspend, ambiguous events and failed captures leave the measurement unavailable.
+Delivery durations alone are neither receiver CPU time nor proof of an internal
+queue cause. Persisted `running=true` alone does not prove current-boot liveness.
 
 ## DNS caches and existing connections
 
