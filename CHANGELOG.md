@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.1](https://github.com/magrinj/expo-screen-time/compare/v0.3.0...v0.3.1) (2026-11-13)
+
+
+### Bug Fixes
+
+* **docs:** fetch the GitHub star count in the browser ([#3](https://github.com/magrinj/expo-screen-time/issues/3)) ([4e6e76e](https://github.com/magrinj/expo-screen-time/commit/4e6e76e2d0fd7bdc20de8e1236ca1e6a31ccb2e8))
+
 ## [0.3.0](https://github.com/magrinj/expo-screen-time/compare/v0.2.0...v0.3.0) (2026-11-13)
 
 

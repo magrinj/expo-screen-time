@@ -1,6 +1,6 @@
 {
   "name": "expo-screen-time",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "App blocking, schedules, shields and usage reports for Expo on iOS (Screen Time) and Android.",
   "main": "build/index.js",
   "types": "build/index.d.ts",
