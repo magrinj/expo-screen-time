@@ -85,22 +85,23 @@ declare class ExpoScreenTimeModule extends NativeModule<ExpoScreenTimeModuleEven
   isBlocked(): boolean;
   /**
    * Add domains to the persisted web-domain block.
-   * @platform ios
+   * Android filtering requires android.vpnDnsFilter and VPN consent; encrypted DNS,
+   * cached answers and existing connections may bypass filtering.
    */
   blockWebDomains(domains: string[]): void;
   /**
    * Remove domains from the web-domain block.
-   * @platform ios
+   * Android: available in builds with android.vpnDnsFilter, even without VPN consent.
    */
   unblockWebDomains(domains: string[]): void;
   /**
    * Clear the web-domain block.
-   * @platform ios
+   * Android: available in builds with android.vpnDnsFilter, even without VPN consent.
    */
   unblockAllWebDomains(): void;
   /**
    * Domains blocked via `blockWebDomains`; persisted across relaunches.
-   * @platform ios
+   * Android: available in builds with android.vpnDnsFilter, even without VPN consent.
    */
   getBlockedWebDomains(): string[];
 

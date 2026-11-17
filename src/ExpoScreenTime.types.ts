@@ -36,6 +36,8 @@ export type PermissionStepId =
   | "overlay"
   /** Android: Settings › Accessibility. */
   | "accessibility"
+  /** Android: local DNS VPN consent, in builds with android.vpnDnsFilter. */
+  | "vpn"
   /** iOS: for `shieldOpenApp`. Android 13+: the protection notice. */
   | "notifications"
   /** Android: the system's battery-optimization list (no permission is requested). */
@@ -76,6 +78,8 @@ export type PermissionStep = {
    * lifetime on iOS, across launches on Android.
    */
   error?: { code: string; message: string };
+  /** Android VPN dialog was cancelled; cleared by a later consent event. */
+  detail?: "cancelled";
 };
 
 /**
@@ -209,10 +213,11 @@ export type EnforcementGap = {
    * the blocked apps opened from a work profile, Private Space or a clone;
    * the main profile stayed enforced (the accessibility service, which
    * alone sees those profiles, was down while the UsageStats engine ran).
-   * Only in builds that opt into the accessibility engine.
+   * `webDomains`: the optional Android DNS filter was unavailable.
+   * Each scope is reported only when its service is included in the build.
    * @platform android
    */
-  scope?: "otherProfiles";
+  scope?: "otherProfiles" | "webDomains";
 };
 
 // ============================================================================

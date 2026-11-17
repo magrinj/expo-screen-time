@@ -61,9 +61,9 @@ internal object EngineController {
    * arrives, and the last intent always sees the latest state.
    */
   fun sync(context: Context, reason: String, done: ((Boolean) -> Unit)? = null) {
-    if (WebPreviewController.built(context)) {
-      val completed = WebPreviewController.both(done)
-      WebPreviewController.sync(context, reason, completed)
+    if (WebFilterController.built(context)) {
+      val completed = WebFilterController.both(done)
+      WebFilterController.sync(context, reason, completed)
       syncEngine(context, reason, completed)
     } else syncEngine(context, reason, done)
   }

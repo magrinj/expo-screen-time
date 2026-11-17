@@ -66,6 +66,8 @@ export type ScreenTimeAndroidOptions = {
    * the option off removes the entry again.
    */
   accessibilityEngine?: boolean;
+  /** Opt-in local DNS VPN. Requires webDomainBlocking; adds a Google Play VpnService declaration. Default false. */
+  vpnDnsFilter?: boolean;
 };
 
 /** The options with their defaults applied. */
@@ -73,6 +75,7 @@ export type ResolvedScreenTimeAndroidOptions = {
   parentalControl: boolean;
   features: AndroidFeature[];
   accessibilityEngine: boolean;
+  vpnDnsFilter: boolean;
 };
 
 /**
@@ -132,6 +135,14 @@ export type ManifestGate = {
   features: readonly AndroidFeature[];
 };
 
+export const VPN_SERVICE = 'expo.modules.screentime.ScreenTimeDnsFilterService';
+export const VPN_DNS_FILTER_WARNING =
+  '`android.vpnDnsFilter` declares a VpnService. Google Play requires the VPN declaration, ' +
+  'a consent-flow video and listing/in-app disclosures. Show disclosure before requesting the vpn step. ' +
+  'This DNS filter uses the device VPN slot; encrypted DNS, cached answers and existing connections can bypass it.';
+const VPN_PERMISSIONS = ['android.permission.INTERNET', 'android.permission.ACCESS_NETWORK_STATE',
+  'android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED'];
+
 const ENGINE = ['blocking', 'monitoring'] as const;
 
 /**
@@ -157,12 +168,11 @@ const ENGINE = ['blocking', 'monitoring'] as const;
  *   are plain Kotlin in the library, nothing in the manifest).
  * - `appRemovalProtection`: the device admin.
  * - `shieldOpenApp` (how a shield reaches the host app: direct on Android)
- *   and `webDomainBlocking` (not implemented on Android) need nothing of
- *   their own.
+ *   needs no component of its own; webDomainBlocking uses the opt-in VPN.
  */
 export const ANDROID_MANIFEST_GATES: readonly ManifestGate[] = [
   { kind: 'service', name: 'expo.modules.screentime.ScreenTimeEngineService', features: ENGINE },
-  { kind: 'receiver', name: 'expo.modules.screentime.ScreenTimeRestartReceiver', features: ENGINE },
+  { kind: 'receiver', name: 'expo.modules.screentime.ScreenTimeRestartReceiver', features: [...ENGINE, 'webDomainBlocking'] },
   { kind: 'activity', name: 'expo.modules.screentime.ShieldActivity', features: ['blocking'] },
   { kind: 'activity', name: 'expo.modules.screentime.PipEvictorActivity', features: ['blocking'] },
   {
@@ -214,10 +224,15 @@ export function getScreenTimeAndroidOptions(config: {
         `service only serves the shield. Add "blocking" to \`features\`, or turn \`accessibilityEngine\` off.`
     );
   }
+  const vpnDnsFilter = options.vpnDnsFilter === true;
+  if (vpnDnsFilter && !features.includes('webDomainBlocking')) {
+    throw new Error('[expo-screen-time] android.vpnDnsFilter needs "webDomainBlocking" in android.features.');
+  }
   return {
     parentalControl: options.parentalControl === true,
     features,
     accessibilityEngine,
+    vpnDnsFilter,
   };
 }
 
@@ -315,7 +330,7 @@ export function applyScreenTimeAndroidManifest(
 
   applyAccessibilityService(manifest, application, options.accessibilityEngine, declaredPermissions);
 
-  const removed = removedGates(options.features);
+  const removed = removedGates(options.vpnDnsFilter ? options.features : options.features.filter((f) => f !== 'webDomainBlocking'));
   // The ungated permissions are visited too, never as removed: a prebuild
   // from before they were ungated may have left our removal behind.
   const ungated: ManifestGate[] = ANDROID_UNGATED_PERMISSIONS.map((name) => ({ kind: 'uses-permission', name, features: [] }));
@@ -342,6 +357,7 @@ export function applyScreenTimeAndroidManifest(
     AndroidConfig.Manifest.ensureToolsAvailable(manifest);
     parent[gate.kind] = [...(elements ?? []), { $: { 'android:name': gate.name, [TOOLS_NODE]: 'remove' } }];
   }
+  applyVpnService(manifest, application, options.vpnDnsFilter, declaredPermissions, blockedPermissions);
   return manifest;
 }
 
@@ -400,8 +416,42 @@ function applyAccessibilityService(
   }
 }
 
+/** Optional VPN entries never appear in the library manifest or a default consumer. */
+function applyVpnService(
+  manifest: AndroidConfig.Manifest.AndroidManifest,
+  application: Record<string, any>,
+  enabled: boolean,
+  declaredPermissions: readonly string[],
+  blockedPermissions: readonly string[]
+): void {
+  const services: ManifestElement[] = application.service ?? [];
+  const others = services.filter((s) => s.$['android:name'] !== VPN_SERVICE);
+  if (enabled) others.push({
+    $: { 'android:name': VPN_SERVICE, 'android:exported': 'true', 'android:process': ':screentime',
+      'android:permission': 'android.permission.BIND_VPN_SERVICE', 'android:foregroundServiceType': 'systemExempted' },
+    'intent-filter': [{ action: [{ $: { 'android:name': 'android.net.VpnService' } }] }],
+    'meta-data': [{ $: { 'android:name': 'android.net.VpnService.SUPPORTS_ALWAYS_ON', 'android:value': 'false' } }],
+  } as ManifestElement);
+  if (others.length) application.service = others;
+  else delete application.service;
+  // Network permissions may belong to the app or another plugin. Keep them on opt-out;
+  // only the filter-specific FGS permission is ours to remove.
+  let permissions = manifest.manifest['uses-permission'] ?? [];
+  for (const name of VPN_PERMISSIONS) {
+    if (blockedPermissions.includes(name)) continue;
+    if (enabled && !permissions.some((p) => p.$['android:name'] === name)) {
+      permissions.push({ $: { 'android:name': name } });
+    } else if (!enabled && name.endsWith('FOREGROUND_SERVICE_SYSTEM_EXEMPTED') && !declaredPermissions.includes(name)) {
+      permissions = permissions.filter((p) => p.$['android:name'] !== name || (p.$ as Record<string, string>)[TOOLS_NODE] === 'remove');
+    }
+  }
+  if (permissions.length) manifest.manifest['uses-permission'] = permissions;
+  else delete manifest.manifest['uses-permission'];
+}
+
 const withScreenTimeAndroid: ConfigPlugin = (config) => {
   const options = getScreenTimeAndroidOptions(config);
+  if (options.vpnDnsFilter) WarningAggregator.addWarningAndroid('expo-screen-time', VPN_DNS_FILTER_WARNING);
   if (options.accessibilityEngine) WarningAggregator.addWarningAndroid('expo-screen-time', ACCESSIBILITY_ENGINE_WARNING);
   return withAndroidManifest(config, (modConfig) => {
     modConfig.modResults = applyScreenTimeAndroidManifest(

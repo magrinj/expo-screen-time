@@ -19,6 +19,7 @@ import {
  * covers both platforms — iOS simply never lists the Android step ids.
  */
 const STEP_COPY: Record<PermissionStepId, { title: string; why: string }> = {
+  vpn: { title: "Web filter VPN", why: "Filters DNS in other apps. Uses the VPN slot; encrypted DNS can bypass it." },
   screenTime: {
     title: "Screen Time access",
     why: "Lets us shield the apps you choose.",

@@ -41,8 +41,3 @@ internal class PendingQueries(private val maximum: Int = 128) {
   fun expired(now: Long): List<PendingQueryKey> = deadlines.filterValues { it <= now }.keys.toList()
   companion object { const val TIMEOUT_MS = 5000L }
 }
-
-internal enum class DnsPair(val ipv4: String, val ipv6: String) {
-  A("10.111.222.1", "fd00:6578:706f::1"), B("10.111.222.3", "fd00:6578:706f::3");
-  fun next(): DnsPair = if (this == A) B else A
-}

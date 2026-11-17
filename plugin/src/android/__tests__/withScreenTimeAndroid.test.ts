@@ -34,6 +34,7 @@ const options = (features: AndroidFeature[], parentalControl = false, accessibil
   parentalControl,
   features,
   accessibilityEngine,
+  vpnDnsFilter: false,
 });
 
 // A vanilla prebuild manifest, as `withAndroidManifest` hands it over (the
@@ -59,12 +60,12 @@ const metaData = (manifest: AndroidConfig.Manifest.AndroidManifest) =>
 
 describe('getScreenTimeAndroidOptions', () => {
   it('defaults to no parental control, every feature and no accessibility engine', () => {
-    expect(getScreenTimeAndroidOptions({})).toEqual({ parentalControl: false, features: ALL, accessibilityEngine: false });
-    expect(getScreenTimeAndroidOptions({ extra: { expoScreenTime: { targets: [] } } })).toEqual({ parentalControl: false, features: ALL, accessibilityEngine: false });
+    expect(getScreenTimeAndroidOptions({})).toEqual({ parentalControl: false, features: ALL, accessibilityEngine: false, vpnDnsFilter: false });
+    expect(getScreenTimeAndroidOptions({ extra: { expoScreenTime: { targets: [] } } })).toEqual({ parentalControl: false, features: ALL, accessibilityEngine: false, vpnDnsFilter: false });
     expect(getScreenTimeAndroidOptions({ extra: { expoScreenTime: { android: { parentalControl: true } } } })).toEqual({
       parentalControl: true,
       features: ALL,
-      accessibilityEngine: false,
+      accessibilityEngine: false, vpnDnsFilter: false,
     });
   });
 
@@ -74,7 +75,7 @@ describe('getScreenTimeAndroidOptions', () => {
     expect(read({ accessibilityEngine: true, features: ['blocking', 'monitoring'] }).accessibilityEngine).toBe(true);
     // Anything but `true` is off (no truthy strings: a typo must not declare a Play-reviewed service).
     expect(read({ accessibilityEngine: 'true' }).accessibilityEngine).toBe(false);
-    expect(read({ accessibilityEngine: false, features: ['usageReports'] }).accessibilityEngine).toBe(false);
+    expect(read({ accessibilityEngine: false, vpnDnsFilter: false, features: ['usageReports'] }).accessibilityEngine).toBe(false);
     expect(() => read({ accessibilityEngine: true, features: ['monitoring'] })).toThrow(/accessibilityEngine.*needs "blocking".*features.*\["monitoring"\]/s);
     expect(() => read({ accessibilityEngine: true, features: [] })).toThrow(/needs "blocking"/);
   });
@@ -143,7 +144,8 @@ describe('ANDROID_MANIFEST_GATES', () => {
     expect(removedNames(['appRemovalProtection'])).not.toContain('ScreenTimeDeviceAdminReceiver');
     expect(removedNames(['appRemovalProtection'])).toContain('ScreenTimeEngineService');
     // Features with nothing of their own on Android remove as much as nothing.
-    expect(removedNames(['shieldOpenApp', 'webDomainBlocking'])).toEqual(removedNames([]));
+    expect(removedNames(['shieldOpenApp'])).toEqual(removedNames([]));
+    expect(removedNames(['webDomainBlocking'])).not.toContain('ScreenTimeRestartReceiver');
   });
 });
 
@@ -537,5 +539,47 @@ describe('android/src/test/resources/build-manifests.json', () => {
         permissions: kept('uses-permission', manifest.manifest['uses-permission']),
       }).toEqual({ key, ...(expected as object) });
     }
+  });
+});
+
+describe('optional DNS VPN', () => {
+  const read = (android: unknown) => getScreenTimeAndroidOptions({ extra: { expoScreenTime: { android } } });
+  it('requires an explicit opt-in and its feature', () => {
+    expect(read({}).vpnDnsFilter).toBe(false);
+    expect(read({ vpnDnsFilter: 'true' }).vpnDnsFilter).toBe(false);
+    expect(() => read({ vpnDnsFilter: true, features: ['blocking'] })).toThrow(/vpnDnsFilter.*webDomainBlocking/);
+  });
+  it('is idempotent through on, off, on and retains web-only recovery', () => {
+    const manifest = vanillaManifest();
+    const on = read({ vpnDnsFilter: true, features: ['webDomainBlocking'] });
+    const off = read({ features: ['webDomainBlocking'] });
+    applyScreenTimeAndroidManifest(manifest, on);
+    const first = JSON.stringify(manifest);
+    applyScreenTimeAndroidManifest(manifest, on);
+    expect(JSON.stringify(manifest)).toBe(first);
+    const app = AndroidConfig.Manifest.getMainApplicationOrThrow(manifest);
+    expect(app.receiver?.some((r) => r.$['android:name'].endsWith('ScreenTimeRestartReceiver'))).toBe(false);
+    const service = app.service?.find((s) => s.$['android:name'].endsWith('ScreenTimeDnsFilterService'));
+    expect(service?.$['android:permission']).toBe('android.permission.BIND_VPN_SERVICE');
+    expect(service?.$['android:foregroundServiceType']).toBe('systemExempted');
+    expect(service?.['meta-data']).toContainEqual({ $: { 'android:name': 'android.net.VpnService.SUPPORTS_ALWAYS_ON', 'android:value': 'false' } });
+    applyScreenTimeAndroidManifest(manifest, off);
+    expect(JSON.stringify(manifest)).not.toContain('ScreenTimeDnsFilterService');
+    expect(JSON.stringify(manifest)).not.toContain('FOREGROUND_SERVICE_SYSTEM_EXEMPTED');
+    applyScreenTimeAndroidManifest(manifest, on);
+    expect(JSON.stringify(manifest)).toBe(first);
+  });
+  it('preserves consumer-owned permissions and blocked permissions', () => {
+    const manifest = vanillaManifest();
+    const permission = 'android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED';
+    manifest.manifest['uses-permission']!.push({ $: { 'android:name': permission, 'tools:node': 'remove' } } as any);
+    applyScreenTimeAndroidManifest(manifest, read({ vpnDnsFilter: true }), [], [permission]);
+    expect(manifest.manifest['uses-permission']!.filter((p) => p.$['android:name'] === permission)).toEqual([
+      { $: { 'android:name': permission, 'tools:node': 'remove' } },
+    ]);
+    const other = vanillaManifest();
+    applyScreenTimeAndroidManifest(other, read({ vpnDnsFilter: true }));
+    applyScreenTimeAndroidManifest(other, read({}), [permission]);
+    expect(other.manifest['uses-permission']).toContainEqual({ $: { 'android:name': permission } });
   });
 });

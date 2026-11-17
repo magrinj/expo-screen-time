@@ -119,7 +119,8 @@ rest of what this library declares leaves the merged manifest:
 | `monitoring` | The engine service, its restart receiver and their permissions (`PACKAGE_USAGE_STATS`, `FOREGROUND_SERVICE_SPECIAL_USE`). No shield, no overlay permission, no device admin: schedules and thresholds record events only. |
 | `usageReports` | `PACKAGE_USAGE_STATS`. |
 | `appRemovalProtection` | The device-admin receiver. |
-| `shieldOpenApp`, `webDomainBlocking` | Nothing of their own (the first is a property of the shield, the second is not implemented on Android). |
+| `shieldOpenApp` | A property of the shield; no additional component. |
+| `webDomainBlocking` | The restart receiver; the DNS VPN service requires the separate `vpnDnsFilter` opt-in below. |
 
 Omit the option and the manifest is the library's, as before. An empty array
 keeps only what the selection store and the picker need. The entries are
@@ -226,3 +227,37 @@ in: the default build is byte-identical.
 ## Using with Other Apple Targets
 
 `expo-screen-time` adds its extension targets to the Xcode project directly via Expo's config-plugin system, so it's self-contained and coexists with other plugins that edit the project (including `@bacons/apple-targets` if you use it for widgets or other extensions). No extra wiring is required.
+
+### The DNS VPN filter [#android-vpn-dns-filter]
+
+The option is off by default. Opt in and rebuild the native app:
+
+```json
+{
+  "expo": {
+    "extra": {
+      "expoScreenTime": {
+        "android": { "vpnDnsFilter": true, "features": ["webDomainBlocking"] }
+      }
+    }
+  }
+}
+```
+
+Omit `features` to keep all other features too. If supplied, it must include
+`webDomainBlocking` when `vpnDnsFilter` is true. The plugin adds the DNS
+`VpnService`, guarded by `BIND_VPN_SERVICE`, with a `systemExempted` foreground
+service and `FOREGROUND_SERVICE_SYSTEM_EXEMPTED`; it also ensures network
+permissions and the restart receiver. Turning the option off removes the VPN
+service and its foreground-service permission (unless explicitly requested by
+the app). Shared network permissions are retained for other plugins.
+Default builds declare no VPN service. App blocking and DNS filtering share one
+protection notification, customizable with the `expo_st_notice_*` strings.
+
+Declaring a VpnService changes Google Play review: complete its VPN declaration,
+provide the requested consent-flow video, and explain the use in the listing and
+an in-app prominent disclosure **before** requesting `vpn`. The consumer is
+responsible for its eligibility and disclosures. The local filter inspects DNS
+names; it does not route web content through a remote VPN server. Explain that
+it uses the profile's VPN slot and excludes the host app. See the
+[coverage and bypass limits](./api/blocking.mdx#android-web-domains).

@@ -2,7 +2,7 @@
 """Run one real W-R6 emulator reboot without opening either app.
 
 Configure consent, always-on and companion boot via the T3-bound device UI first.
-The preview's documented debug receiver selects its boot policy separately.
+Production uses the fixed whenNoVpn boot policy; old stored preview policies are ignored.
 Agent-device 0.21.31 has no reboot command; adb reboot is used only for this
 test-runner lifecycle operation, never to automate UI or Android settings.
 """
@@ -26,7 +26,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--policy", choices=("never", "whenNoVpn", "always"), required=True)
+    parser.add_argument("--policy", choices=("whenNoVpn",), default="whenNoVpn")
     parser.add_argument("--companion-delay", type=int, choices=(-1, 0, 5000), required=True)
     parser.add_argument("--adb", default=str(Path(os.environ.get("ANDROID_HOME", str(Path.home() / "Library/Android/sdk"))) / "platform-tools/adb"))
     args = parser.parse_args()
@@ -49,7 +49,6 @@ def main():
     require(not args.output.exists(), "Evidence output already exists")
     before_boot = int(adb("shell", "settings", "get", "global", "boot_count"))
     before = web()
-    require(before.get("bootPolicy", "whenNoVpn") == args.policy, "Configure the preview boot policy first")
     require(before["consent"]["status"] == "granted" and before["consent"].get("preparedBootCount") == before_boot,
             "Explicitly request the filter in the current boot first")
     require(before.get("desired") and before.get("running") and owners() == [FILTER], "The filter must be established before reboot")

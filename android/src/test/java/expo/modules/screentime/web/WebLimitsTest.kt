@@ -40,10 +40,6 @@ class WebLimitsTest {
     repeat(16) { assertTrue(budget.admit(flow(it), it).isEmpty()) }
     assertEquals(listOf(flow(0)), budget.admit(flow(16), 16))
   }
-  @Test fun pairAlternatesAndRoutesBothFamilies() {
-    assertEquals(DnsPair.B, DnsPair.A.next()); assertEquals(DnsPair.A, DnsPair.B.next())
-    assertEquals("10.111.222.1", DnsPair.A.ipv4); assertEquals("fd00:6578:706f::3", DnsPair.B.ipv6)
-  }
   @Test fun pendingBoundEvictsOldest() {
     val pending = PendingQueries(2)
     pending.add(PendingQueryKey(flow(1), 1), 0); pending.add(PendingQueryKey(flow(2), 1), 0)

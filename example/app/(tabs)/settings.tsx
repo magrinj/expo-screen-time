@@ -91,6 +91,12 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {ExpoScreenTime.getCapabilities().webDomainBlocking && (
+        <Card>
+          <SectionHeader title="Web domain blocking" />
+          <ActionButton title="DNS filter" icon="globe-outline" onPress={() => router.push("/web-preview")} />
+        </Card>
+      )}
       {/* Behavioural conformance suite */}
       <SectionHeader title="Conformance" />
       <View style={styles.buttonRow}>

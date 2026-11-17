@@ -22,6 +22,10 @@ import {
   allowAppInstallation,
   allowAppRemoval,
   blockSelection,
+  blockWebDomains,
+  unblockWebDomains,
+  unblockAllWebDomains,
+  getBlockedWebDomains,
   clearMonitorEvents,
   deleteSelection,
   denyAppInstallation,
@@ -75,7 +79,7 @@ const CATEGORY = "conformance_category";
 const ACTIVITY = "conformance_schedule";
 
 // The contract's vocabulary (`PermissionStep`), checked on every platform.
-const STEP_IDS: PermissionStepId[] = ["screenTime", "usageAccess", "overlay", "accessibility", "notifications", "batteryOptimization", "backgroundAutostart", "deviceAdmin"];
+const STEP_IDS: PermissionStepId[] = ["vpn", "screenTime", "usageAccess", "overlay", "accessibility", "notifications", "batteryOptimization", "backgroundAutostart", "deviceAdmin"];
 const STEP_STATUSES = ["granted", "denied", "undetermined", "restricted", "unknown"];
 const STEP_KINDS = ["prompt", "settings", "guide"];
 
@@ -548,18 +552,52 @@ const scenarios: Scenario[] = [
       return parts.join(", ");
     },
   },
+  {
+    id: "C16",
+    title: "Web domains follow their capability",
+    async run(caps) {
+      if (!caps.webDomainBlocking) {
+        await expectCode("UNSUPPORTED", () => blockWebDomains(["example.com"]));
+        return "web domains UNSUPPORTED";
+      }
+      const before = getBlockedWebDomains();
+      try {
+        unblockAllWebDomains();
+        const appBlocked = caps.blocking === "none" ? null : isBlocked();
+        blockWebDomains(["Example.COM", "example.com", "m.example.org"]);
+        expect(getBlockedWebDomains().length === 3, "exact domain identities");
+        unblockWebDomains(["m.example.org"]);
+        expect(getBlockedWebDomains().length === 2, "remove one domain");
+        if (appBlocked !== null) expect(isBlocked() === appBlocked, "DNS rules do not change app blocking");
+        const permissions = await getScreenTimePermissionsAsync({ features: ["webDomainBlocking"] });
+        const vpn = permissions.steps.find((step) => step.id === "vpn");
+        if (vpn && vpn.status !== "granted") {
+          expect((await getEnforcementGaps()).some((gap) => gap.scope === "webDomains" && gap.to === null && gap.reason === "permissionRevoked"), "missing consent opens a web gap");
+        }
+        unblockAllWebDomains();
+        expect(getBlockedWebDomains().length === 0, "clear domains");
+        expect(!(await getEnforcementGaps()).some((gap) => gap.scope === "webDomains" && gap.to === null), "clear closes web gaps");
+        return "domain mutations, capability and consent gaps checked";
+      } finally {
+        unblockAllWebDomains();
+        if (before.length) blockWebDomains(before);
+      }
+    },
+  },
 ];
 
 export default function Conformance() {
   const [results, setResults] = useState<Result[]>([]);
   const [running, setRunning] = useState(false);
 
-  const run = async () => {
+  const [total, setTotal] = useState(scenarios.length);
+  const run = async (selected = scenarios) => {
+    setTotal(selected.length);
     setRunning(true);
     setResults([]);
     const caps = getCapabilities();
     const done: Result[] = [];
-    for (const scenario of scenarios) {
+    for (const scenario of selected) {
       let result: Result;
       try {
         result = { id: scenario.id, title: scenario.title, status: "pass", detail: await scenario.run(caps) };
@@ -570,7 +608,7 @@ export default function Conformance() {
       setResults([...done]);
     }
     try {
-      await reset(caps);
+      if (selected === scenarios) await reset(caps);
     } catch {
       // leave the device as clean as possible; the verdict below already reports failures
     }
@@ -579,13 +617,13 @@ export default function Conformance() {
 
   const failed = results.filter((r) => r.status === "fail").length;
   const verdict =
-    running || results.length < scenarios.length
+    running || results.length < total
       ? running
-        ? `RUNNING ${results.length}/${scenarios.length}`
+        ? `RUNNING ${results.length}/${total}`
         : "NOT RUN"
       : failed === 0
-        ? `CONFORMANCE PASS ${results.length}/${scenarios.length}`
-        : `CONFORMANCE FAIL ${failed}/${scenarios.length}`;
+        ? `CONFORMANCE PASS ${results.length}/${total}`
+        : `CONFORMANCE FAIL ${failed}/${total}`;
 
   return (
     // The root stack header is translucent: let iOS inset the content below it.
@@ -593,7 +631,8 @@ export default function Conformance() {
       <View style={styles.row}>
         <Button title="Pick apps" onPress={() => router.push({ pathname: "/select-apps", params: { id: APPS } })} />
         <Button title="Pick a category" onPress={() => router.push({ pathname: "/select-apps", params: { id: CATEGORY } })} />
-        <Button title="Run" onPress={run} disabled={running} />
+        <Button title="Run" onPress={() => void run()} disabled={running} />
+        <Button title="Run web checks" onPress={() => void run(scenarios.filter((s) => s.id === "C16"))} disabled={running} />
       </View>
       <Text testID="conformance-verdict" style={[styles.verdict, failed > 0 && styles.failText]}>
         {verdict}

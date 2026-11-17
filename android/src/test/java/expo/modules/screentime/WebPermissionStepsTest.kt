@@ -8,18 +8,19 @@ import expo.modules.screentime.web.WebState
 class WebPermissionStepsTest {
   private val device = PermissionSteps.Device(37, false)
   private val web = listOf(PermissionSteps.Feature.webDomainBlocking)
-  @Test fun absentPreviewDoesNotListVpn() { assertTrue(PermissionSteps.plan(web, false, device).isEmpty()) }
+  @Test fun absentOptInDoesNotListVpn() { assertTrue(PermissionSteps.plan(web, false, device).isEmpty()) }
   @Test fun webOnlyNeedsVpnAlone() {
     val plan = PermissionSteps.plan(web, false, device, BuildManifest.full.copy(vpn = true))
-    assertEquals(listOf(PermissionSteps.Plan(PermissionSteps.StepId.vpn, true, PermissionSteps.Kind.prompt)), plan)
+    assertEquals(listOf(PermissionSteps.Plan(PermissionSteps.StepId.vpn, true, PermissionSteps.Kind.prompt)), plan.filter { it.required })
+    assertEquals(setOf(PermissionSteps.StepId.notifications, PermissionSteps.StepId.batteryOptimization), plan.filterNot { it.required }.map { it.id }.toSet())
   }
   @Test fun blockingAloneNeverNeedsVpn() {
     assertFalse(PermissionSteps.plan(listOf(PermissionSteps.Feature.blocking), false, device, BuildManifest.full.copy(vpn = true)).any { it.id == PermissionSteps.StepId.vpn })
   }
-  @Test fun explicitVpnWithoutPreviewRemainsUnknown() {
-    assertTrue(PermissionSteps.requestedStep("vpn") is PermissionSteps.RequestedStep.Unknown)
+  @Test fun explicitVpnWithoutOptInIsNotInBuild() {
+    assertTrue(PermissionSteps.requestedStep("vpn") is PermissionSteps.RequestedStep.NotInBuild)
   }
-  @Test fun explicitVpnInPreviewIsAvailable() {
+  @Test fun explicitVpnInOptInIsAvailable() {
     assertEquals(PermissionSteps.RequestedStep.Step(PermissionSteps.StepId.vpn), PermissionSteps.requestedStep("vpn", BuildManifest.full.copy(vpn = true)))
   }
   @Test fun vpnParticipatesInRequiredDerivation() {

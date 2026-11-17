@@ -1,9 +1,11 @@
 package expo.modules.screentime.web
 
+import expo.modules.screentime.ExitRecord
+import expo.modules.screentime.ExitReasons
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Internal preview record. Additive keys in the existing versioned document, never a migration. */
+/** DNS filter state. Additive keys in the existing versioned document, never a migration. */
 internal object WebState {
   enum class Event { dialogGranted, dialogCancelled, restricted, prepared, established, establishDenied, establishFailed, displaced }
   enum class BootPolicy { never, whenNoVpn, always }
@@ -104,6 +106,30 @@ internal object WebState {
       openGap(document, maxOf(since, at), "permissionRevoked", "consent", web.optJSONObject("consent")?.optString("event") ?: "never asked")
     }
   }
+  /** Exit evidence wins over a stale heartbeat; a sleeping live process is never a death. */
+  fun observeRun(document: JSONObject, now: Long, boot: Int?, bootTime: Long,
+    alive: Boolean, exits: List<ExitRecord>?, process: String) {
+    observe(document, now, boot, bootTime)
+    if (!desired(document) || consent(document).status != "granted") return
+    val web = record(document)
+    val since = web.optLong("desiredSince", now)
+    val run = web.optJSONObject("run")
+    if (run == null) {
+      openGap(document, since, "unknown", "start", "waiting for tunnel establishment")
+      return
+    }
+    // Reboot has its own gap. Never attribute a reused PID from an older boot.
+    if (boot == null || run.isNull("bootCount") || run.optInt("bootCount") != boot) return
+    val beat = run.optLong("heartbeat", run.optLong("start", now))
+    val exit = exits?.filter { it.processName == process && it.pid == run.optInt("pid") &&
+      it.timestamp >= maxOf(beat, bootTime) && it.timestamp <= now }?.minByOrNull { it.timestamp }
+    if (exit != null || !alive || !web.optBoolean("running")) {
+      openGap(document, maxOf(since, exit?.timestamp ?: beat),
+        exit?.let { ExitReasons.reason(it.reason).name } ?: "unknown", "death",
+        exit?.description ?: "last heartbeat; process or tunnel no longer running")
+    }
+  }
+
   fun refused(document: JSONObject, now: Long, detail: String) {
     if (desired(document)) openGap(document, maxOf(record(document).optLong("desiredSince", now), now), "unknown", "start", detail)
   }
@@ -127,7 +153,16 @@ internal object WebState {
   private fun openGap(document: JSONObject, from: Long, reason: String, kind: String, detail: String) {
     val web = record(document)
     val gaps = web.optJSONArray("gaps") ?: JSONArray().also { web.put("gaps", it) }
-    if ((0 until gaps.length()).any { gaps.getJSONObject(it).let { gap -> gap.isNull("to") && gap.optString("kind") == kind } }) return
+    val existing = (0 until gaps.length()).map { gaps.getJSONObject(it) }
+      .firstOrNull { it.isNull("to") && it.optString("kind") == kind }
+    if (existing != null) {
+      // Exit history can arrive after the liveness probe. Replace its estimate
+      // with the later, precise observation without duplicating the outage.
+      if (kind == "death" && reason != "unknown" && existing.optString("reason") == "unknown") {
+        existing.put("from", from).put("reason", reason).put("detail", detail)
+      }
+      return
+    }
     gaps.put(JSONObject().put("from", from).put("to", JSONObject.NULL).put("reason", reason).put("kind", kind).put("detail", detail))
     while (gaps.length() > 256) gaps.remove(0)
   }

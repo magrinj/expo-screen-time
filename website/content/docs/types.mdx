@@ -20,10 +20,11 @@ type PermissionStepId =
   | "notifications"   // iOS: for shieldOpenApp
   // Android ids, so shared code can label every step; iOS never lists them:
   | "usageAccess" | "overlay" | "accessibility"
-  | "batteryOptimization" | "backgroundAutostart" | "deviceAdmin";
+  | "batteryOptimization" | "backgroundAutostart" | "deviceAdmin" | "vpn";
 
 type PermissionStep = {
   id: PermissionStepId;
+  detail?: "cancelled"; // Android VPN dialog cancellation
   status: "granted" | "denied" | "undetermined" | "restricted" | "unknown";
   required: boolean;                     // needed by the requested features
   kind: "prompt" | "settings" | "guide"; // a system dialog on iOS
@@ -282,7 +283,7 @@ type EnforcementGap = {
   // Android, builds that opt into the accessibility engine: only the apps
   // opened from a work profile, Private Space or a clone went unenforced.
   // Absent: every blocked app.
-  scope?: "otherProfiles";
+  scope?: "otherProfiles" | "webDomains";
 };
 ```
 

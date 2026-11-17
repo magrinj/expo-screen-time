@@ -241,8 +241,8 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
       }
       store.setPermissionError("vpn", null, null)
       if (intent == null) {
-        WebPreviewController.event(context, WebState.Event.prepared)
-        WebPreviewController.sync(context, "permission")
+        WebFilterController.event(context, WebState.Event.prepared)
+        WebFilterController.sync(context, "permission")
         done()
       } else {
         vpnDone = done
@@ -255,9 +255,9 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
   }
 
   private fun vpnUnavailable(failure: Exception, done: () -> Unit) {
-    WebPreviewController.event(context, WebState.Event.restricted)
+    WebFilterController.event(context, WebState.Event.restricted)
     store.setPermissionError("vpn", "restricted", failure.message ?: "VPN consent activity unavailable")
-    WebPreviewController.sync(context, "permission")
+    WebFilterController.sync(context, "permission")
     done()
   }
 
@@ -265,8 +265,8 @@ internal class AndroidPermissionRequester(private val appContext: AppContext, pr
     if (requestCode != VPN_REQUEST || !build().vpn) return
     val done = vpnDone ?: return
     vpnDone = null
-    WebPreviewController.event(context, if (resultCode == Activity.RESULT_OK) WebState.Event.dialogGranted else WebState.Event.dialogCancelled)
-    WebPreviewController.sync(context, "permission")
+    WebFilterController.event(context, if (resultCode == Activity.RESULT_OK) WebState.Event.dialogGranted else WebState.Event.dialogCancelled)
+    WebFilterController.sync(context, "permission")
     done()
   }
 

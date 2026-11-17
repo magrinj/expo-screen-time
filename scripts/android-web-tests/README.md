@@ -1,9 +1,9 @@
 # Android web-filter device tests
 
-Emulator fixtures and offline capture readers for the internal
-[DNS filter preview](../../docs/development.md#web-filter-preview).
-These tools are excluded from the npm package and do not enable the public
-web-domain capability. Run device trials on a dedicated emulator with an
+Emulator fixtures and offline capture readers for the optional
+[DNS filter](../../docs/development.md#android-dns-filter).
+Enable `android.vpnDnsFilter` and rebuild the example before running current
+trials. These tools are excluded from the npm package. Run device trials on a dedicated emulator with an
 explicit serial; keep builds, captures and logs under ignored `.proofs/`.
 
 ## Build the fixtures
@@ -40,8 +40,9 @@ lockdown; perform traffic measurements after the filter has replaced it.
    must leave the companion active; an explicit VPN request must reclaim it.
 4. Repeat with the companion selected as always-on in Android VPN settings;
    the filter must remain denied. Disable always-on afterwards.
-5. For reboot trials, set the companion's boot delay in its UI, select the
-   preview boot policy, and explicitly restore the filter as the active VPN.
+5. For reboot trials, set the companion's boot delay in its UI and explicitly
+   restore the filter as the active VPN. Production uses `whenNoVpn`; the old
+   experimental boot-policy receiver and Gradle variants have been removed.
 
 The companion's Stop button closes its descriptor explicitly: `stopService()`
 alone can leave a VPN alive while Android keeps the service bound. Its events
@@ -79,6 +80,13 @@ Delivery durations alone are neither receiver CPU time nor proof of an internal
 queue cause. Persisted `running=true` alone does not prove current-boot liveness.
 
 ## DNS caches and existing connections
+
+The pair-change cache watcher, `verify-cache.py`, `verify-ttl-cap.py` and
+`tcp-session-trial.py` workflow below reproduce the earlier preview's DNS-pair
+experiment. The production filter updates rules on the existing tunnel, so its DNS
+addresses and `establishAt` no longer mark rule changes. Keep these tools for
+historical captures. Current measurements must correlate applied rules, fresh
+DNS queries and the original connection's packets.
 
 The separate-UID client requires API 29+. It probes native `DnsResolver`, VM
 `InetAddress`, DNS over TCP and a persistent echo socket on the default network,

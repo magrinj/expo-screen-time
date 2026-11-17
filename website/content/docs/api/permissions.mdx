@@ -293,3 +293,23 @@ function MyComponent() {
   return <Text>Permission granted!</Text>;
 }
 ```
+
+### VPN consent [#android-vpn]
+
+In a build with [`android.vpnDnsFilter`](../configuration.mdx#android-vpn-dns-filter),
+`features: ["webDomainBlocking"]` lists required step `vpn` (`kind: "prompt"`).
+Show your VPN disclosure first, then request it explicitly:
+
+```ts
+await ExpoScreenTime.requestScreenTimePermissionsAsync({
+  features: ["webDomainBlocking"], step: "vpn",
+});
+```
+
+Android may show its VPN consent dialog. Cancellation returns `denied` with
+`detail: "cancelled"`; a later consent event clears that detail. A successful
+request can replace another VPN. Reading permissions never claims the VPN slot.
+After another VPN displaces this filter, the step is `denied` and recovery needs
+another explicit request. Consent alone does not prove that the tunnel is running:
+check the [web-domain gaps](./capabilities.mdx#web-domain-gaps) as well.
+The notification and battery-optimization recommendations also apply to web-only builds.

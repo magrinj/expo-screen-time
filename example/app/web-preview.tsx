@@ -2,31 +2,21 @@ import React, { useEffect, useState } from "react";
 import { Button, ScrollView, Text, TextInput } from "react-native";
 import ScreenTime from "expo-screen-time";
 
-type PreviewOptions = { features: ["webDomainBlocking"]; step?: "vpn" };
-type PreviewStep = { id: string; status: string; detail?: "cancelled" };
-type PreviewGap = { from: number; to: number | null; reason: string; scope?: "webDomains" };
-
-const preview = ScreenTime as unknown as {
-  blockWebDomains(domains: string[]): void;
-  unblockWebDomains(domains: string[]): void;
-  unblockAllWebDomains(): void;
-  getBlockedWebDomains(): string[];
-  getScreenTimePermissionsAsync(options: PreviewOptions): Promise<{ steps: PreviewStep[] }>;
-  requestScreenTimePermissionsAsync(options: PreviewOptions): Promise<{ steps: PreviewStep[] }>;
-  getEnforcementGaps(since?: number): Promise<PreviewGap[]>;
-};
-
-export default function WebPreview() {
+export default function WebDomains() {
   const [domain, setDomain] = useState("example.com");
   const [result, setResult] = useState("Ready");
+  const [hasVpn, setHasVpn] = useState(false);
   const [steps, setSteps] = useState("[]");
   const [domains, setDomains] = useState("[]");
   const [gaps, setGaps] = useState("[]");
+  const supported = ScreenTime.getCapabilities().webDomainBlocking;
   const refresh = async () => {
-    const permissions = await preview.getScreenTimePermissionsAsync({ features: ["webDomainBlocking"] });
+    if (!supported) { setResult("Web domain blocking is not included in this build."); return; }
+    const permissions = await ScreenTime.getScreenTimePermissionsAsync({ features: ["webDomainBlocking"] });
+    setHasVpn(permissions.steps.some((step) => step.id === "vpn"));
     setSteps(JSON.stringify(permissions.steps));
-    setGaps(JSON.stringify(await preview.getEnforcementGaps()));
-    setDomains(JSON.stringify(preview.getBlockedWebDomains()));
+    setGaps(JSON.stringify(await ScreenTime.getEnforcementGaps()));
+    setDomains(JSON.stringify(ScreenTime.getBlockedWebDomains()));
   };
   const run = async (operation: () => unknown | Promise<unknown>) => {
     try {
@@ -40,19 +30,19 @@ export default function WebPreview() {
   useEffect(() => { void run(() => undefined); }, []);
 
   return (
-    <ScrollView contentContainerStyle={{ padding: 20, gap: 12 }}>
-      <Text>Internal web filter preview</Text>
-      <Text>
-        This preview uses Android’s VPN slot to inspect DNS requests and block the domains
+    <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 20, gap: 12 }}>
+      <Text>Web domain blocking</Text>
+      {hasVpn && <Text>
+        This filter uses Android’s VPN slot to inspect DNS requests and block the domains
         you choose. It replaces another VPN. Web traffic is not proxied, and the host app
         is excluded. Tap Request VPN only if you agree.
-      </Text>
+      </Text>}
       <TextInput accessibilityLabel="Web domain" value={domain} onChangeText={setDomain} autoCapitalize="none" style={{ borderWidth: 1, padding: 8 }} />
-      <Button title="Block domain" onPress={() => void run(() => preview.blockWebDomains([domain]))} />
-      <Button title="Unblock domain" onPress={() => void run(() => preview.unblockWebDomains([domain]))} />
-      <Button title="Unblock all domains" onPress={() => void run(() => preview.unblockAllWebDomains())} />
-      <Button title="Request VPN" onPress={() => void run(() => preview.requestScreenTimePermissionsAsync({ features: ["webDomainBlocking"], step: "vpn" }))} />
-      <Button title="Read preview state" onPress={() => void run(() => undefined)} />
+      <Button disabled={!supported} title="Block domain" onPress={() => void run(() => ScreenTime.blockWebDomains([domain]))} />
+      <Button disabled={!supported} title="Unblock domain" onPress={() => void run(() => ScreenTime.unblockWebDomains([domain]))} />
+      <Button disabled={!supported} title="Unblock all domains" onPress={() => void run(() => ScreenTime.unblockAllWebDomains())} />
+      {hasVpn && <Button disabled={!supported} title="Request VPN" onPress={() => void run(() => ScreenTime.requestScreenTimePermissionsAsync({ features: ["webDomainBlocking"], step: "vpn" }))} />}
+      <Button title="Read filter state" onPress={() => void run(() => undefined)} />
       <Text accessibilityLabel={`Web result: ${result}`}>Result: {result}</Text>
       <Text accessibilityLabel={`Web steps: ${steps}`}>Steps: {steps}</Text>
       <Text accessibilityLabel={`Web domains: ${domains}`}>Domains: {domains}</Text>

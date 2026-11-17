@@ -40,7 +40,7 @@ internal object PermissionSteps {
   /** `ScreenTimePermissionOptions.features` when absent. */
   val defaultFeatures = listOf(Feature.blocking, Feature.monitoring)
 
-  /** Public `PermissionStepId` values plus `vpn`, reserved for the internal web preview. */
+  /** Public `PermissionStepId` values. */
   enum class StepId { screenTime, usageAccess, overlay, accessibility, notifications, batteryOptimization, backgroundAutostart, deviceAdmin, vpn }
 
   /** The ids Android has a step for (the usageStats engine, and the accessibility detector in a build that declares it). */
@@ -72,7 +72,7 @@ internal object PermissionSteps {
      * user blocked it (Android then only offers Settings).
      */
     val canPrompt: Boolean = true,
-    /** Internal VPN preview outcome; absent from ordinary permission steps. */
+    /** VPN consent outcome; absent from other permission steps. */
     val detail: String? = null,
   ) {
     fun toMap(): Map<String, Any> {
@@ -128,7 +128,7 @@ internal object PermissionSteps {
     if (from == null) return RequestedStep.Next
     val name = from as? String ?: return RequestedStep.Unknown(from.toString())
     val id = StepId.values().firstOrNull { it.name == name } ?: return RequestedStep.Unknown(name)
-    if (id == StepId.vpn && !build.vpn) return RequestedStep.Unknown(name)
+    if (id == StepId.vpn && !build.vpn) return RequestedStep.NotInBuild(name)
     return when {
       id !in androidStepIds -> RequestedStep.NotOnThisPlatform(name)
       id == StepId.accessibility && !build.accessibility -> RequestedStep.NotInBuild(name)
@@ -146,6 +146,7 @@ internal object PermissionSteps {
    */
   fun plan(features: List<Feature>, child: Boolean, device: Device, build: BuildManifest = BuildManifest.full): List<Plan> {
     val engine = build.engine && (Feature.blocking in features || Feature.monitoring in features)
+    val web = build.vpn && Feature.webDomainBlocking in features
     val plans = mutableListOf<Plan>()
     if (engine && build.shield) plans.add(Plan(StepId.overlay, required = true, kind = Kind.settings))
     if (build.usageAccess && (engine || Feature.usageReports in features)) plans.add(Plan(StepId.usageAccess, required = true, kind = Kind.settings))
@@ -155,12 +156,12 @@ internal object PermissionSteps {
     // usage reports or removal protection alone), and is recommended
     // whatever `member` is.
     if (engine && build.blocking && build.accessibility && Feature.blocking in features) plans.add(Plan(StepId.accessibility, required = false, kind = Kind.settings))
-    if (engine && build.notifications && device.sdkInt >= 33) plans.add(Plan(StepId.notifications, required = child, kind = Kind.prompt))
+    if ((engine || web) && build.notifications && device.sdkInt >= 33) plans.add(Plan(StepId.notifications, required = child, kind = Kind.prompt))
     if (build.deviceAdmin && (engine || Feature.appRemovalProtection in features)) {
       plans.add(Plan(StepId.deviceAdmin, required = child || Feature.appRemovalProtection in features, kind = Kind.settings))
     }
-    if (engine) plans.add(Plan(StepId.batteryOptimization, required = false, kind = Kind.settings))
-    if (engine && device.hasVendorAutostartScreen) plans.add(Plan(StepId.backgroundAutostart, required = false, kind = Kind.guide))
+    if (engine || web) plans.add(Plan(StepId.batteryOptimization, required = false, kind = Kind.settings))
+    if ((engine || web) && device.hasVendorAutostartScreen) plans.add(Plan(StepId.backgroundAutostart, required = false, kind = Kind.guide))
     return plans
   }
 

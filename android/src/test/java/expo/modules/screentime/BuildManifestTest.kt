@@ -40,7 +40,7 @@ class BuildManifestTest {
     assertEquals(BuildManifest.full, BuildManifest.from(listOf(service), listOf(shield), listOf(admin), everything))
     assertEquals(BuildManifest.full, build(*Feature.values()))
     assertTrue(BuildManifest.full.blocking)
-    assertEquals(emptyList<Feature>(), BuildManifest.full.missing(Feature.values().toList()))
+    assertEquals(listOf(Feature.webDomainBlocking), BuildManifest.full.missing(Feature.values().toList()))
   }
 
   @Test
@@ -90,8 +90,8 @@ class BuildManifestTest {
     // shieldOpenApp is how a shield reaches the app: it needs the shield.
     assertTrue(build(Feature.blocking).has(Feature.shieldOpenApp))
     assertFalse(build(Feature.monitoring).has(Feature.shieldOpenApp))
-    // webDomainBlocking removes nothing on Android, so nothing it needs is ever missing.
-    assertTrue(build().has(Feature.webDomainBlocking))
+    assertFalse(build().has(Feature.webDomainBlocking))
+    assertTrue(build().copy(vpn = true).has(Feature.webDomainBlocking))
     assertTrue(build(Feature.appRemovalProtection).has(Feature.appRemovalProtection))
     assertFalse(build(Feature.usageReports).has(Feature.appRemovalProtection))
   }
@@ -122,6 +122,6 @@ class BuildManifestTest {
   fun `an empty feature list leaves nothing but the selection store`() {
     val manifest = build()
     assertEquals(BuildManifest(engine = false, shield = false, deviceAdmin = false, usageAccess = false, notifications = true), manifest)
-    assertEquals(Feature.values().toList() - Feature.webDomainBlocking, manifest.missing(Feature.values().toList()))
+    assertEquals(Feature.values().toList(), manifest.missing(Feature.values().toList()))
   }
 }

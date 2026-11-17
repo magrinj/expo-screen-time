@@ -43,9 +43,9 @@ function parseKotlin(): {
   functions: Fn[];
   defined: Fn[];
   implemented: string[];
-  previewDefined: Fn[];
-  previewImplemented: string[];
-  previewGated: boolean;
+  optionalWebDefined: Fn[];
+  optionalWebImplemented: string[];
+  optionalWebGated: boolean;
   views: string[];
   events: string[];
 } {
@@ -86,21 +86,21 @@ function parseKotlin(): {
       .matchAll(/"(\w+)"/g),
   ].map((m) => m[1]);
   // Match the whole conditional block, including handlers with nested bodies.
-  const previewBlock =
+  const optionalWebBlock =
     /^    if \(webBuilt\) \{\n[\s\S]*?^    \}/m.exec(module)?.[0] ?? "";
-  const defined = parseDefinitions(module.replace(previewBlock, ""));
-  const previewDefined = parseDefinitions(previewBlock);
-  const preview = read(
-    "android/src/main/java/expo/modules/screentime/WebPreviewController.kt",
+  const defined = parseDefinitions(module.replace(optionalWebBlock, ""));
+  const optionalWebDefined = parseDefinitions(optionalWebBlock);
+  const optionalWeb = read(
+    "android/src/main/java/expo/modules/screentime/WebFilterController.kt",
   );
-  const previewImplemented = [
-    ...(/val functions = setOf\(([^)]*)\)/.exec(preview)?.[1] ?? "")
+  const optionalWebImplemented = [
+    ...(/val functions = setOf\(([^)]*)\)/.exec(optionalWeb)?.[1] ?? "")
       .matchAll(/"(\w+)"/g),
   ].map((m) => m[1]);
-  const previewGated = /^\s*val webBuilt = BuildConfig\.WEB_PREVIEW && build\.vpn\s*$/m.test(module);
+  const optionalWebGated = /^\s*val webBuilt = build\.vpn\s*$/m.test(module);
   return {
-    functions, defined, implemented, previewDefined, previewImplemented,
-    previewGated, views, events,
+    functions, defined, implemented, optionalWebDefined, optionalWebImplemented,
+    optionalWebGated, views, events,
   };
 }
 
@@ -147,20 +147,20 @@ describe("native API parity (TS ↔ Swift ↔ Kotlin)", () => {
     );
   });
 
-  it("preview definitions match their registry and stay behind the build and manifest gates", () => {
-    expect(kotlin.previewGated).toBe(true);
-    expect(kotlin.previewDefined).toHaveLength(4);
-    expect(kotlin.previewDefined.map((f) => f.name).sort()).toEqual(
-      [...kotlin.previewImplemented].sort(),
+  it("optional web definitions match their registry and stay behind the manifest gate", () => {
+    expect(kotlin.optionalWebGated).toBe(true);
+    expect(kotlin.optionalWebDefined).toHaveLength(4);
+    expect(kotlin.optionalWebDefined.map((f) => f.name).sort()).toEqual(
+      [...kotlin.optionalWebImplemented].sort(),
     );
     expect(
-      kotlin.previewImplemented.filter((name) => kotlin.implemented.includes(name)),
+      kotlin.optionalWebImplemented.filter((name) => kotlin.implemented.includes(name)),
     ).toEqual([]);
   });
 
   it("each real Kotlin definition matches Swift's arity and kind", () => {
     const s = byName(swift.functions);
-    for (const f of [...kotlin.defined, ...kotlin.previewDefined]) {
+    for (const f of [...kotlin.defined, ...kotlin.optionalWebDefined]) {
       expect(f).toEqual(s[f.name]);
     }
   });
