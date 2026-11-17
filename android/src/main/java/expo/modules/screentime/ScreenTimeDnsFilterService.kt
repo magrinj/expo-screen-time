@@ -1,8 +1,5 @@
 package expo.modules.screentime
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
@@ -21,7 +18,6 @@ import android.system.OsConstants
 import android.util.Log
 import expo.modules.screentime.web.ConnectionBudget
 import expo.modules.screentime.web.DnsMessage
-import expo.modules.screentime.web.DnsPair
 import expo.modules.screentime.web.DnsUpstreamRoute
 import expo.modules.screentime.web.DomainMatcher
 import expo.modules.screentime.web.Flow
@@ -50,7 +46,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 
 /**
- * Debug-only, DNS-only VPN. No packet outside the two routed DNS pairs is proxied.
+ * Opt-in DNS-only VPN. No packet outside the routed DNS ranges is proxied.
  * One control looper serializes state and descriptor writes; a blocking reader per
  * descriptor and a single UDP selector have backpressure (one delivered packet each).
  * TCP upstream workers are capped with ConnectionBudget: 16 total / 4 per owner UID,
@@ -60,7 +56,7 @@ import java.util.concurrent.TimeUnit
  * conservatively <4 MiB payload/name storage including handoff, plus a shared 64 KiB
  * read buffer. Socket/object overhead and transient worker teardown are additional;
  * this bounds application buffers, not process RSS. UDP uses no per-query thread.
- * The notice uses the engine channel with its own id 0x5357.
+ * The notice uses the engine channel with a separate id to avoid replacing its notice.
  * Upstream selection uses the first server advertised by the underlay for both
  * transports; there is no resolver fallback. Bind/protect retries use the
  * next physical-network update, not a hard-coded resolver.
@@ -81,7 +77,6 @@ class ScreenTimeDnsFilterService : VpnService() {
   @Volatile private var tunnel: Tunnel? = null
   private var domains: Set<String> = emptySet()
   private var matcher = DomainMatcher(emptyList())
-  private var pair = DnsPair.A
   private val random = SecureRandom()
   private val pending = linkedMapOf<PendingQueryKey, UdpQuery>()
   private val pendingBudget = PendingQueries()
@@ -163,7 +158,7 @@ class ScreenTimeDnsFilterService : VpnService() {
         store.update { document ->
           if (destroyed || !WebState.ownsService(document, serviceId)) return@update false
           WebState.record(document).optJSONObject("run")?.put("heartbeat", System.currentTimeMillis())
-          WebPreviewController.armWatchdog(this@ScreenTimeDnsFilterService)
+          WebFilterController.armWatchdog(this@ScreenTimeDnsFilterService)
           true
         }
       } catch (failure: Exception) {
@@ -179,7 +174,10 @@ class ScreenTimeDnsFilterService : VpnService() {
 
   override fun onCreate() {
     super.onCreate()
-    store.update { WebState.claimService(it, serviceId) }
+    store.update {
+      WebFilterController.observeRun(this, store, it)
+      WebState.claimService(it, serviceId)
+    }
     thread = HandlerThread("expo-st-web-control").also { it.start() }
     control = Handler(thread.looper)
     selector = Selector.open()
@@ -198,9 +196,9 @@ class ScreenTimeDnsFilterService : VpnService() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-    if (!WebPreviewController.built(this)) { stopSelf(startId); return START_NOT_STICKY }
+    if (!WebFilterController.built(this)) { stopSelf(startId); return START_NOT_STICKY }
     latestStartId = startId
-    if (WebPreviewController.foreground && !promote()) {
+    if (!promote()) {
       if (!reviving && promotionRetryable && ForegroundStartExemption.available(this) && ForegroundStartExemption.blockedBy(this) == null) {
         reviving = true
         ForegroundStartExemption.attempt(this, "web:promote", { !destroyed && promote() }) { ok ->
@@ -217,7 +215,7 @@ class ScreenTimeDnsFilterService : VpnService() {
   }
 
   private fun promotionRefused(startId: Int) {
-    WebPreviewController.refused(this, "foreground:refused", certain = true)
+    WebFilterController.refused(this, "foreground:refused", certain = true)
     stopSelf(startId)
   }
 
@@ -225,7 +223,7 @@ class ScreenTimeDnsFilterService : VpnService() {
     control.post {
       try { sync(startId) } catch (failure: Exception) {
         Log.i(TAG, "web sync failed ${failure.javaClass.simpleName}: ${failure.message}")
-        WebPreviewController.refused(this, "sync:${failure.javaClass.simpleName}", certain = true)
+        WebFilterController.refused(this, "sync:${failure.javaClass.simpleName}", certain = true)
         shutdown(startId)
       }
     }
@@ -244,21 +242,29 @@ class ScreenTimeDnsFilterService : VpnService() {
         return@update
       }
       val nextDomains = WebState.domains(document)
-      if (tunnel != null && nextDomains == domains) {
-        WebPreviewController.armWatchdog(this)
+      if (nextDomains != domains) {
+        val nextMatcher = DomainMatcher(nextDomains)
+        domains = nextDomains
+        matcher = nextMatcher
+        pending.values.toList().forEach { dropUdp(it, "domains-change") }
+        Log.i(TAG, "web rules updated count=${domains.size}")
+      }
+      if (tunnel != null) {
+        // DNS-server changes keep Android's answer cache but can make browsers close sockets.
+        // Apply rules on the existing tunnel; the TTL cap bounds newly learned DNS answers.
+        WebFilterController.armWatchdog(this)
         return@update
       }
-      val nextPair = if (tunnel == null) pair else pair.next()
       val builder = Builder().setSession(applicationInfo.loadLabel(packageManager).toString())
         .addAddress("10.111.222.2", 32).addAddress("fd00:6578:706f::2", 128)
-        .addDnsServer(nextPair.ipv4).addDnsServer(nextPair.ipv6)
+        .addDnsServer(DNS_IPV4).addDnsServer(DNS_IPV6)
         .addRoute("10.111.222.0", 30).addRoute("fd00:6578:706f::", 126)
         .addDisallowedApplication(packageName).setBlocking(true).setMtu(1500)
       if (Build.VERSION.SDK_INT >= 29) builder.setMetered(false)
       underlay?.let { builder.setUnderlyingNetworks(arrayOf(it.network)) }
       val descriptor = try { builder.establish() } catch (failure: Exception) {
         WebState.event(document, WebState.Event.establishFailed, System.currentTimeMillis(), boot.count, boot.timeMs ?: 0)
-        WebPreviewController.refused(this, "establish:${failure.javaClass.simpleName}", certain = true)
+        WebFilterController.refused(this, "establish:${failure.javaClass.simpleName}", certain = true)
         shutdown(startId)
         return@update
       }
@@ -268,18 +274,11 @@ class ScreenTimeDnsFilterService : VpnService() {
         shutdown(startId)
         return@update
       }
-      val previous = tunnel
       val next = Tunnel(descriptor)
       tunnel = next
-      domains = nextDomains
-      matcher = DomainMatcher(domains)
-      for (invalid in matcher.invalidNames) Log.v(TAG, "web invalid list name=$invalid")
-      pair = nextPair
-      pending.values.toList().forEach { dropUdp(it, "pair-swap") }
-      previous?.close()
       readTunnel(next)
       WebState.started(document, System.currentTimeMillis(), Process.myPid(), boot.count, boot.timeMs ?: 0)
-      Log.i(TAG, "web ${if (previous == null) "established" else "swap"} pair=$pair dns=${pair.ipv4},${pair.ipv6} underlay=${underlay?.network} pid=${Process.myPid()}")
+      Log.i(TAG, "web established dns=$DNS_IPV4,$DNS_IPV6 underlay=${underlay?.network} pid=${Process.myPid()}")
       control.removeCallbacks(heartbeat)
       heartbeat.run()
     }
@@ -328,7 +327,6 @@ class ScreenTimeDnsFilterService : VpnService() {
         if (transport.destinationPort != 53) { count("udp-port"); write(IpPacket.portUnreachable(packet)); return }
         val query = DnsMessage.parseQuery(transport.payload)
         if (query == null) { count("dns-malformed"); return }
-        Log.v(TAG, "web UDP query id=${query.id} name=${query.question.name} type=${query.question.type}")
         val local = DnsMessage.localAnswer(query, matcher, packet.family)
         if (local != null) { udpAnswer(packet, local); return }
         val request = UdpQuery(packet, query, owner)
@@ -433,7 +431,7 @@ class ScreenTimeDnsFilterService : VpnService() {
             val bytes = buffer.array().copyOf(size)
             if (!deliver {
               if (pending[request.key] === request && tunnel === request.owner) {
-                when (val response = DnsMessage.relay(request.query, bytes, request.packet.family)) {
+                when (val response = DnsMessage.relay(request.query, bytes, request.packet.family, ttlCapSeconds = TTL_CAP_SECONDS)) {
                   DnsMessage.RelayResult.Discard -> count("udp-mismatch")
                   is DnsMessage.RelayResult.Answered -> { count("udp-answered", dropped = false); udpAnswer(request.packet, response.bytes); removeUdp(request) }
                   is DnsMessage.RelayResult.Servfail -> { udpAnswer(request.packet, response.bytes); removeUdp(request) }
@@ -532,11 +530,15 @@ class ScreenTimeDnsFilterService : VpnService() {
                 if (read < 0) throw java.io.EOFException()
                 offset += read
               }
-              if (DnsMessage.relay(request.query, answer, flow.family, tcp = true) == DnsMessage.RelayResult.Discard) {
-                deliver { count("tcp-mismatch") }
-                continue
+              val relayed = when (val response = DnsMessage.relay(request.query, answer, flow.family, tcp = true, ttlCapSeconds = TTL_CAP_SECONDS)) {
+                DnsMessage.RelayResult.Discard -> {
+                  deliver { count("tcp-mismatch") }
+                  continue
+                }
+                is DnsMessage.RelayResult.Answered -> response.bytes
+                is DnsMessage.RelayResult.Servfail -> response.bytes
               }
-              deliver { if (connections[flow] === this) output(this, responder.complete(request.key, answer, now())) }
+              deliver { if (connections[flow] === this) output(this, responder.complete(request.key, relayed, now())) }
               break
             }
           } catch (_: Exception) {
@@ -580,7 +582,6 @@ class ScreenTimeDnsFilterService : VpnService() {
     if (connections[connection.flow] !== connection) return
     for (segment in output.segments) write(connection.packet.reply(segment))
     for (request in output.requests) {
-      Log.v(TAG, "web TCP query id=${request.query.id} name=${request.query.question.name} type=${request.query.question.type}")
       val local = DnsMessage.localAnswer(request.query, matcher, connection.flow.family)
       if (local != null) output(connection, connection.responder.complete(request.key, local, now())) else connection.request(request)
     }
@@ -626,14 +627,15 @@ class ScreenTimeDnsFilterService : VpnService() {
     control.removeCallbacks(heartbeat)
     store.update { document ->
       if (!WebState.stopped(document, serviceId)) return@update
+      WebState.refused(document, System.currentTimeMillis(), "tunnel stopped")
       if (WebState.consent(document).start(WebState.desired(document), false, EnforcementGapRecorder(this, store).boot().count) == WebState.Start.establish) {
         val retries = WebState.record(document).optInt("retries", 0)
-        if (retries > 0) WebPreviewController.armWatchdog(this, RestartBackoff.delayMs(retries - 1))
-        else WebPreviewController.armWatchdog(this)
-      } else WebPreviewController.cancelWatchdog(this)
+        if (retries > 0) WebFilterController.armWatchdog(this, RestartBackoff.delayMs(retries - 1))
+        else WebFilterController.armWatchdog(this)
+      } else WebFilterController.cancelWatchdog(this)
     }
     if (!destroyed) {
-      if (promoted) { stopForeground(STOP_FOREGROUND_REMOVE); promoted = false }
+      if (promoted) { ProtectionNotice.release(this); promoted = false }
       if (startId == null) stopSelf() else stopSelf(startId)
     }
     Log.i(TAG, "web stopped counters=$counters")
@@ -642,7 +644,7 @@ class ScreenTimeDnsFilterService : VpnService() {
   override fun onDestroy() {
     destroyed = true
     tunnel?.close()
-    if (promoted) { stopForeground(STOP_FOREGROUND_REMOVE); promoted = false }
+    if (promoted) { ProtectionNotice.release(this); promoted = false }
     if (callbackRegistered) runCatching { manager.unregisterNetworkCallback(callback) }
     if (physicalCallbackRegistered) runCatching { manager.unregisterNetworkCallback(physicalCallback) }
     control.post {
@@ -658,17 +660,11 @@ class ScreenTimeDnsFilterService : VpnService() {
   private fun promote(): Boolean {
     if (promoted) return true
     return try {
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        val notifications = getSystemService(NotificationManager::class.java)
-        notifications.createNotificationChannel(NotificationChannel("expo_st_engine", getString(R.string.expo_st_notice_channel), NotificationManager.IMPORTANCE_LOW))
-      }
-      val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, "expo_st_engine")
-        else @Suppress("DEPRECATION") Notification.Builder(this)
-      val notice = builder.setSmallIcon(R.drawable.expo_st_notice)
-        .setContentTitle(getString(R.string.expo_st_notice_title)).setContentText("Web filter preview is active").setOngoing(true).build()
-      if (Build.VERSION.SDK_INT >= 34) startForeground(0x5357, notice,
-        if (BuildConfig.WEB_PREVIEW_FGS_TYPE == "systemExempted") ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED else ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-      else startForeground(0x5357, notice)
+      val notice = ProtectionNotice.build(this)
+      if (Build.VERSION.SDK_INT >= 34) startForeground(ProtectionNotice.ID, notice,
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED)
+      else startForeground(ProtectionNotice.ID, notice)
+      ProtectionNotice.promoted(this)
       promoted = true
       true
     } catch (failure: Exception) {
@@ -684,5 +680,11 @@ class ScreenTimeDnsFilterService : VpnService() {
     if (count and (count - 1) == 0L) Log.i(TAG, "web ${if (dropped) "drop" else "traffic"} reason=$reason count=$count")
   }
   private fun now(): Long = SystemClock.elapsedRealtime()
-  companion object { private const val TAG = WebPreviewController.TAG }
+  companion object {
+    private const val TAG = WebFilterController.TAG
+    private const val DNS_IPV4 = "10.111.222.1"
+    private const val DNS_IPV6 = "fd00:6578:706f::1"
+    // Older caches and existing connections survive rule changes.
+    private const val TTL_CAP_SECONDS = 60
+  }
 }

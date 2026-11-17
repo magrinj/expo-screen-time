@@ -30,10 +30,10 @@ import android.os.Process
  */
 class ScreenTimeRestartReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
-    if (intent.action == WebPreviewController.ACTION_WATCHDOG) {
-      if (!WebPreviewController.built(context)) return
+    if (intent.action == WebFilterController.ACTION_WATCHDOG) {
+      if (!WebFilterController.built(context)) return
       val pending = goAsync()
-      WebPreviewController.sync(context, "web-watchdog") { pending.finish() }
+      WebFilterController.sync(context, "web-watchdog") { pending.finish() }
       return
     }
     val reason = when (intent.action) {
@@ -44,9 +44,9 @@ class ScreenTimeRestartReceiver : BroadcastReceiver() {
     }
     if (intent.action == ACTION_WATCHDOG && engineLivesHere(context)) {
       EngineWatchdog.arm(context)
-      if (WebPreviewController.built(context)) {
+      if (WebFilterController.built(context)) {
         val pending = goAsync()
-        WebPreviewController.sync(context, reason) { pending.finish() }
+        WebFilterController.sync(context, reason) { pending.finish() }
       }
       return
     }

@@ -19,17 +19,16 @@ import android.util.Log
 import expo.modules.screentime.web.WebState
 import java.util.concurrent.atomic.AtomicInteger
 
-/** String-only bridge: no release references the debug source set's classes. */
-internal object WebPreviewController {
+/** Consent-preserving lifecycle of the optional DNS filter. */
+internal object WebFilterController {
   const val SERVICE = "expo.modules.screentime.ScreenTimeDnsFilterService"
   const val ACTION_SYNC = "expo.modules.screentime.action.WEB_SYNC"
   const val ACTION_WATCHDOG = "expo.modules.screentime.action.WEB_WATCHDOG"
   const val TAG = "ExpoScreenTimeWeb"
   val functions = setOf("blockWebDomains", "unblockWebDomains", "unblockAllWebDomains", "getBlockedWebDomains")
-  val foreground: Boolean get() = BuildConfig.WEB_PREVIEW_FGS_TYPE != "none"
   private val handler = Handler(Looper.getMainLooper())
 
-  fun built(context: Context): Boolean = BuildConfig.WEB_PREVIEW && try {
+  fun built(context: Context): Boolean = try {
     @Suppress("DEPRECATION")
     context.packageManager.getServiceInfo(ComponentName(context.packageName, SERVICE), 0).enabled
   } catch (_: Exception) { false }
@@ -38,6 +37,7 @@ internal object WebPreviewController {
     if (!built(context)) throw UnsupportedPlatformException("blockWebDomains")
     val store = StateStore(context)
     store.update { document ->
+      observeRun(context, store, document)
       val boot = EnforcementGapRecorder(context, store).boot()
       WebState.setDomains(document, transform(WebState.domains(document)), System.currentTimeMillis(), boot.count, boot.timeMs ?: 0)
       store.syncEngineDesired(document, webBuilt = true)
@@ -58,16 +58,24 @@ internal object WebPreviewController {
     if (!built(context)) return emptyList()
     val store = StateStore(context)
     return store.update { document ->
-      val boot = EnforcementGapRecorder(context, store).boot()
-      WebState.observe(document, System.currentTimeMillis(), boot.count, boot.timeMs ?: 0)
+      observeRun(context, store, document)
       WebState.gaps(document, since)
     }
+  }
+
+  fun observeRun(context: Context, store: StateStore, document: org.json.JSONObject) {
+    val recorder = EnforcementGapRecorder(context, store)
+    val boot = recorder.boot()
+    val pid = document.optJSONObject("web")?.optJSONObject("run")?.optInt("pid")
+    WebState.observeRun(document, System.currentTimeMillis(), boot.count, boot.timeMs ?: 0,
+      pid != null && recorder.engineAlive(pid), recorder.exits(), recorder.engineProcess)
   }
 
   fun sync(context: Context, reason: String, done: (Boolean) -> Unit = {}) {
     val app = context.applicationContext
     if (!built(app)) { done(true); return }
     if (reason == Intent.ACTION_BOOT_COMPLETED) { boot(app, done); return }
+    gaps(app, null)
     val decision = decision(app)
     if (decision !in setOf(WebState.Start.establish, WebState.Start.stop)) {
       cancelWatchdog(app)
@@ -79,7 +87,7 @@ internal object WebPreviewController {
     val refusal = start(app, reason)
     if (refusal == null) { done(true); return }
     Log.i(TAG, "web refused start reason=$reason error=${refusal.javaClass.simpleName}")
-    if (foreground && refusal is IllegalStateException && ForegroundStartExemption.available(app) && ForegroundStartExemption.blockedBy(app) == null) {
+    if (refusal is IllegalStateException && ForegroundStartExemption.available(app) && ForegroundStartExemption.blockedBy(app) == null) {
       ForegroundStartExemption.attempt(app, "web:$reason", { start(app, "$reason:revive") == null }) { ok ->
         if (!ok) refused(app, "start:${refusal.javaClass.simpleName}")
         done(ok)
@@ -101,7 +109,7 @@ internal object WebPreviewController {
   private fun start(context: Context, reason: String): Exception? = try {
     if (decision(context) in setOf(WebState.Start.establish, WebState.Start.stop)) {
       val intent = Intent(ACTION_SYNC).setComponent(ComponentName(context.packageName, SERVICE)).putExtra("reason", reason)
-      val result = if (foreground && Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
+      val result = if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(intent) else context.startService(intent)
       checkNotNull(result) { "web service not resolved" }
     }
     null
@@ -142,7 +150,7 @@ internal object WebPreviewController {
   private fun boot(context: Context, done: (Boolean) -> Unit) {
     val store = StateStore(context)
     gaps(context, null)
-    val policy = store.read(WebState::bootPolicy)
+    val policy = WebState.BootPolicy.whenNoVpn
     val consentAtBoot = store.read { it.optJSONObject("web")?.optJSONObject("consent")?.optLong("at") }
     fun finish(vpnSeen: Boolean, observed: Boolean) {
       val prepared = store.update { document ->

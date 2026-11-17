@@ -62,6 +62,37 @@ internal class WebServiceApiTest {
     assertArrayEquals(expected, result.bytes)
     assertArrayEquals(wire, (DnsMessage.relay(q, wire, family) as DnsMessage.RelayResult.Answered).bytes)
   }
+  @Test fun ttlCapCoversEverySectionWithoutExtendingShortTtlsOnEitherTransport() {
+    val q = query(queryWire(edns = 1232, doBit = true))
+    val ttls = listOf(0L, 30L, 61L, 0xffffffffL)
+    val records = ttls.map { ttl ->
+      hex("c00c00100001000000000003027879").also { IpPacket.put32(it, 6, ttl) }
+    }
+    // Two answers, one authority RR, one additional RR, then OPT with DO and an opaque option.
+    val header = hex("123481800001000200010002")
+    val opt = hex("00002904d0000080000006000a00020102")
+    val wire = header + q.question.wire + records.reduce { a, b -> a + b } + opt
+    val expected = wire.copyOf().also {
+      IpPacket.put32(it, 12 + q.question.wire.size + 2 * records[0].size + 6, 60)
+      IpPacket.put32(it, 12 + q.question.wire.size + 3 * records[0].size + 6, 60)
+    }
+    for (tcp in listOf(false, true)) for (ipFamily in IpPacket.Family.entries) {
+      val result = DnsMessage.relay(q, wire, ipFamily, tcp = tcp, ttlCapSeconds = 60) as DnsMessage.RelayResult.Answered
+      assertArrayEquals(expected, result.bytes)
+      assertArrayEquals(wire, relayedAnswer(q, wire, ipFamily, tcp))
+    }
+  }
+  @Test fun ttlCapDoesNotRescueMalformedRepliesOrChangeTruncation() {
+    val q = query()
+    val wire = answerWire(q, 600)
+    val result = DnsMessage.relay(q, wire, family, ttlCapSeconds = 60) as DnsMessage.RelayResult.Answered
+    assertArrayEquals(DnsMessage.truncated(q, family), result.bytes)
+    for (tcp in listOf(false, true)) {
+      assertSame(DnsMessage.RelayResult.Discard, DnsMessage.relay(q, wire.copyOf(599), family, tcp, 60))
+      assertSame(DnsMessage.RelayResult.Discard,
+        DnsMessage.relay(q, wire.copyOf().also { IpPacket.put16(it, 0, q.id xor 1) }, family, tcp, 60))
+    }
+  }
   @Test fun flowEqualityIncludesEveryTuplePartAndCopiesAddresses() {
     val a = hex("c0000201"); val b = hex("c6336402")
     val flow = Flow(family, 17, a, b, 42000, 53)

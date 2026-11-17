@@ -11,7 +11,7 @@ the same templates.
 | Platform | Status |
 |---|---|
 | **iOS 16+** | Supported. Every API on this site is implemented. |
-| **Android 7+ (API 24)** | Supported for apps: the [permission steps](./api/permissions.mdx#android), the [picker](./components.mdx#activity-picker), the [selection store](./api/selections.mdx) and the [token labels](./components.mdx#token-labels), [blocking](./api/blocking.mdx#android) and the [shield](./api/shields.mdx#android), [monitoring](./api/monitoring.mdx#android), the temporary unlock, the shield actions, the [enforcement gaps](./api/capabilities.mdx#getenforcementgaps) and the [usage reports](./api/templates.mdx). `getCapabilities().blocking` is `"friction"`. Categories, web domains and `openApplication` report their capability off and fail with the `UNSUPPORTED` error code. |
+| **Android 7+ (API 24)** | Supported for apps: the [permission steps](./api/permissions.mdx#android), the [picker](./components.mdx#activity-picker), the [selection store](./api/selections.mdx) and the [token labels](./components.mdx#token-labels), [blocking](./api/blocking.mdx#android) and the [shield](./api/shields.mdx#android), [monitoring](./api/monitoring.mdx#android), the temporary unlock, the shield actions, the [enforcement gaps](./api/capabilities.mdx#getenforcementgaps) and the [usage reports](./api/templates.mdx). `getCapabilities().blocking` is `"friction"`. Categories and `openApplication` report their capability off and fail with the `UNSUPPORTED` error code. |
 | **Web** | Not supported. |
 
 ## What works on Android now
@@ -144,5 +144,4 @@ try {
 On Android, blocking and the shield, monitoring, the temporary unlock with the
 shield actions, the enforcement gaps, the engine's restart chain, the
 device-admin friction and the usage reports are in. The engine passed 24 h
-survival runs on a Pixel 8a and a Samsung Galaxy A54. Web-domain blocking is
-not available on Android yet.
+survival runs on a Pixel 8a and a Samsung Galaxy A54. Web-domain blocking is available through the opt-in [DNS VPN filter](./api/blocking.mdx#android-web-domains), with documented bypasses. The app-engine survival results above do not validate DNS-filter endurance.

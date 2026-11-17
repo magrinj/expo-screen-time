@@ -1,9 +1,5 @@
 package expo.modules.screentime
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -133,7 +129,7 @@ class ScreenTimeEngineService : Service() {
     if (!desired) {
       Log.i(EngineController.TAG, "engine not wanted; stopping (intent=$reason)")
       EngineWatchdog.cancel(this)
-      stopForeground(STOP_FOREGROUND_REMOVE)
+      ProtectionNotice.release(this)
       // A start queued behind this one must promote again: the system kills a
       // started service that does not answer with `startForeground`.
       promoted = false
@@ -183,6 +179,7 @@ class ScreenTimeEngineService : Service() {
     } catch (e: Exception) {
       Log.w(EngineController.TAG, "release not recorded at destroy: ${e.javaClass.simpleName}: ${e.message}")
     }
+    ProtectionNotice.release(this)
     super.onDestroy()
   }
 
@@ -192,13 +189,14 @@ class ScreenTimeEngineService : Service() {
    * under the overlay exemption has failed too, in [refused]).
    */
   private fun promote(): Boolean {
-    val notification = buildNotice()
+    val notification = ProtectionNotice.build(this)
     return try {
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-        startForeground(NOTICE_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        startForeground(ProtectionNotice.ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
       } else {
-        startForeground(NOTICE_ID, notification)
+        startForeground(ProtectionNotice.ID, notification)
       }
+      ProtectionNotice.promoted(this)
       promoted = true
       true
     } catch (e: Exception) {
@@ -214,28 +212,6 @@ class ScreenTimeEngineService : Service() {
     }
   }
 
-  private fun buildNotice(): Notification {
-    val manager = getSystemService(NotificationManager::class.java)
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      manager.createNotificationChannel(
-        NotificationChannel(CHANNEL_ID, getString(R.string.expo_st_notice_channel), NotificationManager.IMPORTANCE_LOW).apply {
-          setShowBadge(false)
-        }
-      )
-    }
-    val launch = packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
-      PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-    }
-    val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID) else @Suppress("DEPRECATION") Notification.Builder(this)
-    return builder
-      .setSmallIcon(R.drawable.expo_st_notice)
-      .setContentTitle(getString(R.string.expo_st_notice_title))
-      .setContentText(getString(R.string.expo_st_notice_text))
-      .setOngoing(true)
-      .setContentIntent(launch)
-      .build()
-  }
-
   private fun processName(): String =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) android.app.Application.getProcessName() else "?"
 
@@ -244,7 +220,5 @@ class ScreenTimeEngineService : Service() {
     const val ACTION_STOP = "expo.modules.screentime.action.STOP"
     const val ACTION_SYNC = "expo.modules.screentime.action.SYNC"
     const val EXTRA_REASON = "reason"
-    private const val CHANNEL_ID = "expo_st_engine"
-    private const val NOTICE_ID = 0x5354 // "ST"
   }
 }

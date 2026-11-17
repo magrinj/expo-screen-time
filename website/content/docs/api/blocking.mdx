@@ -143,6 +143,47 @@ const domains = ExpoScreenTime.getBlockedWebDomains();
 // ['facebook.com', 'tiktok.com']
 ```
 
+### Android DNS filter [#android-web-domains]
+
+Enable [`android.vpnDnsFilter`](../configuration.mdx#android-vpn-dns-filter), then
+request the [`vpn` permission](./permissions.mdx#android-vpn) after your disclosure.
+The four domain functions work in opted-in builds; otherwise they throw `UNSUPPORTED`.
+`getCapabilities().webDomainBlocking` reports build support, not current consent or uptime.
+
+The local VPN handles DNS over UDP and TCP, on IPv4 and IPv6 tunnel addresses.
+It covers apps in the same Android profile **except the host app**, including
+other apps' WebViews. It returns `NXDOMAIN` for listed hostnames and their subdomains;
+it forwards allowed DNS to the underlying network's first advertised resolver.
+It does not proxy web traffic or display a shield page. The browser normally shows
+its own lookup error. Invalid hostname strings remain in the stored list but do
+not match queries; use hostnames such as `example.com`, not URLs or paths.
+Stored string identities are exact (duplicates collapse, case variants remain separate);
+DNS matching is case-insensitive and supports internationalized hostnames.
+
+Rule changes reuse the existing tunnel. Newly relayed DNS answers have TTLs capped
+at 60 seconds, but this is **not a deadline for blocking an already visited site**.
+Existing DNS caches, browser caches and open connections are not evicted.
+`getBlockedWebDomains()` reads the intended list; `isBlocked()` describes app shields
+and does not count DNS rules. `unblockAll()` also clears the domain list.
+
+| Limit | Effect |
+|---|---|
+| Private DNS (DoT), explicit browser/app DoH, hard-coded resolvers | Queries can bypass the local DNS endpoints; their settings are not changed. |
+| Cached answers, direct IP addresses, existing HTTP/2 or QUIC connections | A site may remain reachable after a rule changes. |
+| Proxy browsers, another VPN, work profiles or Private Space | Outside this filter's coverage, or another VPN displaces it. |
+| Host app | Excluded so its own networking remains available. |
+| User force stop, process death, system start restrictions | Filtering can stop and traffic can pass until recovery. |
+
+Only one VPN can own a profile's VPN slot. After displacement the filter records
+an interruption and waits for an explicit user permission request; it never
+reclaims the slot automatically while running. At boot it observes VPN networks
+for three seconds and attempts recovery only with previously granted consent and
+no other VPN observed. A later-starting VPN can still take over. Always-on VPN
+and lockdown are unsupported. Recovery and battery use vary by device; no
+physical-device or eight-hour DNS-filter endurance guarantee is claimed.
+[`getEnforcementGaps()`](./capabilities.mdx#getenforcementgaps) reports observed
+interruptions with `scope: "webDomains"`; it cannot detect individual encrypted-DNS bypasses.
+
 ## Temporary Unlock (earned time)
 
 Let the user "earn" time inside blocked apps without giving up the block.
@@ -312,8 +353,7 @@ when that happened.
   blocklist over an empty selection shields nothing; an allowlist always
   shields). The selection's apps are captured when the block is applied, as
   iOS projects them into its store: editing the selection afterwards changes
-  nothing until the next `blockSelection`. Web domains are not blocked on
-  Android (`webDomainBlocking` is `false`).
+  nothing until the next `blockSelection`. Direct domain blocking uses the separate [optional DNS filter](#android-web-domains).
 - **The app restrictions are block sources too.**
   [`denyAppRemoval()` and `denyAppInstallation()`](./restrictions.mdx#android)
   add, below your blocks, a source over the system's uninstall dialog, the

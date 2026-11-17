@@ -54,8 +54,7 @@ internal data class BuildManifest(
     Feature.monitoring -> engine
     Feature.usageReports -> usageAccess
     Feature.appRemovalProtection -> deviceAdmin
-    // Not implemented on Android; nothing of its own in the manifest.
-    Feature.webDomainBlocking -> true
+    Feature.webDomainBlocking -> vpn
   }
 
   /** The requested features this build cannot serve, in the requested order. */
@@ -73,7 +72,7 @@ internal data class BuildManifest(
         usageAccess = Manifest.permission.PACKAGE_USAGE_STATS in permissions,
         notifications = Manifest.permission.POST_NOTIFICATIONS in permissions,
         accessibility = ScreenTimeAccessibilityService::class.java.name in services,
-        vpn = BuildConfig.WEB_PREVIEW && WebPreviewController.SERVICE in services,
+        vpn = WebFilterController.SERVICE in services,
       )
 
     /**
@@ -106,7 +105,7 @@ internal data class BuildManifest(
           ScreenTimeEngineService::class.java.name.takeIf { declared("engine service") { serviceInfo(pm, ComponentName(pkg, it)) } },
           // Added by the plugin on opt-in: "not declared" is the default build, so a failed probe reads as absent here.
           ScreenTimeAccessibilityService::class.java.name.takeIf { declared("accessibility service", assumeDeclared = false) { serviceInfo(pm, ComponentName(pkg, it)) } },
-          WebPreviewController.SERVICE.takeIf { BuildConfig.WEB_PREVIEW && declared("VPN service", assumeDeclared = false) { serviceInfo(pm, ComponentName(pkg, it)).takeIf { info -> info.enabled } } },
+          WebFilterController.SERVICE.takeIf { declared("VPN service", assumeDeclared = false) { serviceInfo(pm, ComponentName(pkg, it)).takeIf { info -> info.enabled } } },
         ),
         activities = listOfNotNull(ShieldActivity::class.java.name.takeIf { declared("shield activity") { activityInfo(pm, ComponentName(pkg, it)) } }),
         receivers = listOfNotNull(ScreenTimeDeviceAdminReceiver::class.java.name.takeIf { declared("device admin receiver") { receiverInfo(pm, ComponentName(pkg, it)) } }),

@@ -85,7 +85,7 @@ class ExpoScreenTimeModule : Module() {
         // document a previous, fuller build left behind must not start a
         // service this manifest does not declare).
         if (!build.engine) {
-          if (build.vpn) WebPreviewController.sync(context, "launch")
+          if (build.vpn) WebFilterController.sync(context, "launch")
           return@let
         }
         // The enforcement gaps are observed at launch, as the iOS module
@@ -106,7 +106,7 @@ class ExpoScreenTimeModule : Module() {
       if (build.blocking) observe("foreground", sync = false)
     }
 
-    if (BuildConfig.WEB_PREVIEW) {
+    if (build.vpn) {
       OnActivityResult { _, result ->
         permissionRequester.onVpnResult(result.requestCode, result.resultCode)
       }
@@ -118,13 +118,13 @@ class ExpoScreenTimeModule : Module() {
       observer.shutdown()
     }
 
-    val webBuilt = BuildConfig.WEB_PREVIEW && build.vpn
-    NATIVE_FUNCTIONS.filterNot { it.name in IMPLEMENTED || (webBuilt && it.name in WebPreviewController.functions) }.forEach { unsupported(it) }
+    val webBuilt = build.vpn
+    NATIVE_FUNCTIONS.filterNot { it.name in IMPLEMENTED || (webBuilt && it.name in WebFilterController.functions) }.forEach { unsupported(it) }
 
     if (webBuilt) {
-      Function("blockWebDomains") { domains: List<String> -> WebPreviewController.mutate(context) { it + domains } }
-      Function("unblockWebDomains") { domains: List<String> -> WebPreviewController.mutate(context) { it - domains.toSet() } }
-      Function("unblockAllWebDomains") { WebPreviewController.mutate(context) { emptySet() } }
+      Function("blockWebDomains") { domains: List<String> -> WebFilterController.mutate(context) { it + domains } }
+      Function("unblockWebDomains") { domains: List<String> -> WebFilterController.mutate(context) { it - domains.toSet() } }
+      Function("unblockAllWebDomains") { WebFilterController.mutate(context) { emptySet() } }
       Function("getBlockedWebDomains") { store.read { expo.modules.screentime.web.WebState.domains(it).sorted() } }
     }
 
@@ -164,7 +164,7 @@ class ExpoScreenTimeModule : Module() {
         is PermissionSteps.RequestedStep.NotInBuild ->
           throw ScreenTimeException(
             ScreenTimeException.INVALID_CONFIG,
-            "The permission step '${requested.name}' needs the accessibility service, which this build does not declare (config plugin option android.accessibilityEngine); request the steps the response lists"
+            "The permission step '${requested.name}' is not declared in this build; enable config plugin option android.${if (requested.name == "vpn") "vpnDnsFilter" else "accessibilityEngine"}, or request only the steps the response lists"
           )
         is PermissionSteps.RequestedStep.Unknown ->
           throw ScreenTimeException(ScreenTimeException.INVALID_CONFIG, "Unknown permission step '${requested.name}'")
@@ -195,7 +195,7 @@ class ExpoScreenTimeModule : Module() {
       mapOf(
         "blocking" to if (build.blocking) "friction" else "none",
         "selectableKinds" to mapOf("applications" to true, "categories" to false, "webDomains" to false),
-        "webDomainBlocking" to false,
+        "webDomainBlocking" to build.vpn,
         "appRemovalProtection" to if (build.blocking) "friction" else "none",
         "appInstallationBlocking" to if (build.blocking) "friction" else "none",
         "usageReports" to build.has(Feature.usageReports),
@@ -221,7 +221,7 @@ class ExpoScreenTimeModule : Module() {
       if (!build.vpn) requireInBuild("getEnforcementGaps", Feature.blocking)
       if (build.blocking) observe("getEnforcementGaps", sync = true)
       val engineGaps = if (build.blocking) gaps.gaps(since?.toLong()) else emptyList()
-      val webGaps = if (build.vpn) WebPreviewController.gaps(context, since?.toLong()) else emptyList()
+      val webGaps = if (build.vpn) WebFilterController.gaps(context, since?.toLong()) else emptyList()
       promise.resolve(if (build.vpn) (engineGaps + webGaps).sortedBy { (it["from"] as Number).toLong() } else engineGaps)
     }
 
@@ -269,7 +269,7 @@ class ExpoScreenTimeModule : Module() {
     Function("unblockAll") {
       if (!build.vpn) requireInBuild("unblockAll", Feature.blocking)
       if (build.blocking) blocks.unblockAll()
-      if (build.vpn) WebPreviewController.mutate(context) { emptySet() }
+      if (build.vpn) WebFilterController.mutate(context) { emptySet() }
     }
 
     Function("isBlocked") {

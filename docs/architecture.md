@@ -460,3 +460,15 @@ be read by native code. Fixed at first prebuild; changing the bundle id requires
 `withTargetSourceFiles` (dangerous mod: copies Swift + Info.plist, generates
 entitlements) → `withTargetXcodeProject` (pbxproj wiring) → `withScreenTimeEasConfig`
 (EAS signing). Full rules in [`config-plugin.md`](./config-plugin.md).
+
+### Optional Android DNS filter
+
+`android.vpnDnsFilter` adds `ScreenTimeDnsFilterService` to the consumer manifest;
+`BuildManifest.vpn` gates the public domain functions and required `vpn` step.
+`WebFilterController` coordinates consent-preserving startup, reboot observation
+and recovery. The service runs in `:screentime`, shares `ProtectionNotice` with the
+app engine, and routes only its local DNS endpoints (UDP/TCP, IPv4/IPv6). Rule
+mutations update the matcher without replacing the tunnel. `web/WebState` holds
+intent, consent, run heartbeat and bounded scoped gaps; the existing exit-history
+reader supplies process-death evidence before restart or release. The production
+boot policy is fixed to `whenNoVpn`; old experimental stored policies are ignored.

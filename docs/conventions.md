@@ -8,7 +8,7 @@ API design, commits/releases, dependencies, packaging, docs. The load-bearing on
 - **Platform-neutral names.** `blockSelection`, `startMonitoring`, `isBlocked` —
   names must make sense on iOS and Android. Before naming anything new, check
   [`platform-support.mdx`](../website/content/docs/platform-support.mdx); if the
-  concept is iOS-structural (tokens, shields, web-domain blocking), tag it
+  concept is iOS-structural (tokens, shields), tag it
   `@platform ios` in TSDoc.
 - **Types live in `src/ExpoScreenTime.types.ts`**, in the existing banner
   sections. Public surface is exported **only** through `src/index.ts`.
@@ -83,8 +83,18 @@ scope — apply the bump directly on main and close the PR as superseded.
 - The docs build fails on a broken link or anchor (`website/scripts/check-links.mjs`).
   Cross-links use relative `.mdx` paths; a function's heading carries an explicit
   id, `[#blockselection]`, which the landing page and other pages link to.
-- Repo-internal knowledge (this kind of file) goes in `docs/` at the root —
-  **not** in `website/content/docs/` (user-facing) and not shipped to npm.
+- `docs/` holds durable contributor instructions. Prefer updating the existing
+  owner of a topic; add a document only for a recurring task that has no home.
+- Keep session plans, review transcripts, dated validation reports and local
+  tooling diagnoses out of tracked docs. Put validation summaries in the PR and
+  raw evidence in ignored `.proofs/`; do not link to local evidence from shipped
+  code or shared documentation.
+- Comments explain the current constraint, reason or measured fact directly.
+  Avoid phase/slice labels, review finding IDs and references to working plans.
+  Remove comments that only restate the code.
+- When integrating upstream cleanup, preserve its deletions, moves and single
+  sources of truth. Do not restore removed drafts, duplicate config or generated
+  files to resolve conflicts; keep runnable examples under test tooling.
 
 ## Repo hygiene
 

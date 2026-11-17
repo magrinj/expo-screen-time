@@ -36,6 +36,13 @@
         }
       ],
       "expo-status-bar"
-    ]
+    ],
+    "extra": {
+      "expoScreenTime": {
+        "android": {
+          "vpnDnsFilter": true
+        }
+      }
+    }
   }
 }

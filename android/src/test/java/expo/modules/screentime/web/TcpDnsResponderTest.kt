@@ -402,9 +402,7 @@ internal class TcpDnsResponderTest {
     assertEquals(client.sequence, output.segments.single().acknowledgement)
     assertTrue(output.requests.isEmpty())
   }
-  @Test fun flowStateDoesNotDependOnTunnelDescriptorOrActiveDnsPair() {
-    // Packets addressed to the original pair reuse the same responder after the owner changes its
-    // active pair. Descriptor handover itself is outside this class.
+  @Test fun acknowledgementOfEncodedResponseKeepsTheConnectionOpen() {
     val client = Client(); client.open()
     val request = client.request()
     val first = client.answer(request, 2000).segments.single()
