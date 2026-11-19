@@ -38,6 +38,9 @@ function AppPicker() {
 | `style` | `StyleProp<ViewStyle>` | Container style |
 | `headerText` | `string` | Header text displayed in the picker |
 | `footerText` | `string` | Footer text displayed in the picker |
+| `searchPlaceholder` | `string` | Android only. Placeholder of the search field |
+| `emptyText` | `string` | Android only. Shown when no app can be listed |
+| `noMatchText` | `string` | Android only. Shown when the search matches no app |
 | `onSelectionChange` | `(event: { nativeEvent: OnSelectionChangeEvent }) => void` | `nativeEvent` = `{ metadata: SelectionMetadata, tokens: TokenHandle[] }` |
 | `onOpen` | `() => void` | Called when the picker view appears |
 | `onClose` | `() => void` | Called when the picker view disappears |
@@ -169,7 +172,10 @@ the last rows stay visible in an edge-to-edge app.
 Same props and events as iOS: `headerText` and `footerText` frame the list,
 `onSelectionChange` fires on every tap with the counts and the handles,
 `onOpen` / `onClose` when the view is attached and detached. Package names
-never reach JS.
+never reach JS. The picker's own texts (search placeholder, empty list, no
+match) default to English string resources; pass `searchPlaceholder`,
+`emptyText` and `noMatchText` to show them in the app's language. Unset or
+`null` keeps the English default, an empty string hides the text.
 
 **Token labels** read the app's icon and name from the package manager.
 `ApplicationLabel` renders a resolved handle; an app selected and uninstalled

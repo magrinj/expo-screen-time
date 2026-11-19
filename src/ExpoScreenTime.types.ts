@@ -259,6 +259,24 @@ export type ExpoScreenTimeActivityPickerProps = {
   selectionId: string;
   headerText?: string;
   footerText?: string;
+  /**
+   * Placeholder of the search field. Defaults to an English string resource
+   * when unset or `null`; an empty string hides the placeholder.
+   * @platform android
+   */
+  searchPlaceholder?: string | null;
+  /**
+   * Shown when the device has no launchable app to list. Defaults to an
+   * English string resource when unset or `null`; an empty string hides it.
+   * @platform android
+   */
+  emptyText?: string | null;
+  /**
+   * Shown when the search matches no app. Defaults to an English string
+   * resource when unset or `null`; an empty string hides it.
+   * @platform android
+   */
+  noMatchText?: string | null;
   onSelectionChange?: (event: { nativeEvent: OnSelectionChangeEvent }) => void;
   onOpen?: () => void;
   onClose?: () => void;
