@@ -438,7 +438,7 @@ class ExpoScreenTimeModule : Module() {
       Prop("selectionId") { view: ExpoScreenTimeActivityPickerView, selectionId: String? -> view.setSelectionId(selectionId) }
       Prop("headerText") { view: ExpoScreenTimeActivityPickerView, headerText: String? -> view.setHeaderText(headerText) }
       Prop("footerText") { view: ExpoScreenTimeActivityPickerView, footerText: String? -> view.setFooterText(footerText) }
-      Prop("searchHint") { view: ExpoScreenTimeActivityPickerView, text: String? -> view.setSearchHint(text) }
+      Prop("searchPlaceholder") { view: ExpoScreenTimeActivityPickerView, text: String? -> view.setSearchPlaceholder(text) }
       Prop("emptyText") { view: ExpoScreenTimeActivityPickerView, text: String? -> view.setEmptyText(text) }
       Prop("noMatchText") { view: ExpoScreenTimeActivityPickerView, text: String? -> view.setNoMatchText(text) }
       Events("onSelectionChange", "onOpen", "onClose")

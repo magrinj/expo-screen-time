@@ -90,9 +90,9 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
   private var apps: List<LaunchableApp> = emptyList()
   private var visible: List<LaunchableApp> = emptyList()
   private var loaded = false
-  // Texts the host app translates itself (its language may differ from the
-  // system's, which the string resources follow). Null: the resource.
-  private var searchHintText: String? = null
+  // Texts the host app translates itself: the string resources only ship in
+  // English. Null falls back to the resource, an empty string hides the text.
+  private var searchPlaceholderText: String? = null
   private var emptyText: String? = null
   private var noMatchText: String? = null
   private val selected = LinkedHashSet<String>()
@@ -242,8 +242,8 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
     footer.visibility = if (text.isNullOrEmpty()) GONE else VISIBLE
   }
 
-  fun setSearchHint(text: String?) {
-    searchHintText = text
+  fun setSearchPlaceholder(text: String?) {
+    searchPlaceholderText = text
     search.hint = text ?: context.getString(R.string.expo_st_picker_search_hint)
   }
 
@@ -370,7 +370,7 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
     header.setTextColor(palette.secondary)
     footer.setTextColor(palette.secondary)
     empty.setTextColor(palette.secondary)
-    search.hint = searchHintText ?: context.getString(R.string.expo_st_picker_search_hint)
+    search.hint = searchPlaceholderText ?: context.getString(R.string.expo_st_picker_search_hint)
     search.setTextColor(palette.text)
     search.setHintTextColor(palette.secondary)
     search.background = GradientDrawable().apply {
