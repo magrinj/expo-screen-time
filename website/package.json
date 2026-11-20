@@ -31,7 +31,7 @@
     "mdast-util-to-string": "^4.0.0",
     "micromark-extension-gfm": "^3.0.0",
     "micromark-extension-mdxjs": "^3.0.0",
-    "oxlint": "^1.92.0",
+    "oxlint": "^1.94.0",
     "postcss": "^8.5.32",
     "serve": "^14.2.7",
     "tailwindcss": "^4.3.5",
