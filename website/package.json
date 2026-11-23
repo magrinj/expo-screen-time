@@ -33,7 +33,7 @@
     "micromark-extension-mdxjs": "^3.0.0",
     "oxlint": "^1.92.0",
     "postcss": "^8.5.33",
-    "serve": "^14.2.7",
+    "serve": "^14.2.8",
     "tailwindcss": "^4.3.5",
     "typescript": "^7.0.2"
   },
