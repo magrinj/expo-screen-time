@@ -43,6 +43,7 @@ internal data class BuildManifest(
    * binds it when the user enables it; if not, nothing runs.
    */
   val accessibility: Boolean = false,
+  val vpn: Boolean = false,
 ) {
   /** `getCapabilities().blocking` is `friction` iff this holds; else `none`. */
   val blocking: Boolean get() = engine && shield
@@ -72,6 +73,7 @@ internal data class BuildManifest(
         usageAccess = Manifest.permission.PACKAGE_USAGE_STATS in permissions,
         notifications = Manifest.permission.POST_NOTIFICATIONS in permissions,
         accessibility = ScreenTimeAccessibilityService::class.java.name in services,
+        vpn = BuildConfig.WEB_PREVIEW && WebPreviewController.SERVICE in services,
       )
 
     /**
@@ -104,6 +106,7 @@ internal data class BuildManifest(
           ScreenTimeEngineService::class.java.name.takeIf { declared("engine service") { serviceInfo(pm, ComponentName(pkg, it)) } },
           // Added by the plugin on opt-in: "not declared" is the default build, so a failed probe reads as absent here.
           ScreenTimeAccessibilityService::class.java.name.takeIf { declared("accessibility service", assumeDeclared = false) { serviceInfo(pm, ComponentName(pkg, it)) } },
+          WebPreviewController.SERVICE.takeIf { BuildConfig.WEB_PREVIEW && declared("VPN service", assumeDeclared = false) { serviceInfo(pm, ComponentName(pkg, it)).takeIf { info -> info.enabled } } },
         ),
         activities = listOfNotNull(ShieldActivity::class.java.name.takeIf { declared("shield activity") { activityInfo(pm, ComponentName(pkg, it)) } }),
         receivers = listOfNotNull(ScreenTimeDeviceAdminReceiver::class.java.name.takeIf { declared("device admin receiver") { receiverInfo(pm, ComponentName(pkg, it)) } }),

@@ -61,3 +61,6 @@ yarn-error.log
 # `expo-module build plugin` (tsc --build) writes
 .swc/
 *.tsbuildinfo
+
+# Local validation artifacts
+.proofs/

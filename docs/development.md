@@ -103,6 +103,48 @@ and monitoring can only be truly verified on a **physical device**. Builds and
 typechecks on the simulator are necessary but not sufficient — say so explicitly
 when you can't verify runtime behavior.
 
+## Web filter preview
+
+The Android DNS filter is an internal debug preview. Public
+`webDomainBlocking` stays `false`; the example's `/web-preview` route uses a
+local `vpn` permission step and `webDomains` gap scope. Ordinary builds return
+`UNSUPPORTED`. Filtering covers every app except the host, requires **Request
+VPN**, and does not support always-on or lockdown.
+
+After the Android prebuild above, build from `example/android`:
+
+```bash
+./gradlew :app:assembleDebug -PexpoScreenTime.webPreview=true
+```
+
+`-PexpoScreenTime.webPreviewFgsType=none|systemExempted|specialUse` selects the
+debug service variant; the default is `systemExempted`. `none` measures VPN
+binding without `startForeground`. Release builds exclude the preview even
+with the property set; consumer build types with `matchingFallbacks = ['debug']`
+can select it. Verify release isolation in both the merged manifest and DEX
+class definitions, and run the Kotlin tests with and without the preview flag.
+
+The boot policy defaults to `whenNoVpn`. The debug receiver requires
+`android.permission.DUMP` (available to the adb shell):
+
+```bash
+adb -s <emulator-serial> shell am broadcast \
+  -a expo.modules.screentime.action.WEB_BOOT_POLICY \
+  -n expo.modules.screentime.example/expo.modules.screentime.WebPreviewReceiver \
+  --es policy whenNoVpn
+```
+
+Accepted values are `never`, `whenNoVpn` and `always`. Changing the policy only
+persists it. At boot, `whenNoVpn` observes VPN callbacks for three seconds and
+prepares the filter only if none was seen and consent is still granted. A
+required dialog is never shown from boot. After displacement, a user-initiated
+permission request selecting `vpn` is required to reclaim the slot.
+
+Both transports use the underlay's first advertised DNS server without resolver
+fallback. Unknown boot identity prevents startup and opens a web gap while
+domains are wanted. Preview gaps retain at most 256 entries;
+`unblockAll` also clears web domains. Logs use the `ExpoScreenTimeWeb` tag.
+
 ## Example app as test bench
 
 `example/` is an expo-router app with one tab per feature area (`blocking`,

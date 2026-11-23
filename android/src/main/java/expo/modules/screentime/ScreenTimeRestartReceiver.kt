@@ -30,6 +30,12 @@ import android.os.Process
  */
 class ScreenTimeRestartReceiver : BroadcastReceiver() {
   override fun onReceive(context: Context, intent: Intent) {
+    if (intent.action == WebPreviewController.ACTION_WATCHDOG) {
+      if (!WebPreviewController.built(context)) return
+      val pending = goAsync()
+      WebPreviewController.sync(context, "web-watchdog") { pending.finish() }
+      return
+    }
     val reason = when (intent.action) {
       Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> intent.action ?: "restart"
       ACTION_WAKE -> "alarm"
@@ -38,6 +44,10 @@ class ScreenTimeRestartReceiver : BroadcastReceiver() {
     }
     if (intent.action == ACTION_WATCHDOG && engineLivesHere(context)) {
       EngineWatchdog.arm(context)
+      if (WebPreviewController.built(context)) {
+        val pending = goAsync()
+        WebPreviewController.sync(context, reason) { pending.finish() }
+      }
       return
     }
     val pending = goAsync()

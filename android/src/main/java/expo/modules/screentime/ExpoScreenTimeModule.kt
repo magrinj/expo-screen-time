@@ -84,7 +84,10 @@ class ExpoScreenTimeModule : Module() {
         // Nothing to revive or observe in a build without the engine (a
         // document a previous, fuller build left behind must not start a
         // service this manifest does not declare).
-        if (!build.engine) return@let
+        if (!build.engine) {
+          if (build.vpn) WebPreviewController.sync(context, "launch")
+          return@let
+        }
         // The enforcement gaps are observed at launch, as the iOS module
         // observes its authorization: the exit history (a user stop, a
         // kill), the engine's liveness and the permissions. Off the main
@@ -103,13 +106,27 @@ class ExpoScreenTimeModule : Module() {
       if (build.blocking) observe("foreground", sync = false)
     }
 
+    if (BuildConfig.WEB_PREVIEW) {
+      OnActivityResult { _, result ->
+        permissionRequester.onVpnResult(result.requestCode, result.resultCode)
+      }
+    }
+
     OnDestroy {
       permissionRequester.dispose()
       monitoring.stopObserving()
       observer.shutdown()
     }
 
-    NATIVE_FUNCTIONS.filterNot { it.name in IMPLEMENTED }.forEach { unsupported(it) }
+    val webBuilt = BuildConfig.WEB_PREVIEW && build.vpn
+    NATIVE_FUNCTIONS.filterNot { it.name in IMPLEMENTED || (webBuilt && it.name in WebPreviewController.functions) }.forEach { unsupported(it) }
+
+    if (webBuilt) {
+      Function("blockWebDomains") { domains: List<String> -> WebPreviewController.mutate(context) { it + domains } }
+      Function("unblockWebDomains") { domains: List<String> -> WebPreviewController.mutate(context) { it - domains.toSet() } }
+      Function("unblockAllWebDomains") { WebPreviewController.mutate(context) { emptySet() } }
+      Function("getBlockedWebDomains") { store.read { expo.modules.screentime.web.WebState.domains(it).sorted() } }
+    }
 
     // MARK: - Permissions
 
@@ -201,9 +218,11 @@ class ExpoScreenTimeModule : Module() {
     // revoked (`permissionRevoked`, open while they are). Observed here as
     // iOS observes its authorization in this function.
     AsyncFunction("getEnforcementGaps") { since: Double?, promise: Promise ->
-      requireInBuild("getEnforcementGaps", Feature.blocking)
-      observe("getEnforcementGaps", sync = true)
-      promise.resolve(gaps.gaps(since?.toLong()))
+      if (!build.vpn) requireInBuild("getEnforcementGaps", Feature.blocking)
+      if (build.blocking) observe("getEnforcementGaps", sync = true)
+      val engineGaps = if (build.blocking) gaps.gaps(since?.toLong()) else emptyList()
+      val webGaps = if (build.vpn) WebPreviewController.gaps(context, since?.toLong()) else emptyList()
+      promise.resolve(if (build.vpn) (engineGaps + webGaps).sortedBy { (it["from"] as Number).toLong() } else engineGaps)
     }
 
     // MARK: - App Control
@@ -248,8 +267,9 @@ class ExpoScreenTimeModule : Module() {
     // Lifts every active block — manual, schedule, threshold — as iOS does;
     // monitoring keeps running (BlockController.unblockAll).
     Function("unblockAll") {
-      requireInBuild("unblockAll", Feature.blocking)
-      blocks.unblockAll()
+      if (!build.vpn) requireInBuild("unblockAll", Feature.blocking)
+      if (build.blocking) blocks.unblockAll()
+      if (build.vpn) WebPreviewController.mutate(context) { emptySet() }
     }
 
     Function("isBlocked") {
