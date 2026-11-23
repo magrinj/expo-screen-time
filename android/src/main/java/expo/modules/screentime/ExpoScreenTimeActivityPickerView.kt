@@ -90,6 +90,11 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
   private var apps: List<LaunchableApp> = emptyList()
   private var visible: List<LaunchableApp> = emptyList()
   private var loaded = false
+  // Texts the host app translates itself: the string resources only ship in
+  // English. Null falls back to the resource, an empty string hides the text.
+  private var searchPlaceholderText: String? = null
+  private var emptyText: String? = null
+  private var noMatchText: String? = null
   private val selected = LinkedHashSet<String>()
   private val icons = HashMap<String, Drawable?>()
   private var palette = ViewPalette.of(context)
@@ -237,6 +242,21 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
     footer.visibility = if (text.isNullOrEmpty()) GONE else VISIBLE
   }
 
+  fun setSearchPlaceholder(text: String?) {
+    searchPlaceholderText = text
+    search.hint = text ?: context.getString(R.string.expo_st_picker_search_hint)
+  }
+
+  fun setEmptyText(text: String?) {
+    emptyText = text
+    refresh()
+  }
+
+  fun setNoMatchText(text: String?) {
+    noMatchText = text
+    refresh()
+  }
+
   // MARK: - Lifecycle
 
   override fun onAttachedToWindow() {
@@ -337,7 +357,11 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
     val query = search.text?.toString()?.trim().orEmpty()
     visible = if (query.isEmpty()) apps else apps.filter { it.label.contains(query, ignoreCase = true) }
     adapter.notifyDataSetChanged()
-    empty.text = context.getString(if (apps.isEmpty()) R.string.expo_st_picker_empty else R.string.expo_st_picker_no_match)
+    empty.text = if (apps.isEmpty()) {
+      emptyText ?: context.getString(R.string.expo_st_picker_empty)
+    } else {
+      noMatchText ?: context.getString(R.string.expo_st_picker_no_match)
+    }
     empty.visibility = if (loaded && visible.isEmpty()) VISIBLE else GONE
   }
 
@@ -346,7 +370,7 @@ class ExpoScreenTimeActivityPickerView(context: Context, appContext: AppContext)
     header.setTextColor(palette.secondary)
     footer.setTextColor(palette.secondary)
     empty.setTextColor(palette.secondary)
-    search.hint = context.getString(R.string.expo_st_picker_search_hint)
+    search.hint = searchPlaceholderText ?: context.getString(R.string.expo_st_picker_search_hint)
     search.setTextColor(palette.text)
     search.setHintTextColor(palette.secondary)
     search.background = GradientDrawable().apply {
