@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/magrinj/expo-screen-time/compare/v0.3.0...v0.4.0) (2026-11-23)
+
+
+### Features
+
+* **android:** let the app set the ActivityPicker's own texts ([#8](https://github.com/magrinj/expo-screen-time/issues/8)) ([b9fe5dc](https://github.com/magrinj/expo-screen-time/commit/b9fe5dcf87ef2bd91afb16f757095eed818ad9d8))
+
+
+### Bug Fixes
+
+* **docs:** fetch the GitHub star count in the browser ([#3](https://github.com/magrinj/expo-screen-time/issues/3)) ([4e6e76e](https://github.com/magrinj/expo-screen-time/commit/4e6e76e2d0fd7bdc20de8e1236ca1e6a31ccb2e8))
+
 ## [0.3.0](https://github.com/magrinj/expo-screen-time/compare/v0.2.0...v0.3.0) (2026-11-13)
 
 
